@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "llvm-tools", "rust-src", "rustfmt"]
+targets = ["aarch64-unknown-none", "riscv64imac-unknown-none-elf", "x86_64-unknown-none"]
+profile = "minimal"

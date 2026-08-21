@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+/target/
+/tests/host/target/
+/tests/host/Cargo.lock
+/tools/kconfig/target/
+/tools/kconfig/Cargo.lock
+/tools/kallsyms/target/
+/.config
+/.idea/
+/.vscode/
+/.agent/
+*.swp
+*.swo
+*.log
