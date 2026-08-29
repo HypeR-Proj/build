@@ -72,6 +72,7 @@ X86_PAYLOAD_IMAGE := $(KERNEL_OUTPUT)/hyper.payload
 X86_HOST_DTB := $(KERNEL_OUTPUT)/x86_64-host.dtb
 KCONFIG_MANIFEST := tools/kconfig/Cargo.toml
 KALLSYMS_MANIFEST := tools/kallsyms/Cargo.toml
+ABI_MANIFEST := tools/abi/Cargo.toml
 KALLSYMS_BLOB := $(KERNEL_OUTPUT)/hyper.kallsyms
 KALLSYMS_FINAL_BLOB := $(KERNEL_OUTPUT)/hyper.kallsyms.final
 KALLSYMS_ELF := $(KERNEL_OUTPUT)/hyper.with-kallsyms
@@ -89,7 +90,7 @@ GUEST_ASSET_STAMP := $(GUEST_OUTPUT)/.alpine-3.23.5.stamp
 endif
 HOST_INITRD := $(GUEST_OUTPUT)/hypervisor-initrd.cpio
 
-.PHONY: all prepare-config config defconfig olddefconfig guest-assets clean-guest-assets build image release check test test-image test-timer test-qemu verify verify-runtime verify-image verify-boot verify-smp run clean
+.PHONY: all prepare-config config defconfig olddefconfig generate-abi guest-assets clean-guest-assets build image release check test test-image test-timer test-qemu verify verify-runtime verify-image verify-boot verify-smp run clean
 
 all: image
 
@@ -111,6 +112,9 @@ olddefconfig:
 
 config:
 	cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- config "$(CONFIG_FILE)" "$(CONFIG_FILE)"
+
+generate-abi:
+	cargo run --quiet --manifest-path $(ABI_MANIFEST) --target $(HOST_TARGET) -- write
 
 $(GUEST_ASSET_STAMP): $(GUEST_FETCH) tools/guest/init tools/guest/boot.conf tools/guest/alpine-$(ARCH).manifest
 	sh $(GUEST_FETCH)
@@ -158,17 +162,21 @@ check: prepare-config
 	$(KERNEL_CONFIG_ENV) cargo clippy --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET) --all-targets -- -D warnings
 	cargo clippy --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- -D warnings
 	cargo clippy --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- -D warnings
+	cargo clippy --manifest-path $(ABI_MANIFEST) --target $(HOST_TARGET) --all-targets -- -D warnings
 
 test: prepare-config
 	$(KERNEL_CONFIG_ENV) cargo test --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET)
 	cargo test --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET)
 	cargo test --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET)
+	cargo test --manifest-path $(ABI_MANIFEST) --target $(HOST_TARGET)
+	cargo run --quiet --manifest-path $(ABI_MANIFEST) --target $(HOST_TARGET) -- check
 
 verify: check test
 	cargo fmt -- --check
 	cargo fmt --manifest-path $(HOST_TEST_MANIFEST) -- --check
 	cargo fmt --manifest-path $(KCONFIG_MANIFEST) -- --check
 	cargo fmt --manifest-path $(KALLSYMS_MANIFEST) -- --check
+	cargo fmt --manifest-path $(ABI_MANIFEST) -- --check
 	$(MAKE) verify-runtime ARCH=$(ARCH)
 	$(MAKE) release
 	$(MAKE) test-image ARCH=$(ARCH)
