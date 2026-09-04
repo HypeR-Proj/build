@@ -36,10 +36,11 @@ $(error unsupported ARCH '$(ARCH)')
 endif
 KERNEL_PROFILE := kernel
 CARGO_PROFILE := --profile $(KERNEL_PROFILE)
+CARGO ?= cargo
 CONFIG_FILE ?= .config
 CONFIG_PATH := $(abspath $(CONFIG_FILE))
 KERNEL_CONFIG_ENV := HYPER_CONFIG=$(CONFIG_PATH)
-CARGO_KERNEL = $(KERNEL_CONFIG_ENV) cargo build --target $(TARGET) $(CARGO_PROFILE) $(CARGO_FEATURES)
+CARGO_KERNEL = $(KERNEL_CONFIG_ENV) $(CARGO) build --target $(TARGET) $(CARGO_PROFILE) $(CARGO_FEATURES)
 QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 512M
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
@@ -97,20 +98,20 @@ prepare-config:
 	@if [ "$(CONFIG_FILE)" != ".config" ]; then \
 		test -f "$(CONFIG_FILE)"; \
 	elif ! grep -q '^CONFIG_ARCH_$(shell echo $(ARCH) | tr a-z A-Z)=y$$' .config 2>/dev/null; then \
-		cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) "$(CONFIG_FILE)"; \
+		$(CARGO) run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) "$(CONFIG_FILE)"; \
 	fi
 
 .config: Kconfig $(DEFCONFIG) $(KCONFIG_MANIFEST) tools/kconfig/src/lib.rs tools/kconfig/src/main.rs
-	cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) .config
+	$(CARGO) run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) .config
 
 defconfig:
-	cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) "$(CONFIG_FILE)"
+	$(CARGO) run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- defconfig $(DEFCONFIG) "$(CONFIG_FILE)"
 
 olddefconfig:
-	cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- olddefconfig "$(CONFIG_FILE)" "$(CONFIG_FILE)"
+	$(CARGO) run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- olddefconfig "$(CONFIG_FILE)" "$(CONFIG_FILE)"
 
 config:
-	cargo run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- config "$(CONFIG_FILE)" "$(CONFIG_FILE)"
+	$(CARGO) run --quiet --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- config "$(CONFIG_FILE)" "$(CONFIG_FILE)"
 
 $(GUEST_ASSET_STAMP): $(GUEST_FETCH) tools/guest/init tools/guest/boot.conf tools/guest/alpine-$(ARCH).manifest
 	sh $(GUEST_FETCH)
@@ -128,9 +129,9 @@ build: prepare-config
 	HYPER_KALLSYMS_BLOB= $(CARGO_KERNEL)
 
 image: build
-	cargo run --quiet --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- $(NM) $(KERNEL_ELF) $(KALLSYMS_BLOB)
+	$(CARGO) run --quiet --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- $(NM) $(KERNEL_ELF) $(KALLSYMS_BLOB)
 	HYPER_KALLSYMS_BLOB=$(abspath $(KALLSYMS_BLOB)) $(CARGO_KERNEL)
-	cargo run --quiet --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- $(NM) $(KERNEL_ELF) $(KALLSYMS_FINAL_BLOB)
+	$(CARGO) run --quiet --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- $(NM) $(KERNEL_ELF) $(KALLSYMS_FINAL_BLOB)
 	test "$$(wc -c < $(KALLSYMS_BLOB))" -eq "$$(wc -c < $(KALLSYMS_FINAL_BLOB))"
 	mv $(KALLSYMS_FINAL_BLOB) $(KALLSYMS_BLOB)
 	$(OBJCOPY) --update-section=.kallsyms=$(KALLSYMS_BLOB) $(KERNEL_ELF) $(KALLSYMS_ELF)
@@ -152,23 +153,23 @@ release: image
 	cmp $(KERNEL_IMAGE) $(KERNEL_STRIPPED_IMAGE)
 
 check: prepare-config
-	$(KERNEL_CONFIG_ENV) cargo check --lib --bins --target $(TARGET)
-	$(KERNEL_CONFIG_ENV) cargo clippy --target $(TARGET) -- -D warnings
-	$(KERNEL_CONFIG_ENV) cargo clippy --target $(TARGET) --features kernel-self-test -- -D warnings
-	$(KERNEL_CONFIG_ENV) cargo clippy --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET) --all-targets -- -D warnings
-	cargo clippy --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- -D warnings
-	cargo clippy --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- -D warnings
+	$(KERNEL_CONFIG_ENV) $(CARGO) check --lib --bins --target $(TARGET)
+	$(KERNEL_CONFIG_ENV) $(CARGO) clippy --target $(TARGET) -- -D warnings
+	$(KERNEL_CONFIG_ENV) $(CARGO) clippy --target $(TARGET) --features kernel-self-test -- -D warnings
+	$(KERNEL_CONFIG_ENV) $(CARGO) clippy --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET) --all-targets -- -D warnings
+	$(CARGO) clippy --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET) -- -D warnings
+	$(CARGO) clippy --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET) -- -D warnings
 
 test: prepare-config
-	$(KERNEL_CONFIG_ENV) cargo test --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET)
-	cargo test --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET)
-	cargo test --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET)
+	$(KERNEL_CONFIG_ENV) $(CARGO) test --manifest-path $(HOST_TEST_MANIFEST) --target $(HOST_TARGET)
+	$(CARGO) test --manifest-path $(KCONFIG_MANIFEST) --target $(HOST_TARGET)
+	$(CARGO) test --manifest-path $(KALLSYMS_MANIFEST) --target $(HOST_TARGET)
 
 verify: check test
-	cargo fmt -- --check
-	cargo fmt --manifest-path $(HOST_TEST_MANIFEST) -- --check
-	cargo fmt --manifest-path $(KCONFIG_MANIFEST) -- --check
-	cargo fmt --manifest-path $(KALLSYMS_MANIFEST) -- --check
+	$(CARGO) fmt -- --check
+	$(CARGO) fmt --manifest-path $(HOST_TEST_MANIFEST) -- --check
+	$(CARGO) fmt --manifest-path $(KCONFIG_MANIFEST) -- --check
+	$(CARGO) fmt --manifest-path $(KALLSYMS_MANIFEST) -- --check
 	$(MAKE) verify-runtime ARCH=$(ARCH)
 	$(MAKE) release
 	$(MAKE) test-image ARCH=$(ARCH)
@@ -222,4 +223,4 @@ run: image guest-assets $(QEMU_RUN_PREREQUISITES)
 		-kernel $(KERNEL_IMAGE)
 
 clean:
-	cargo clean
+	$(CARGO) clean
