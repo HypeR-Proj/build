@@ -7,7 +7,6 @@
 /tools/kconfig/target/
 /tools/kconfig/Cargo.lock
 /tools/kallsyms/target/
-/tools/abi/target/
 /.config
 /.idea/
 /.vscode/
