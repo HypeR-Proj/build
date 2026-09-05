@@ -2,17 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 /target/
+/kernel/target/
 /sdk/abi/target/
 /sdk/toolchain/target/
-/tests/host/target/
-/tests/host/Cargo.lock
-/tools/kconfig/target/
-/tools/kconfig/Cargo.lock
-/tools/kallsyms/target/
-/.config
+/kernel/tests/host/target/
+/kernel/tests/host/Cargo.lock
+/kernel/tools/kconfig/target/
+/kernel/tools/kconfig/Cargo.lock
+/kernel/tools/kallsyms/target/
+/kernel/.config
 /.idea/
 /.vscode/
-/.agent/
+/.agent
 *.swp
 *.swo
 *.log
