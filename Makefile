@@ -43,7 +43,28 @@ KERNEL_CONFIG_ENV := HYPER_CONFIG=$(CONFIG_PATH)
 CARGO_KERNEL = $(KERNEL_CONFIG_ENV) $(CARGO) build --target $(TARGET) $(CARGO_PROFILE) $(CARGO_FEATURES)
 QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 512M
+NATIVE_ARCH := aarch64
+SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
+SDK_LIB_SOURCE := $(CURDIR)/sdk/lib
+SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
+SDK_OUTPUT ?= $(CURDIR)/target/sdk/$(NATIVE_ARCH)
+SDK_VERSION ?= source
+SDK_SOURCE_REVISION ?= $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
+SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
+SYSTEM_OUTPUT ?= $(CURDIR)/target/system/$(NATIVE_ARCH)
+NATIVE_INIT := $(SYSTEM_OUTPUT)/init
+NATIVE_INITRAMFS := $(SYSTEM_OUTPUT)/initramfs.cpio
+NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
+NATIVE_RUN_PREREQUISITES :=
+ifeq ($(ARCH),aarch64)
+ifeq ($(origin INITRAMFS),undefined)
+INITRAMFS := $(NATIVE_INITRAMFS)
+NATIVE_RUN_PREREQUISITES := native-initramfs
+endif
+else
 INITRAMFS ?=
+endif
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 RUST_HOST := $(shell rustc -vV | sed -n 's/^host: //p')
 LLVM_BIN := $(shell rustc --print sysroot)/lib/rustlib/$(RUST_HOST)/bin
@@ -60,8 +81,14 @@ UPSTREAM_CLANG := /opt/homebrew/opt/llvm/bin/clang
 ifneq ($(wildcard $(UPSTREAM_CLANG)),)
 export CLANG ?= $(UPSTREAM_CLANG)
 endif
+HOST_CC ?= /usr/bin/clang
+else
+HOST_CC ?= clang
 endif
 CLANG ?= clang
+LLVM_AR ?= $(shell sh scripts/find-llvm-tool.sh llvm-ar)
+LLVM_RANLIB ?= $(shell sh scripts/find-llvm-tool.sh llvm-ranlib)
+HYPER_LD ?= $(shell sh scripts/find-llvm-tool.sh ld.lld)
 
 KERNEL_OUTPUT := target/$(TARGET)/$(KERNEL_PROFILE)
 KERNEL_ELF := $(KERNEL_OUTPUT)/hyper
@@ -91,7 +118,7 @@ GUEST_ASSET_STAMP := $(GUEST_OUTPUT)/.alpine-3.23.5.stamp
 endif
 HOST_INITRD := $(GUEST_OUTPUT)/hypervisor-initrd.cpio
 
-.PHONY: all prepare-config config defconfig olddefconfig guest-assets clean-guest-assets build image release check test test-image test-timer test-qemu verify verify-runtime verify-image verify-boot verify-smp run clean
+.PHONY: all prepare-config config defconfig olddefconfig guest-assets clean-guest-assets build image release check test test-image test-timer test-qemu verify verify-runtime verify-image verify-boot verify-smp sdk sdk-check sdk-test system native-initramfs test-native check-all test-all verify-all run clean
 
 all: image
 
@@ -208,7 +235,80 @@ verify-boot: image
 verify-smp: image
 	$(MAKE) test-qemu ARCH=$(ARCH) QEMU_CPU=$(QEMU_CPU)
 
-run: image $(QEMU_RUN_PREREQUISITES)
+sdk:
+	cd "$(SDK_ABI_SOURCE)" && \
+		CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) run \
+		--target "$(HOST_TARGET)" --features generator --bin hyper-abi -- check
+	HYPER_SDK_VERSION="$(SDK_VERSION)" \
+		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
+		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
+		LLVM_AR="$(LLVM_AR)" LLVM_RANLIB="$(LLVM_RANLIB)" \
+		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" sysroot \
+		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
+		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		OUTPUT="$(SDK_OUTPUT)"
+
+sdk-check:
+	$(CARGO) fmt --manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" -- --check
+	cd "$(SDK_ABI_SOURCE)" && \
+		CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) run \
+		--target "$(HOST_TARGET)" --features generator --bin hyper-abi -- check
+	CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) clippy \
+		--manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" \
+		--target "$(HOST_TARGET)" --all-targets --all-features -- -D warnings
+	HYPER_SDK_VERSION="$(SDK_VERSION)" \
+		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
+		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
+		LLVM_AR="$(LLVM_AR)" LLVM_RANLIB="$(LLVM_RANLIB)" \
+		HYPER_LD="$(HYPER_LD)" \
+		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" check \
+		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
+		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		OUTPUT="$(SDK_OUTPUT)" \
+		TEST_OUTPUT="$(CURDIR)/target/sdk-check" \
+		SMOKE_SOURCE="$(SDK_LIB_SOURCE)/test-app/main.c"
+
+sdk-test:
+	CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) test \
+		--manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" \
+		--target "$(HOST_TARGET)" --all-features
+	cmake -S "$(SDK_LIB_SOURCE)/tests/unit" -B "$(SDK_LIB_TEST_OUTPUT)" \
+		-DCMAKE_C_COMPILER="$(HOST_CC)" \
+		-DHYPER_ABI_INCLUDE_DIR="$(SDK_ABI_SOURCE)/include"
+	cmake --build "$(SDK_LIB_TEST_OUTPUT)"
+	ctest --test-dir "$(SDK_LIB_TEST_OUTPUT)" --output-on-failure
+
+system: sdk
+	mkdir -p "$(SYSTEM_OUTPUT)"
+	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-clang" \
+		-std=c17 -fno-builtin -fvisibility=hidden \
+		-Wall -Wextra -Werror "system/apps/init/main.c" -o "$(NATIVE_INIT)"
+
+$(NEWC_PACK): tools/newc-pack.c
+	mkdir -p "$(dir $(NEWC_PACK))"
+	"$(HOST_CC)" -std=c17 -Wall -Wextra -Werror "$<" -o "$@"
+
+native-initramfs: system $(NEWC_PACK)
+	"$(NEWC_PACK)" 0755 init "$(NATIVE_INIT)" > "$(NATIVE_INITRAMFS).first"
+	"$(NEWC_PACK)" 0755 init "$(NATIVE_INIT)" > "$(NATIVE_INITRAMFS).second"
+	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"
+	mv "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS)"
+	rm -f "$(NATIVE_INITRAMFS).second"
+
+test-native: image native-initramfs
+	sh tests/qemu/verify-native-init.sh \
+		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
+		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
+
+check-all: check sdk-check
+
+test-all: test sdk-test test-native
+
+verify-all: check-all test-all
+
+run: image $(QEMU_RUN_PREREQUISITES) $(NATIVE_RUN_PREREQUISITES)
 	@test -n "$(INITRAMFS)" || { \
 		echo "INITRAMFS must name a newc archive containing an executable /init" >&2; \
 		exit 2; \
