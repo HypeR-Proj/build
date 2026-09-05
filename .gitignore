@@ -4,6 +4,7 @@
 /target/
 /kernel/target/
 /sdk/abi/target/
+/sdk/rust/target/
 /sdk/toolchain/target/
 /kernel/tests/host/target/
 /kernel/tests/host/Cargo.lock

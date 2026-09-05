@@ -15,14 +15,17 @@ future source will share this repository.
 
 ## Current scope
 
-- a static PIE Native `init` process with capability-scoped console echo;
-- reproducible AArch64 compilation through `hyper-clang`;
+- a `no_std` Rust static PIE Native `init` process with capability-scoped
+  console echo;
+- reproducible AArch64 compilation through the installed `hyper-cargo` driver;
 - compilation exclusively against the assembled Native SDK; and
 - end-to-end CI validation with the kernel from the same commit.
 
 `init` consumes the startup metadata prepared by the Kernel, locates its
 explicit Console capability, and waits for and echoes raw console input. It
 does not acquire ambient access to a debug device or platform register bank.
+Application code depends on the safe `hyper-os` binding and does not call the
+raw syscall crate or C runtime directly.
 
 ## Build
 
@@ -39,11 +42,11 @@ application images are written to `target/app/aarch64`.
 
 ```text
 app/
-  init/       Native system bootstrap and service supervision
+  init/       Rust Native system bootstrap and service supervision
 ```
 
-Code shared by multiple utilities will be introduced under a dedicated common
-module only after a concrete second consumer exists.
+Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
+service and command policy remains under `app`.
 
 ## Roadmap
 

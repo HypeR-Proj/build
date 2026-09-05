@@ -20,6 +20,7 @@ KERNEL_IMAGE := $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/sdk/lib
+SDK_RUST_SOURCE := $(CURDIR)/sdk/rust
 SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
 SDK_OUTPUT ?= $(CURDIR)/target/sdk/$(NATIVE_ARCH)
 SDK_VERSION ?= source
@@ -27,6 +28,7 @@ SDK_SOURCE_REVISION ?= $(shell git describe --always --dirty 2>/dev/null || echo
 SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
+APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
 NATIVE_INIT := $(APP_OUTPUT)/init
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
@@ -66,7 +68,7 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	clean-guest-assets build image release check test test-image test-timer \
 	test-qemu verify verify-runtime verify-image verify-boot verify-smp
 
-.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app \
+.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-check \
 	native-initramfs test-native check-all test-all verify-all run clean
 
 all: image
@@ -85,6 +87,7 @@ sdk:
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" sysroot \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
 		OUTPUT="$(SDK_OUTPUT)"
 
 sdk-check:
@@ -95,6 +98,13 @@ sdk-check:
 	CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) clippy \
 		--manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" --all-targets --all-features -- -D warnings
+	$(CARGO) fmt --manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" --all -- --check
+	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust" $(CARGO) clippy \
+		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
+		--workspace --target aarch64-unknown-none --lib -- -D warnings
+	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-host" $(CARGO) clippy \
+		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys --all-targets -- -D warnings
 	HYPER_SDK_VERSION="$(SDK_VERSION)" \
 		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
 		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
@@ -103,6 +113,7 @@ sdk-check:
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" check \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
 		OUTPUT="$(SDK_OUTPUT)" \
 		TEST_OUTPUT="$(CURDIR)/target/sdk-check" \
 		SMOKE_SOURCE="$(SDK_LIB_SOURCE)/test-app/main.c"
@@ -111,6 +122,9 @@ sdk-test:
 	CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) test \
 		--manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" --all-features
+	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-tests" $(CARGO) test \
+		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys
 	cmake -S "$(SDK_LIB_SOURCE)/tests/unit" -B "$(SDK_LIB_TEST_OUTPUT)" \
 		-DCMAKE_C_COMPILER="$(HOST_CC)" \
 		-DHYPER_ABI_INCLUDE_DIR="$(SDK_ABI_SOURCE)/include"
@@ -119,11 +133,22 @@ sdk-test:
 
 app: sdk
 	mkdir -p "$(APP_OUTPUT)"
-	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
+		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-clang" \
-		-std=c17 -fno-builtin -fvisibility=hidden \
-		-Wall -Wextra -Werror "app/init/main.c" -o "$(NATIVE_INIT)"
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		--manifest-path "app/init/Cargo.toml" --release --locked --offline
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-init" \
+		"$(NATIVE_INIT)"
+
+app-check: sdk
+	$(CARGO) fmt --manifest-path "app/init/Cargo.toml" -- --check
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
+		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
+		--manifest-path "app/init/Cargo.toml" --locked --offline -- -D warnings
 
 $(NEWC_PACK): tools/newc-pack.c
 	mkdir -p "$(dir $(NEWC_PACK))"
@@ -141,7 +166,7 @@ test-native: image native-initramfs
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
 		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
 
-check-all: check sdk-check
+check-all: check sdk-check app-check
 
 test-all: test sdk-test test-native
 
