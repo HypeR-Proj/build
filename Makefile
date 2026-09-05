@@ -43,6 +43,7 @@ KERNEL_CONFIG_ENV := HYPER_CONFIG=$(CONFIG_PATH)
 CARGO_KERNEL = $(KERNEL_CONFIG_ENV) $(CARGO) build --target $(TARGET) $(CARGO_PROFILE) $(CARGO_FEATURES)
 QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 512M
+INITRAMFS ?=
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 RUST_HOST := $(shell rustc -vV | sed -n 's/^host: //p')
 LLVM_BIN := $(shell rustc --print sysroot)/lib/rustlib/$(RUST_HOST)/bin
@@ -207,7 +208,15 @@ verify-boot: image
 verify-smp: image
 	$(MAKE) test-qemu ARCH=$(ARCH) QEMU_CPU=$(QEMU_CPU)
 
-run: image guest-assets $(QEMU_RUN_PREREQUISITES)
+run: image $(QEMU_RUN_PREREQUISITES)
+	@test -n "$(INITRAMFS)" || { \
+		echo "INITRAMFS must name a newc archive containing an executable /init" >&2; \
+		exit 2; \
+	}
+	@test -f "$(INITRAMFS)" || { \
+		echo "INITRAMFS does not exist: $(INITRAMFS)" >&2; \
+		exit 2; \
+	}
 	$(QEMU) \
 		-machine $(QEMU_MACHINE) \
 		-cpu $(QEMU_CPU) \
@@ -219,7 +228,7 @@ run: image guest-assets $(QEMU_RUN_PREREQUISITES)
 		-monitor none \
 		-no-reboot \
 		-append "$(QEMU_BOOTARGS)" \
-		-initrd $(HOST_INITRD) $(QEMU_DTB_ARG) \
+		-initrd "$(INITRAMFS)" $(QEMU_DTB_ARG) \
 		-kernel $(KERNEL_IMAGE)
 
 clean:
