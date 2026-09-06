@@ -49,6 +49,18 @@ path = "command/echo.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "hyper-ps"
+path = "command/ps.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "hyper-handle"
+path = "command/handle.rs"
+test = false
+bench = false
+
 [dependencies]
 hyper-os = "=0.0.0"
 hyper-rt = "=0.0.0"

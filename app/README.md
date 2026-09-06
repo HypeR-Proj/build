@@ -82,14 +82,26 @@ app/
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
 service and command policy remains under `app`.
 
+## Diagnostic commands
+
+`ps` lists Processes by default, including their immutable service label,
+lifecycle state, and active/pending Thread counts. `ps --threads` (or `ps -T`)
+also places every visible Thread directly below its owning Process and lists
+kernel Threads with `-` as the owner. `handle <process-koid>` decodes the
+selected Process's handle kinds, rights, and object purposes; `handle
+--objects` reports the visible kernel-object graph. Both commands require
+explicit inspector capabilities, and every displayed KOID remains diagnostic
+metadata rather than authority.
+
 ## Roadmap
 
 - add capability-rendezvous foreground-session handoff and WaitSet-backed
   multi-service supervision;
 - grow the command set around typed service APIs without introducing ambient
   namespaces or a generic message envelope;
-- add `ps` after typed process and thread inspection interfaces are public;
-- add capability-aware diagnostics and administration utilities; and
+- extend capability-aware diagnostics beyond the existing `ps` and `handle`
+  tools;
+- add command help and stable machine-readable output modes; and
 - produce signed static PIE application images through HypeR Toolchain.
 
 ## License

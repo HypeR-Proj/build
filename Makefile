@@ -35,6 +35,8 @@ NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
 NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
 NATIVE_SHELL := $(APP_OUTPUT)/sh
 NATIVE_ECHO := $(APP_OUTPUT)/echo
+NATIVE_PS := $(APP_OUTPUT)/ps
+NATIVE_HANDLE := $(APP_OUTPUT)/handle
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
@@ -163,6 +165,12 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
 		"$(NATIVE_ECHO)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-ps" \
+		"$(NATIVE_PS)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-handle" \
+		"$(NATIVE_HANDLE)"
 
 app-check: sdk
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
@@ -194,6 +202,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
+		0755 bin/ps "$(NATIVE_PS)" \
+		0755 bin/handle "$(NATIVE_HANDLE)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).first"
 	"$(NEWC_PACK)" \
@@ -203,6 +213,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
+		0755 bin/ps "$(NATIVE_PS)" \
+		0755 bin/handle "$(NATIVE_HANDLE)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).second"
 	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"
