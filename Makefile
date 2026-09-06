@@ -30,6 +30,10 @@ SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
 APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
 NATIVE_INIT := $(APP_OUTPUT)/init
+NATIVE_SESSION_SERVICE := $(APP_OUTPUT)/session-service
+NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
+NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
+NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 
@@ -68,7 +72,7 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	clean-guest-assets build image release check test test-image test-timer \
 	test-qemu verify verify-runtime verify-image verify-boot verify-smp
 
-.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-check \
+.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-check app-test \
 	native-initramfs test-native check-all test-all verify-all run clean
 
 all: image
@@ -137,26 +141,56 @@ app: sdk
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "app/init/Cargo.toml" --release --locked --offline
+		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-init" \
 		"$(NATIVE_INIT)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-session-service" \
+		"$(NATIVE_SESSION_SERVICE)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-console-input" \
+		"$(NATIVE_CONSOLE_INPUT)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-console-output" \
+		"$(NATIVE_CONSOLE_OUTPUT)"
 
 app-check: sdk
-	$(CARGO) fmt --manifest-path "app/init/Cargo.toml" -- --check
+	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
-		--manifest-path "app/init/Cargo.toml" --locked --offline -- -D warnings
+		--manifest-path "app/Cargo.toml" --workspace --locked --offline -- -D warnings
+
+app-test: sdk
+	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
+		--manifest-path "app/Cargo.toml" --lib \
+		--target "$(HOST_TARGET)" --locked --offline \
+		--config "patch.crates-io.hyper-abi.path = '$(SDK_OUTPUT)/share/hyper/abi'" \
+		--config "patch.crates-io.hyper-os.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-os'" \
+		--config "patch.crates-io.hyper-rt.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-rt'" \
+		--config "patch.crates-io.hyper-sys.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-sys'"
 
 $(NEWC_PACK): tools/newc-pack.c
 	mkdir -p "$(dir $(NEWC_PACK))"
 	"$(HOST_CC)" -std=c17 -Wall -Wextra -Werror "$<" -o "$@"
 
 native-initramfs: app $(NEWC_PACK)
-	"$(NEWC_PACK)" 0755 init "$(NATIVE_INIT)" > "$(NATIVE_INITRAMFS).first"
-	"$(NEWC_PACK)" 0755 init "$(NATIVE_INIT)" > "$(NATIVE_INITRAMFS).second"
+	"$(NEWC_PACK)" \
+		0755 init "$(NATIVE_INIT)" \
+		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
+		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
+		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
+		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
+		> "$(NATIVE_INITRAMFS).first"
+	"$(NEWC_PACK)" \
+		0755 init "$(NATIVE_INIT)" \
+		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
+		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
+		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
+		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
+		> "$(NATIVE_INITRAMFS).second"
 	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"
 	mv "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS)"
 	rm -f "$(NATIVE_INITRAMFS).second"
@@ -168,7 +202,7 @@ test-native: image native-initramfs
 
 check-all: check sdk-check app-check
 
-test-all: test sdk-test test-native
+test-all: test sdk-test app-test test-native
 
 verify-all: check-all test-all
 
