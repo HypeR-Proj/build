@@ -33,6 +33,8 @@ NATIVE_INIT := $(APP_OUTPUT)/init
 NATIVE_SESSION_SERVICE := $(APP_OUTPUT)/session-service
 NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
 NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
+NATIVE_SHELL := $(APP_OUTPUT)/sh
+NATIVE_ECHO := $(APP_OUTPUT)/echo
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
@@ -108,7 +110,8 @@ sdk-check:
 		--workspace --target aarch64-unknown-none --lib -- -D warnings
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-host" $(CARGO) clippy \
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
-		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys --all-targets -- -D warnings
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys \
+		--all-targets -- -D warnings
 	HYPER_SDK_VERSION="$(SDK_VERSION)" \
 		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
 		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
@@ -154,6 +157,12 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-console-output" \
 		"$(NATIVE_CONSOLE_OUTPUT)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-shell" \
+		"$(NATIVE_SHELL)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
+		"$(NATIVE_ECHO)"
 
 app-check: sdk
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
@@ -170,6 +179,7 @@ app-test: sdk
 		--config "patch.crates-io.hyper-abi.path = '$(SDK_OUTPUT)/share/hyper/abi'" \
 		--config "patch.crates-io.hyper-os.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-os'" \
 		--config "patch.crates-io.hyper-rt.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-rt'" \
+		--config "patch.crates-io.hyper-service.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-service'" \
 		--config "patch.crates-io.hyper-sys.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-sys'"
 
 $(NEWC_PACK): tools/newc-pack.c
@@ -182,6 +192,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
 		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
+		0755 bin/sh "$(NATIVE_SHELL)" \
+		0755 bin/echo "$(NATIVE_ECHO)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).first"
 	"$(NEWC_PACK)" \
@@ -189,6 +201,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
 		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
+		0755 bin/sh "$(NATIVE_SHELL)" \
+		0755 bin/echo "$(NATIVE_ECHO)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).second"
 	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"

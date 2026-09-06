@@ -19,6 +19,8 @@ future source will share this repository.
 - a bounded, declarative service manifest loaded by `init` from BootFs;
 - direction-attenuated physical Console workers and an isolated foreground
   session manager;
+- a bounded interactive shell which launches commands with explicit process
+  authorities and handle-backed standard I/O;
 - reproducible AArch64 compilation through the installed `hyper-cargo` driver;
 - compilation exclusively against the assembled Native SDK; and
 - end-to-end CI validation with the kernel from the same commit.
@@ -31,7 +33,7 @@ transactional `ProcessBuilder` ABI. Normal bytes currently follow this route:
 
 ```text
 physical Console <-> Console input/output workers <-> raw ByteChannels
-                 <-> foreground session manager
+                 <-> foreground session manager <-> shell <-> command
 ```
 
 Init retains management authority. Each Console worker receives only one
@@ -39,9 +41,20 @@ physical direction plus one matching byte-channel direction; the session
 manager receives no physical Console authority. Capability attenuation is
 monotonic and none of the children can duplicate or transfer these endpoints.
 The two blocking workers provide a genuinely duplex data plane without
-polling or a generic per-byte protocol header. Application code depends on the
-safe `hyper-os` binding and does not call the raw syscall crate or C runtime
+polling or a generic per-byte protocol header. Manifest purposes are symbolic,
+image-scoped service-contract names; init resolves them to typed startup
+purposes before creating any process. Application code depends on the safe
+`hyper-os` binding and does not call the raw syscall crate or C runtime
 directly.
+
+The initial shell provides bounded line editing, quoting and escaping, `help`,
+`echo`, `clear`, and `exit`, plus external command launch from `/bin`. It does
+not receive ambient process creation: init delegates only a read-only BootFs
+root and attenuated TaskFactory, TaskGroup, and ResourceDomain handles. Each
+command receives fresh ByteChannel endpoints under the standard typed I/O
+contract. The shell waits on command output, input, and process termination in
+one kernel-backed multi-object wait and inspects the Process handle for its
+terminal result.
 
 ## Build
 
@@ -60,8 +73,10 @@ application images are written to `target/app/aarch64`.
 app/
   config/             Boot service manifest
   console/            Direction-attenuated physical data-plane workers
+  command/            Small standalone Native commands
   init/               Native system bootstrap and supervision
   session/            Initial foreground-session policy
+  shell/              Interactive command parsing and process launch
 ```
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
@@ -71,6 +86,8 @@ service and command policy remains under `app`.
 
 - add capability-rendezvous foreground-session handoff and WaitSet-backed
   multi-service supervision;
+- grow the command set around typed service APIs without introducing ambient
+  namespaces or a generic message envelope;
 - add `ps` after typed process and thread inspection interfaces are public;
 - add capability-aware diagnostics and administration utilities; and
 - produce signed static PIE application images through HypeR Toolchain.
