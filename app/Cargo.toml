@@ -67,6 +67,18 @@ path = "command/ls.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "hyper-free"
+path = "command/free.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "hyper-top"
+path = "command/top.rs"
+test = false
+bench = false
+
 [dependencies]
 hyper-os = "=0.0.0"
 hyper-rt = "=0.0.0"

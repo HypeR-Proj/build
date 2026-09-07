@@ -41,6 +41,8 @@ NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
 NATIVE_PS := $(APP_OUTPUT)/ps
 NATIVE_HANDLE := $(APP_OUTPUT)/handle
 NATIVE_LS := $(APP_OUTPUT)/ls
+NATIVE_FREE := $(APP_OUTPUT)/free
+NATIVE_TOP := $(APP_OUTPUT)/top
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
@@ -185,6 +187,12 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-ls" \
 		"$(NATIVE_LS)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-free" \
+		"$(NATIVE_FREE)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-top" \
+		"$(NATIVE_TOP)"
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
@@ -237,6 +245,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 bin/ps "$(NATIVE_PS)" \
 		0755 bin/handle "$(NATIVE_HANDLE)" \
 		0755 bin/ls "$(NATIVE_LS)" \
+		0755 bin/free "$(NATIVE_FREE)" \
+		0755 bin/top "$(NATIVE_TOP)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
@@ -254,6 +264,8 @@ native-initramfs: app $(NEWC_PACK)
 		0755 bin/ps "$(NATIVE_PS)" \
 		0755 bin/handle "$(NATIVE_HANDLE)" \
 		0755 bin/ls "$(NATIVE_LS)" \
+		0755 bin/free "$(NATIVE_FREE)" \
+		0755 bin/top "$(NATIVE_TOP)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
