@@ -20,6 +20,7 @@ KERNEL_IMAGE := $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/sdk/lib
+SDK_LOADER_SOURCE := $(CURDIR)/sdk/loader
 SDK_RUST_SOURCE := $(CURDIR)/sdk/rust
 SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
 SDK_OUTPUT ?= $(CURDIR)/target/sdk/$(NATIVE_ARCH)
@@ -29,16 +30,22 @@ SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
 APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
+APP_STATIC_CARGO_OUTPUT := $(CURDIR)/target/app-cargo-static/$(NATIVE_ARCH)
 NATIVE_INIT := $(APP_OUTPUT)/init
 NATIVE_SESSION_SERVICE := $(APP_OUTPUT)/session-service
 NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
 NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
 NATIVE_SHELL := $(APP_OUTPUT)/sh
 NATIVE_ECHO := $(APP_OUTPUT)/echo
+NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
 NATIVE_PS := $(APP_OUTPUT)/ps
 NATIVE_HANDLE := $(APP_OUTPUT)/handle
+NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
+NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
+NATIVE_LOADER := $(SDK_OUTPUT)/lib/ld-hyper-aarch64.so
+NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
@@ -92,9 +99,11 @@ sdk:
 		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
 		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
 		LLVM_AR="$(LLVM_AR)" LLVM_RANLIB="$(LLVM_RANLIB)" \
+		HYPER_LD="$(HYPER_LD)" \
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" sysroot \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		LOADER_SOURCE="$(SDK_LOADER_SOURCE)" \
 		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
 		OUTPUT="$(SDK_OUTPUT)"
 
@@ -122,6 +131,7 @@ sdk-check:
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" check \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		LOADER_SOURCE="$(SDK_LOADER_SOURCE)" \
 		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
 		OUTPUT="$(SDK_OUTPUT)" \
 		TEST_OUTPUT="$(CURDIR)/target/sdk-check" \
@@ -171,6 +181,23 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-handle" \
 		"$(NATIVE_HANDLE)"
+	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
+		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		--manifest-path "app/Cargo.toml" --bin hyper-echo --release --locked --offline
+	install -m 0755 \
+		"$(APP_STATIC_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
+		"$(NATIVE_STATIC_ECHO)"
+	"$(SDK_OUTPUT)/bin/hyper-brand-elf" --check-static "$(NATIVE_STATIC_ECHO)"
+	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-clang" \
+		"$(CURDIR)/tests/native/dynamic-smoke.c" -o "$(NATIVE_DYNAMIC_TEST)"
+	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-clang" -std=c17 -Wall -Wextra -Werror -shared \
+		-Wl,-soname,libdynamic-probe.so \
+		"$(CURDIR)/tests/native/dynamic-probe.c" \
+		-o "$(NATIVE_DYNAMIC_PLUGIN)"
 
 app-check: sdk
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
@@ -202,8 +229,13 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
+		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
 		0755 bin/ps "$(NATIVE_PS)" \
 		0755 bin/handle "$(NATIVE_HANDLE)" \
+		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
+		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
+		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
+		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).first"
 	"$(NEWC_PACK)" \
@@ -213,8 +245,13 @@ native-initramfs: app $(NEWC_PACK)
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
+		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
 		0755 bin/ps "$(NATIVE_PS)" \
 		0755 bin/handle "$(NATIVE_HANDLE)" \
+		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
+		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
+		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
+		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
 		> "$(NATIVE_INITRAMFS).second"
 	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"

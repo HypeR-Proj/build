@@ -15,7 +15,7 @@ future source will share this repository.
 
 ## Current scope
 
-- a `no_std` Rust static PIE Native `init` supervisor;
+- a `no_std` Rust dynamic PIE Native `init` supervisor;
 - a bounded, declarative service manifest loaded by `init` through a root
   `Directory` capability;
 - direction-attenuated physical Console workers and an isolated foreground
@@ -65,8 +65,11 @@ From the repository root, run:
 make app
 ```
 
-The generated SDK is placed under `target/sdk/aarch64`, and static PIE
-application images are written to `target/app/aarch64`.
+The generated SDK is placed under `target/sdk/aarch64`, and dynamic PIE
+application images are written to `target/app/aarch64` by default. Applications
+may set `HYPER_LINK_MODE=static` to select the SDK's equivalent `libhyper.a`
+link path; the integration image includes and executes one static Rust command
+as a contract test.
 
 ## Repository layout
 
@@ -103,7 +106,7 @@ metadata rather than authority.
 - extend capability-aware diagnostics beyond the existing `ps` and `handle`
   tools;
 - add command help and stable machine-readable output modes; and
-- produce signed static PIE application images through HypeR Toolchain.
+- produce signed Native application images through HypeR Toolchain.
 
 ## License
 
