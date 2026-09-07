@@ -16,7 +16,8 @@ future source will share this repository.
 ## Current scope
 
 - a `no_std` Rust static PIE Native `init` supervisor;
-- a bounded, declarative service manifest loaded by `init` from BootFs;
+- a bounded, declarative service manifest loaded by `init` through a root
+  `Directory` capability;
 - direction-attenuated physical Console workers and an isolated foreground
   session manager;
 - a bounded interactive shell which launches commands with explicit process
@@ -26,7 +27,7 @@ future source will share this repository.
 - end-to-end CI validation with the kernel from the same commit.
 
 The Kernel starts only `/init` and supplies the minimum bootstrap authorities:
-BootFs, process-construction authority, resource and task ownership, and a
+the root `Directory`, process-construction authority, resource and task ownership, and a
 Console capability. `init` validates `/etc/hyper/services.json` before it
 starts any child, then constructs services in dependency order through the
 transactional `ProcessBuilder` ABI. Normal bytes currently follow this route:
@@ -49,8 +50,8 @@ directly.
 
 The initial shell provides bounded line editing, quoting and escaping, `help`,
 `echo`, `clear`, and `exit`, plus external command launch from `/bin`. It does
-not receive ambient process creation: init delegates only a read-only BootFs
-root and attenuated TaskFactory, TaskGroup, and ResourceDomain handles. Each
+not receive ambient process creation: init delegates only a read-only root
+`Directory` and attenuated TaskFactory, TaskGroup, and ResourceDomain handles. Each
 command receives fresh ByteChannel endpoints under the standard typed I/O
 contract. The shell waits on command output, input, and process termination in
 one kernel-backed multi-object wait and inspects the Process handle for its
