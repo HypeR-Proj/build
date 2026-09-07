@@ -48,14 +48,16 @@ purposes before creating any process. Application code depends on the safe
 `hyper-os` binding and does not call the raw syscall crate or C runtime
 directly.
 
-The initial shell provides bounded line editing, quoting and escaping, `help`,
-`echo`, `clear`, and `exit`, plus external command launch from `/bin`. It does
-not receive ambient process creation: init delegates only a read-only root
-`Directory` and attenuated TaskFactory, TaskGroup, and ResourceDomain handles. Each
-command receives fresh ByteChannel endpoints under the standard typed I/O
-contract. The shell waits on command output, input, and process termination in
-one kernel-backed multi-object wait and inspects the Process handle for its
-terminal result.
+The initial shell provides bounded line editing, quoting and escaping, `cd`,
+`pwd`, `help`, `echo`, `clear`, and `exit`, plus external command launch from `/bin`.
+It does not receive ambient process creation: init delegates an immutable root
+`Directory` plus attenuated TaskFactory, TaskGroup, and ResourceDomain handles.
+The shell keeps the root private, resolves parent-directory changes itself, and
+gives each command only a read-only handle rooted at its current directory.
+Commands cannot use `..` to acquire parent authority. Each command also receives
+fresh ByteChannel endpoints under the standard typed I/O contract. The shell
+waits on command output, input, and process termination in one kernel-backed
+multi-object wait and inspects the Process handle for its terminal result.
 
 ## Build
 
@@ -88,7 +90,9 @@ service and command policy remains under `app`.
 
 ## Diagnostic commands
 
-`ps` lists Processes by default, including their immutable service label,
+`ls` enumerates the current Directory capability, or one relative descendant,
+without receiving the shell's root authority. `ps` lists Processes by default,
+including their immutable service label,
 lifecycle state, and active/pending Thread counts. `ps --threads` (or `ps -T`)
 also places every visible Thread directly below its owning Process and lists
 kernel Threads with `-` as the owner. `handle <process-koid>` decodes the
