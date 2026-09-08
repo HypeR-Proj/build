@@ -43,6 +43,8 @@ NATIVE_HANDLE := $(APP_OUTPUT)/handle
 NATIVE_LS := $(APP_OUTPUT)/ls
 NATIVE_FREE := $(APP_OUTPUT)/free
 NATIVE_TOP := $(APP_OUTPUT)/top
+NATIVE_VM_MANAGER := $(APP_OUTPUT)/vm-manager
+NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
@@ -50,6 +52,9 @@ NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_LOADER := $(SDK_OUTPUT)/lib/ld-hyper-aarch64.so
 NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
+FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
+FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
+NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/aarch64/alpine.itb
 
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 ifeq ($(shell uname -s),Darwin)
@@ -87,7 +92,7 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	test-qemu verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-check app-test \
-	native-initramfs test-native check-all test-all verify-all run clean
+	fit-pack guest-itb native-initramfs test-native check-all test-all verify-all run clean
 
 all: image
 
@@ -124,8 +129,12 @@ sdk-check:
 		--workspace --target aarch64-unknown-none --lib -- -D warnings
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-host" $(CARGO) clippy \
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
-		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys \
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image \
 		--all-targets -- -D warnings
+	$(CARGO) fmt --manifest-path "tools/fit-pack/Cargo.toml" -- --check
+	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) clippy \
+		--manifest-path "tools/fit-pack/Cargo.toml" \
+		--target "$(HOST_TARGET)" --all-targets -- -D warnings
 	HYPER_SDK_VERSION="$(SDK_VERSION)" \
 		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
 		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
@@ -146,7 +155,9 @@ sdk-test:
 		--target "$(HOST_TARGET)" --all-features
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-tests" $(CARGO) test \
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
-		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image
+	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) test \
+		--manifest-path "tools/fit-pack/Cargo.toml" --target "$(HOST_TARGET)"
 	cmake -S "$(SDK_LIB_SOURCE)/tests/unit" -B "$(SDK_LIB_TEST_OUTPUT)" \
 		-DCMAKE_C_COMPILER="$(HOST_CC)" \
 		-DHYPER_ABI_INCLUDE_DIR="$(SDK_ABI_SOURCE)/include"
@@ -193,6 +204,12 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-top" \
 		"$(NATIVE_TOP)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vm-manager" \
+		"$(NATIVE_VM_MANAGER)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vm-runtime" \
+		"$(NATIVE_VM_RUNTIME)"
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
@@ -227,13 +244,26 @@ app-test: sdk
 		--config "patch.crates-io.hyper-os.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-os'" \
 		--config "patch.crates-io.hyper-rt.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-rt'" \
 		--config "patch.crates-io.hyper-service.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-service'" \
+		--config "patch.crates-io.hyper-vm-image.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-vm-image'" \
 		--config "patch.crates-io.hyper-sys.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-sys'"
 
 $(NEWC_PACK): tools/newc-pack.c
 	mkdir -p "$(dir $(NEWC_PACK))"
 	"$(HOST_CC)" -std=c17 -Wall -Wextra -Werror "$<" -o "$@"
 
-native-initramfs: app $(NEWC_PACK)
+fit-pack:
+	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) build \
+		--manifest-path "tools/fit-pack/Cargo.toml" --release
+
+guest-itb: fit-pack
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH=aarch64
+	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" arm64 134217728 1 \
+		"$(KERNEL_DIRECTORY)/target/guest/aarch64/Image" \
+		0x40200000 0x40200000 \
+		"$(KERNEL_DIRECTORY)/target/guest/aarch64/initramfs.cpio.gz" \
+		"console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7"
+
+native-initramfs: app $(NEWC_PACK) guest-itb
 	"$(NEWC_PACK)" \
 		0755 init "$(NATIVE_INIT)" \
 		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
@@ -247,6 +277,9 @@ native-initramfs: app $(NEWC_PACK)
 		0755 bin/ls "$(NATIVE_LS)" \
 		0755 bin/free "$(NATIVE_FREE)" \
 		0755 bin/top "$(NATIVE_TOP)" \
+		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
+		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
+		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
@@ -266,6 +299,9 @@ native-initramfs: app $(NEWC_PACK)
 		0755 bin/ls "$(NATIVE_LS)" \
 		0755 bin/free "$(NATIVE_FREE)" \
 		0755 bin/top "$(NATIVE_TOP)" \
+		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
+		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
+		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \

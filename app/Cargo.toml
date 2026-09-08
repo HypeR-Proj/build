@@ -79,10 +79,23 @@ path = "command/top.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "hyper-vm-manager"
+path = "vm/manager.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "hyper-vm-runtime"
+path = "vm/runtime.rs"
+test = false
+bench = false
+
 [dependencies]
 hyper-os = "=0.0.0"
 hyper-rt = "=0.0.0"
 hyper-service = "=0.0.0"
+hyper-vm-image = "=0.0.0"
 
 [lints.clippy]
 doc_markdown = "deny"

@@ -48,6 +48,13 @@ purposes before creating any process. Application code depends on the safe
 `hyper-os` binding and does not call the raw syscall crate or C runtime
 directly.
 
+The same manifest selects the initial guest through an `initial-vm.image`
+path. Init validates this as a canonical absolute path, opens it through its
+root Directory authority, and transfers the resulting opaque File capability
+to the unique service which declares the VM provisioning contract. Neither the
+VM manager nor the runtime infers guest identity from a built-in path or
+process name.
+
 The initial shell provides bounded line editing, quoting and escaping, `cd`,
 `pwd`, `help`, `echo`, `clear`, and `exit`, plus external command launch from `/bin`.
 It does not receive ambient process creation: init delegates an immutable root
