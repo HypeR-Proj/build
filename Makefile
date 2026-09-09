@@ -48,6 +48,7 @@ NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
 NATIVE_VMM := $(APP_OUTPUT)/vmm
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
+NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_LOADER := $(SDK_OUTPUT)/lib/ld-hyper-aarch64.so
@@ -170,7 +171,7 @@ app: sdk
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
 		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-init" \
@@ -217,7 +218,7 @@ app: sdk
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
 		--manifest-path "app/Cargo.toml" --bin hyper-echo --release --locked --offline
 	install -m 0755 \
 		"$(APP_STATIC_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
@@ -231,13 +232,16 @@ app: sdk
 		-Wl,-soname,libdynamic-probe.so \
 		"$(CURDIR)/tests/native/dynamic-probe.c" \
 		-o "$(NATIVE_DYNAMIC_PLUGIN)"
+	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		sh sdk/toolchain/scripts/check-rust-std.sh "$(SDK_OUTPUT)" \
+		"$(NATIVE_STD_TEST_OUTPUT)" sdk/toolchain/tests/std-smoke/Cargo.toml
 
 app-check: sdk
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
+		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
 		--manifest-path "app/Cargo.toml" --workspace --locked --offline -- -D warnings
 
 app-test: sdk
@@ -286,6 +290,8 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
 		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
+		0755 bin/std-test "$(NATIVE_STD_TEST_OUTPUT)/std-dynamic" \
+		0755 bin/std-test-static "$(NATIVE_STD_TEST_OUTPUT)/std-static" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
@@ -309,6 +315,8 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
 		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
 		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
+		0755 bin/std-test "$(NATIVE_STD_TEST_OUTPUT)/std-dynamic" \
+		0755 bin/std-test-static "$(NATIVE_STD_TEST_OUTPUT)/std-static" \
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \

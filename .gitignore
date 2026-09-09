@@ -8,6 +8,7 @@
 /sdk/rust/target/
 /sdk/toolchain/target/
 /sdk/toolchain/tests/rust-smoke/target/
+/sdk/toolchain/tests/std-smoke/target/
 /tools/fit-pack/target/
 /kernel/tests/host/target/
 /kernel/tests/host/Cargo.lock
