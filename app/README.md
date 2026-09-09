@@ -13,11 +13,32 @@ implementation sources.
 VM management remains a distinct security boundary within this repository. A
 long-lived fleet manager owns definitions and policy, isolated per-VM runtimes
 own guest construction and execution handles, and a separate `vmm` client
-receives only the control or virtual-serial authority needed for one command.
+receives only the control or runtime byte-channel authority needed for one command.
+
+## Application development
+
+All 14 executables use the SDK's partial Rust std port. Command-line interfaces
+use clap, shell words use shlex, and formatting, collections, paths, and ordinary
+command output use std. `echo` keeps option-looking text literal, including
+`--help` and `-n`; other public commands provide clap help and reject extra or
+conflicting arguments. Shell builtins use `try_parse_from` so help and argument
+errors return to the prompt rather than terminating the shell. Shell quoting
+follows POSIX shlex rules, including comments and double-quote escaping.
+
+`hyper_rt::process::startup()` transfers Native capabilities once to a std
+application. The runtime retains standard streams and the bootstrap Console
+through std cleanup and TLS destruction. Use `std::io` for ordinary output;
+borrowed runtime handles are available for Native readiness waits and routing.
+
+Native directory/process/VM operations and service channel multiplexing still
+use hyper-os: the partial std port does not implement these capability APIs.
+The bootstrap manifest keeps its restrictive schema parser (including duplicate
+field and escape rejection); its bounded collections now use Vec storage.
+`make app-check`, `make app-test`, and `make test-native` validate the migration.
 
 ## Current scope
 
-- a `no_std` Rust dynamic PIE Native `init` supervisor;
+- Rust std applications with ordinary `main`, built as Native dynamic PIE;
 - a bounded, declarative service manifest loaded by `init` through a root
   `Directory` capability;
 - direction-attenuated physical Console workers and an isolated foreground
@@ -60,14 +81,16 @@ VM manager nor the runtime infers guest identity from a built-in path or
 process name.
 
 The manager retains the read-only VM definition and creates a fresh resource
-domain, task group, creation lease, runtime process, and `VirtualSerial` for
+domain, task group, creation lease, runtime process, and console connector for
 every start. The current fleet contains one definition named `default` and at
 most one active instance. Its control connector accepts multiple clients;
 every shell invocation creates private control and capability channels before
 launching `/bin/vmm`, so an attached console does not prevent another physical
 session from issuing a lifecycle or status request. Management messages remain
-on the control plane. Guest bytes use a separate `VirtualSerial` handle, and
-the manager grants that data plane to at most one client at a time.
+on the control plane. Guest bytes flow through a ByteChannel supplied to the VM runtime, and
+the manager grants that connection to at most one client at a time. The runtime
+allocates and registers a whole-page shared ring with the kernel, collects it
+every 10 ms, and owns output retention and nonblocking client forwarding.
 
 `vmm` accepts the following commands:
 
@@ -110,14 +133,29 @@ as a contract test.
 
 ```text
 app/
-  config/             Boot service manifest
-  console/            Direction-attenuated physical data-plane workers
-  command/            Small standalone Native commands
-  init/               Native system bootstrap and supervision
-  session/            Initial foreground-session policy
-  shell/              Interactive command parsing and process launch
-  vm/                 Fleet manager, per-VM runtime, and vmm client
+  Cargo.toml          Workspace, dependency versions, and shared lints
+  echo/ free/ handle/ ls/ ps/ top/
+  console-input/ console-output/
+  init/
+    config/           Boot service manifest (installed as /etc/hyper/services.json)
+    src/              Bootstrap and supervision
+    tests/            Manifest, supervision, and diagnostic unit tests
+  session/
+  shell/
+  vm-manager/ vm-runtime/ vmm/
+  vm-policy/          Resource policy shared by init and the VM manager
 ```
+
+Each executable is its own Cargo package with `src/main.rs`. Its clap types
+and reusable implementation modules live in its own `src/`; unit-test bodies
+live in its own `tests/` and are included by that package's library. Packages
+set `autotests = false` so Cargo does not also treat these unit-test files as
+standalone integration targets. No command tests are loaded by init.
+
+Run all host tests with `make app-test`, or select one package, for example
+`cargo test --manifest-path app/Cargo.toml -p hyper-ls --lib`, supplying the
+assembled SDK patches as in the Makefile. `make app-check` and `make app` cover
+all workspace members. Target executable names and installed paths are unchanged.
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
 service and command policy remains under `app`.
@@ -143,7 +181,7 @@ metadata rather than authority.
   namespaces or a generic message envelope;
 - extend capability-aware diagnostics beyond the existing `ps` and `handle`
   tools;
-- add command help and stable machine-readable output modes; and
+- add stable machine-readable output modes; and
 - produce signed Native application images through HypeR Toolchain.
 
 ## License

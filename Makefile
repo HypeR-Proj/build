@@ -49,7 +49,7 @@ NATIVE_VMM := $(APP_OUTPUT)/vmm
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check
-NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
+NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_LOADER := $(SDK_OUTPUT)/lib/ld-hyper-aarch64.so
 NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
@@ -93,8 +93,8 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	clean-guest-assets build image release check test test-image test-timer \
 	test-qemu verify verify-runtime verify-image verify-boot verify-smp
 
-.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-check app-test \
-	fit-pack guest-itb native-initramfs test-native check-all test-all verify-all run clean
+.PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
+	fit-pack guest-itb native-initramfs test-native test-runtime-crash check-all test-all verify-all run clean
 
 all: image
 
@@ -166,62 +166,66 @@ sdk-test:
 	cmake --build "$(SDK_LIB_TEST_OUTPUT)"
 	ctest --test-dir "$(SDK_LIB_TEST_OUTPUT)" --output-on-failure
 
-app: sdk
+app-fetch: sdk
+	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" fetch --manifest-path "app/Cargo.toml" --locked
+
+app: app-fetch
 	mkdir -p "$(APP_OUTPUT)"
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
 		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-init" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-init" \
 		"$(NATIVE_INIT)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-session-service" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-session-service" \
 		"$(NATIVE_SESSION_SERVICE)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-console-input" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-console-input" \
 		"$(NATIVE_CONSOLE_INPUT)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-console-output" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-console-output" \
 		"$(NATIVE_CONSOLE_OUTPUT)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-shell" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-shell" \
 		"$(NATIVE_SHELL)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-echo" \
 		"$(NATIVE_ECHO)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-ps" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-ps" \
 		"$(NATIVE_PS)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-handle" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-handle" \
 		"$(NATIVE_HANDLE)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-ls" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-ls" \
 		"$(NATIVE_LS)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-free" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-free" \
 		"$(NATIVE_FREE)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-top" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-top" \
 		"$(NATIVE_TOP)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vm-manager" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-vm-manager" \
 		"$(NATIVE_VM_MANAGER)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vm-runtime" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-vm-runtime" \
 		"$(NATIVE_VM_RUNTIME)"
 	install -m 0755 \
-		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vmm" \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-vmm" \
 		"$(NATIVE_VMM)"
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
 		--manifest-path "app/Cargo.toml" --bin hyper-echo --release --locked --offline
 	install -m 0755 \
-		"$(APP_STATIC_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-echo" \
+		"$(APP_STATIC_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-echo" \
 		"$(NATIVE_STATIC_ECHO)"
 	"$(SDK_OUTPUT)/bin/hyper-brand-elf" --check-static "$(NATIVE_STATIC_ECHO)"
 	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
@@ -236,17 +240,17 @@ app: sdk
 		sh sdk/toolchain/scripts/check-rust-std.sh "$(SDK_OUTPUT)" \
 		"$(NATIVE_STD_TEST_OUTPUT)" sdk/toolchain/tests/std-smoke/Cargo.toml
 
-app-check: sdk
+app-check: app-fetch
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=0 "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
+		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
 		--manifest-path "app/Cargo.toml" --workspace --locked --offline -- -D warnings
 
-app-test: sdk
+app-test: app-fetch
 	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
-		--manifest-path "app/Cargo.toml" --lib \
+		--manifest-path "app/Cargo.toml" --workspace --lib \
 		--target "$(HOST_TARGET)" --locked --offline \
 		--config "patch.crates-io.hyper-abi.path = '$(SDK_OUTPUT)/share/hyper/abi'" \
 		--config "patch.crates-io.hyper-os.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-os'" \
@@ -330,6 +334,19 @@ test-native: image native-initramfs
 	sh tests/qemu/verify-native-init.sh \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
 		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
+
+# Explicit fixture target; ordinary app builds never enable this feature.
+test-runtime-crash: image native-initramfs
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
+		-p hyper-vm-runtime --features test-runtime-crash --release --locked --offline
+	$(MAKE) -o app native-initramfs \
+		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-vm-runtime" \
+		NATIVE_INITRAMFS="$(APP_OUTPUT)/runtime-crash.cpio"
+	python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(APP_OUTPUT)/runtime-crash.cpio" "$(APP_OUTPUT)/runtime-crash.log"
 
 check-all: check sdk-check app-check
 
