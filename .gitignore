@@ -7,6 +7,7 @@
 /sdk/abi/target/
 /sdk/rust/target/
 /sdk/toolchain/target/
+/sdk/toolchain/tests/rust-smoke/target/
 /tools/fit-pack/target/
 /kernel/tests/host/target/
 /kernel/tests/host/Cargo.lock
@@ -15,7 +16,9 @@
 /kernel/tools/kallsyms/target/
 /kernel/.config
 /.idea/
-/.vscode/
+/.vscode/*
+!/.vscode/settings.json
+!/.vscode/rust-analyzer.toml
 /.agent
 *.swp
 *.swo
