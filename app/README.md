@@ -10,8 +10,10 @@ run directly on the HypeR Native ABI. Applications consume only the assembled
 Native SDK; they do not reach into Kernel, ABI, or Lib
 implementation sources.
 
-The VMM remains a distinct security boundary and subsystem even though its
-future source will share this repository.
+VM management remains a distinct security boundary within this repository. A
+long-lived fleet manager owns definitions and policy, isolated per-VM runtimes
+own guest construction and execution handles, and a separate `vmm` client
+receives only the control or virtual-serial authority needed for one command.
 
 ## Current scope
 
@@ -22,6 +24,8 @@ future source will share this repository.
   session manager;
 - a bounded interactive shell which launches commands with explicit process
   authorities and handle-backed standard I/O;
+- a capability-scoped VM manager, isolated runtime, and multi-client `vmm`
+  control and virtual-console tool;
 - reproducible AArch64 compilation through the installed `hyper-cargo` driver;
 - compilation exclusively against the assembled Native SDK; and
 - end-to-end CI validation with the kernel from the same commit.
@@ -54,6 +58,28 @@ root Directory authority, and transfers the resulting opaque File capability
 to the unique service which declares the VM provisioning contract. Neither the
 VM manager nor the runtime infers guest identity from a built-in path or
 process name.
+
+The manager retains the read-only VM definition and creates a fresh resource
+domain, task group, creation lease, runtime process, and `VirtualSerial` for
+every start. The current fleet contains one definition named `default` and at
+most one active instance. Its control connector accepts multiple clients;
+every shell invocation creates private control and capability channels before
+launching `/bin/vmm`, so an attached console does not prevent another physical
+session from issuing a lifecycle or status request. Management messages remain
+on the control plane. Guest bytes use a separate `VirtualSerial` handle, and
+the manager grants that data plane to at most one client at a time.
+
+`vmm` accepts the following commands:
+
+```text
+vmm [list|status|start|stop|restart|console]
+```
+
+No argument is equivalent to `list`. `console` attaches to the buffered guest
+serial stream only while `default` is running. Pressing Ctrl-] opens a local
+menu; `d`, `q`, or Ctrl-] detaches without changing VM power state. Closing
+that client's private control channel also releases the exclusive attachment.
+Guest serial output is never routed directly to the physical Console.
 
 The initial shell provides bounded line editing, quoting and escaping, `cd`,
 `pwd`, `help`, `echo`, `clear`, and `exit`, plus external command launch from `/bin`.
@@ -90,6 +116,7 @@ app/
   init/               Native system bootstrap and supervision
   session/            Initial foreground-session policy
   shell/              Interactive command parsing and process launch
+  vm/                 Fleet manager, per-VM runtime, and vmm client
 ```
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
