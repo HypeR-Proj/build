@@ -45,6 +45,7 @@ NATIVE_FREE := $(APP_OUTPUT)/free
 NATIVE_TOP := $(APP_OUTPUT)/top
 NATIVE_VM_MANAGER := $(APP_OUTPUT)/vm-manager
 NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
+NATIVE_VMM := $(APP_OUTPUT)/vmm
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/config/services.json
@@ -210,6 +211,9 @@ app: sdk
 	install -m 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vm-runtime" \
 		"$(NATIVE_VM_RUNTIME)"
+	install -m 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-none/release/hyper-vmm" \
+		"$(NATIVE_VMM)"
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
@@ -277,6 +281,7 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 bin/ls "$(NATIVE_LS)" \
 		0755 bin/free "$(NATIVE_FREE)" \
 		0755 bin/top "$(NATIVE_TOP)" \
+		0755 bin/vmm "$(NATIVE_VMM)" \
 		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
 		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
 		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
@@ -299,6 +304,7 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 bin/ls "$(NATIVE_LS)" \
 		0755 bin/free "$(NATIVE_FREE)" \
 		0755 bin/top "$(NATIVE_TOP)" \
+		0755 bin/vmm "$(NATIVE_VMM)" \
 		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
 		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
 		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \

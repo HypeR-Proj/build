@@ -91,6 +91,12 @@ path = "vm/runtime.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "hyper-vmm"
+path = "vm/client.rs"
+test = false
+bench = false
+
 [dependencies]
 hyper-os = "=0.0.0"
 hyper-rt = "=0.0.0"
