@@ -52,7 +52,7 @@ field and escape rejection); its bounded collections now use Vec storage.
   authorities and handle-backed standard I/O;
 - a capability-scoped VM manager, isolated runtime, and multi-client `vmm`
   control and virtual-console tool;
-- reproducible AArch64 compilation through the installed `hyper-cargo` driver;
+- reproducible AArch64 and RISC-V compilation through the installed `hyper-cargo` driver;
 - compilation exclusively against the assembled Native SDK; and
 - end-to-end CI validation with the kernel from the same commit.
 
@@ -127,7 +127,9 @@ multi-object wait and inspects the Process handle for its terminal result.
 From the repository root, run:
 
 ```sh
-make app
+make app                       # AArch64
+make app ARCH=riscv64           # RISC-V Native applications
+make test-native ARCH=riscv64   # std, processes, threads, and shell acceptance
 ```
 
 The generated SDK is placed under `target/sdk/aarch64`, and dynamic PIE
@@ -135,6 +137,13 @@ application images are written to `target/app/aarch64` by default. Applications
 may set `HYPER_LINK_MODE=static` to select the SDK's equivalent `libhyper.a`
 link path; the integration image includes and executes one static Rust command
 as a contract test.
+
+`ARCH=riscv64` selects separate SDK and app output directories. Its boot image
+uses `init/config/services-native.json`: console services, session, and shell
+without a VM fleet. VM executables still compile, but no guest image or VM
+creation authority is supplied until the RISC-V VM lifecycle is implemented.
+The same init and shell binaries support service graphs with or without a VM
+manager; `vmm --help` does not require a running manager.
 
 ## Repository layout
 
@@ -169,7 +178,7 @@ service and command policy remains under `app`.
 
 ## File tools
 
-The AArch64 initramfs includes these independent std/clap applications in `/bin`:
+The Native initramfs includes these independent std/clap applications in `/bin`:
 
 | Command | Supported operations |
 | --- | --- |

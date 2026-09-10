@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Native SDK contract
 
 The HypeR Native SDK is the supported build boundary between this source tree
-and Native EL0 applications. Kernel, ABI, runtime, toolchain, and application
+and Native userspace applications. Kernel, ABI, runtime, toolchain, and application
 changes are reviewed and tested in one commit; SDK releases are derived from
 that coherent commit rather than assembled from independently moving
 repositories.
@@ -19,7 +19,7 @@ The SDK is produced from five independently owned source components:
 | --- | --- |
 | `sdk/abi/` | Machine-visible values, layouts, syscall metadata, and generated interfaces |
 | `sdk/lib/` | Freestanding C runtime, startup code, and architecture syscall veneers |
-| `sdk/loader/` | Capability-relative AArch64 runtime linker and `dlopen` implementation |
+| `sdk/loader/` | Capability-relative runtime linker and `dlopen` implementation |
 | `sdk/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
 | `sdk/toolchain/` | Clang driver, linker script, ELF branding, and transactional SDK assembly |
 
@@ -34,9 +34,10 @@ Run:
 
 ```sh
 make sdk
+make sdk ARCH=riscv64
 ```
 
-The default output is `target/sdk/aarch64`:
+The output is `target/sdk/<architecture>`. The default AArch64 layout is:
 
 ```text
 bin/hyper-clang
@@ -64,21 +65,24 @@ share/hyper/manifest
 
 `hyper-clang` accepts `HYPER_SYSROOT` to select another installed SDK and
 `HYPER_CLANG` or `HYPER_LD` to select explicit LLVM tools. The SDK currently
-targets AArch64 Native applications. `hyper-brand-elf` is a host executable,
+targets AArch64 or RISC-V Native applications; the installed manifest selects
+the architecture and drivers reject conflicting overrides. `hyper-brand-elf` is a host executable,
 so a published archive is identified by both its host and target platform.
 The manifest records the SDK version, source revision, host, target, and Native
 ABI revision. Local builds use a dirty-aware Git description; release jobs set
 an explicit SDK version and source identity.
 
-`hyper-cargo` builds `no_std` Rust applications against only the crates
-installed in the selected SDK. It configures the AArch64 bare-metal code
+`hyper-cargo` builds Rust std applications by default; `HYPER_RUST_STD=0`
+selects `no_std`. It uses only the crates and Rust sources installed in the
+selected SDK. It configures the architecture-matching code
 generation target, the HypeR linker, dynamic PIE relocation, panic abort, and
 installed-crate overrides. Repository builds additionally pass `--offline` to
 make the producer-consumer check independent of a package registry; external
 applications may use other Rust dependencies under their own policy. The
 resulting ELF is branded and validated by the same final link path as a C
 application. The built-in
-`aarch64-unknown-none` compiler target supplies `core`; HypeR OS identity is
+`aarch64-unknown-none` or `riscv64gc-unknown-none-elf` compiler target selects the architecture for rebuilding
+`core,alloc` as PIC for `no_std`; std uses the matching HypeR target profile. HypeR OS identity is
 carried by the validated ELF ABI rather than by pretending to implement
 another operating system target.
 
@@ -88,7 +92,8 @@ objects must export their public entry points explicitly because the compiler
 driver uses hidden visibility by default.
 
 Dynamic linking is the default. The generated executable names
-`/lib/ld-hyper-aarch64.so` in `PT_INTERP` and records `libhyper.so` as its
+`/lib/ld-hyper-aarch64.so` or `/lib/ld-hyper-riscv64.so` in `PT_INTERP`
+and records `libhyper.so` as its
 runtime dependency. The interpreter performs eager `RELA`/`RELR` relocation,
 enforces W^X and RELRO, and opens exact dependency names through the process's
 delegated library Directory rather than a global path namespace. C consumers
