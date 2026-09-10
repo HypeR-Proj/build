@@ -30,6 +30,11 @@ application. The runtime retains standard streams and the bootstrap Console
 through std cleanup and TLS destruction. Use `std::io` for ordinary output;
 borrowed runtime handles are available for Native readiness waits and routing.
 
+Use `std::thread` and `std::sync` for application threads and synchronization;
+these now use Native thread and atomic wait/wake syscalls. Ordinary sleeps use
+`std::thread::sleep`. Absolute deadlines passed to Native object waits retain
+the SDK clock types, since std does not expose that capability wait contract.
+
 Native directory/process/VM operations and service channel multiplexing still
 use hyper-os: the partial std port does not implement these capability APIs.
 The bootstrap manifest keeps its restrictive schema parser (including duplicate
