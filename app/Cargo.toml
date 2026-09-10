@@ -10,6 +10,7 @@ members = [
     "console-output",
     "shell",
     "echo",
+    "cat",
     "ps",
     "handle",
     "ls",
@@ -35,6 +36,8 @@ hyper-service = "=0.0.0"
 hyper-vm-image = "=0.0.0"
 hyper-vm-policy = { path = "vm-policy" }
 clap = { version = "=4.6.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 shlex = "=1.3.0"
 
 [workspace.lints.clippy]

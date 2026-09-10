@@ -94,8 +94,10 @@ launching `/bin/vmm`, so an attached console does not prevent another physical
 session from issuing a lifecycle or status request. Management messages remain
 on the control plane. Guest bytes flow through a ByteChannel supplied to the VM runtime, and
 the manager grants that connection to at most one client at a time. The runtime
-allocates and registers a whole-page shared ring with the kernel, collects it
-every 10 ms, and owns output retention and nonblocking client forwarding.
+allocates and registers a read-only shared ring with the kernel, waits for
+readiness through a persistent WaitSet, and owns output retention and
+nonblocking client forwarding. Consumption is acknowledged in batches; idle
+console transport has no periodic wakeup.
 
 `vmm` accepts the following commands:
 
