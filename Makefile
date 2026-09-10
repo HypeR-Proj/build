@@ -69,7 +69,7 @@ NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
-NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/aarch64/alpine.itb
+NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
 
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 ifeq ($(shell uname -s),Darwin)
@@ -92,20 +92,22 @@ QEMU ?= qemu-system-riscv64
 QEMU_CPU ?= rv64
 QEMU_MACHINE ?= virt
 QEMU_BOOTARGS ?= earlycon=uart8250,mmio,0x10000000
-NATIVE_TEST_VM := 0
-NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/config/services-native.json
-NATIVE_VM_CONFIG := $(CURDIR)/app/init/config/vms-empty.json
-NATIVE_GUEST_PREREQUISITES :=
-NATIVE_GUEST_ENTRY :=
+NATIVE_TEST_VM := 1
+NATIVE_GUEST_ARCH := riscv
+NATIVE_GUEST_LOAD := 0x80200000
+NATIVE_GUEST_BOOTARGS := console=ttyS0 earlycon=uart8250,mmio,0x10000000 rdinit=/init loglevel=7
 else
 QEMU ?= qemu-system-aarch64
 QEMU_CPU ?= cortex-a72
 QEMU_MACHINE ?= virt,virtualization=on,gic-version=3,dtb-randomness=on
 NATIVE_TEST_VM := 1
+NATIVE_GUEST_ARCH := arm64
+NATIVE_GUEST_LOAD := 0x40200000
+NATIVE_GUEST_BOOTARGS := console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7
+endif
 NATIVE_VM_CONFIG := $(CURDIR)/app/init/config/vms.json
 NATIVE_GUEST_PREREQUISITES := guest-itb
 NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
-endif
 QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 512M
 QEMU_BOOTARGS ?= earlycon=pl011,mmio32,0x09000000
@@ -327,12 +329,12 @@ fit-pack:
 
 guest-itb: fit-pack
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "guest images are not implemented for $(ARCH)" >&2; exit 2; }
-	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH=aarch64
-	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" arm64 134217728 1 \
-		"$(KERNEL_DIRECTORY)/target/guest/aarch64/Image" \
-		0x40200000 0x40200000 \
-		"$(KERNEL_DIRECTORY)/target/guest/aarch64/initramfs.cpio.gz" \
-		"console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7"
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH="$(ARCH)"
+	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" 134217728 1 \
+		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" \
+		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
+		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
+		"$(NATIVE_GUEST_BOOTARGS)"
 
 native-initramfs: app $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
 	python3 scripts/pack-native-initramfs.py \
@@ -419,7 +421,7 @@ test-runtime-crash: image native-initramfs
 	$(MAKE) -o app native-initramfs \
 		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/runtime-crash.cpio"
-	python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(APP_OUTPUT)/runtime-crash.cpio" "$(APP_OUTPUT)/runtime-crash.log"
 
 check-all: check sdk-check app-check
