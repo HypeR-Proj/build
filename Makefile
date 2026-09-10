@@ -70,6 +70,7 @@ HOST_CC ?= clang
 endif
 CLANG ?= clang
 LLVM_AR ?= $(shell sh scripts/find-llvm-tool.sh llvm-ar)
+LLVM_STRIP ?= $(shell sh scripts/find-llvm-tool.sh llvm-strip)
 LLVM_RANLIB ?= $(shell sh scripts/find-llvm-tool.sh llvm-ranlib)
 HYPER_LD ?= $(shell sh scripts/find-llvm-tool.sh ld.lld)
 
@@ -276,7 +277,9 @@ guest-itb: fit-pack
 		"console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7"
 
 native-initramfs: app $(NEWC_PACK) guest-itb
-	"$(NEWC_PACK)" \
+	python3 scripts/pack-native-initramfs.py \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--output "$(NATIVE_INITRAMFS)" \
 		0755 init "$(NATIVE_INIT)" \
 		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
 		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
@@ -299,36 +302,7 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
-		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
-		> "$(NATIVE_INITRAMFS).first"
-	"$(NEWC_PACK)" \
-		0755 init "$(NATIVE_INIT)" \
-		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
-		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
-		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
-		0755 bin/sh "$(NATIVE_SHELL)" \
-		0755 bin/echo "$(NATIVE_ECHO)" \
-		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
-		0755 bin/ps "$(NATIVE_PS)" \
-		0755 bin/handle "$(NATIVE_HANDLE)" \
-		0755 bin/ls "$(NATIVE_LS)" \
-		0755 bin/free "$(NATIVE_FREE)" \
-		0755 bin/top "$(NATIVE_TOP)" \
-		0755 bin/vmm "$(NATIVE_VMM)" \
-		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
-		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
-		0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)" \
-		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
-		0755 bin/std-test "$(NATIVE_STD_TEST_OUTPUT)/std-dynamic" \
-		0755 bin/std-test-static "$(NATIVE_STD_TEST_OUTPUT)/std-static" \
-		0755 lib/ld-hyper-aarch64.so "$(NATIVE_LOADER)" \
-		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
-		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
-		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" \
-		> "$(NATIVE_INITRAMFS).second"
-	cmp "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS).second"
-	mv "$(NATIVE_INITRAMFS).first" "$(NATIVE_INITRAMFS)"
-	rm -f "$(NATIVE_INITRAMFS).second"
+		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)"
 
 test-native: image native-initramfs
 	sh tests/qemu/verify-native-init.sh \
