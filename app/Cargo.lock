@@ -340,6 +340,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-vm-smoke"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+]
+
+[[package]]
 name = "hyper-vmm"
 version = "0.0.0"
 dependencies = [

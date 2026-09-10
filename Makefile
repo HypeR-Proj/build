@@ -125,7 +125,7 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	test-qemu verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
-	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash check-all test-all verify-all run clean
+	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke check-all test-all verify-all run clean
 
 all: image
 
@@ -388,6 +388,25 @@ test-apps: image native-initramfs
 test-console: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-console.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/console.log"
+
+# Native authority fixture boots as /init, independently of product services.
+test-vm-smoke: image app-fetch $(NEWC_PACK)
+	@test "$(ARCH)" = riscv64 || { echo "VM smoke fixture requires riscv64" >&2; exit 2; }
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
+		-p hyper-vm-smoke --release --locked --offline
+	mkdir -p "$(APP_OUTPUT)"
+	python3 scripts/pack-native-initramfs.py \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--output "$(APP_OUTPUT)/vm-smoke.cpio" \
+		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-smoke" \
+		0755 lib/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
+		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)"
+	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-vm-smoke.py \
+		"$(QEMU)" "$(KERNEL_IMAGE)" "$(APP_OUTPUT)/vm-smoke.cpio" \
+		"$(APP_OUTPUT)/vm-smoke-$(QEMU_CPUS).log"
 
 # Explicit fixture target; ordinary app builds never enable this feature.
 test-runtime-crash: image native-initramfs
