@@ -116,6 +116,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-chmod"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "hyper-console-input"
 version = "0.0.0"
 dependencies = [
@@ -131,6 +138,13 @@ dependencies = [
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+]
+
+[[package]]
+name = "hyper-cp"
+version = "0.0.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
@@ -169,6 +183,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-ln"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "hyper-ls"
 version = "0.0.0"
 dependencies = [
@@ -176,6 +197,20 @@ dependencies = [
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+]
+
+[[package]]
+name = "hyper-mkdir"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "hyper-mv"
+version = "0.0.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
@@ -193,6 +228,20 @@ dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+]
+
+[[package]]
+name = "hyper-rm"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "hyper-rmdir"
+version = "0.0.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
@@ -245,6 +294,13 @@ dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+]
+
+[[package]]
+name = "hyper-touch"
+version = "0.0.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]

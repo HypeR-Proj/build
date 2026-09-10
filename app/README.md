@@ -141,7 +141,7 @@ as a contract test.
 ```text
 app/
   Cargo.toml          Workspace, dependency versions, and shared lints
-  echo/ free/ handle/ ls/ ps/ top/
+  cat/ chmod/ cp/ echo/ free/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
     config/           Boot service manifest (installed as /etc/hyper/services.json)
@@ -166,6 +166,36 @@ all workspace members. Target executable names and installed paths are unchanged
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
 service and command policy remains under `app`.
+
+## File tools
+
+The AArch64 initramfs includes these independent std/clap applications in `/bin`:
+
+| Command | Supported operations |
+| --- | --- |
+| `cp [-R] SOURCE... DEST` | Copy files or recursively copy trees; multiple sources require a directory. |
+| `mv SOURCE... DEST` | Rename files, links, or directories; multiple sources require a directory. |
+| `ln [-s] [-T] TARGET LINK` | Create hard or symbolic links; `-T` treats LINK as an exact name. |
+| `rm [-rf] PATH...` | Remove files or trees; `-f` ignores missing paths. |
+| `chmod [-R] MODE PATH...` | Octal modes or comma-separated symbolic clauses, such as `u+rw,go-rwx` and `a+X`. |
+| `mkdir [-p] [-m OCTAL] PATH...` | Create directories and optional parents. Explicit modes apply to newly created final directories. |
+| `rmdir PATH...` | Remove empty directories. |
+| `touch [-acm] [-r REFERENCE] PATH...` | Create empty files or update file/directory timestamps without truncation. |
+
+All tools accept `--help` and `--` before operands beginning with `-`, report
+path-specific errors, and return failure if any requested operation fails.
+`chmod` treats an omitted user/group/other selector as `a`; Native mode bits do
+not imply a Unix credential or umask implementation. Recursive chmod skips
+nested symbolic links; an explicitly named symbolic link changes its target.
+
+Recursive `cp` preserves symbolic links, including dangling links. It refuses
+existing destination symlinks, same-file copies (including hard links), and
+copying a directory into itself. Regular destination files are overwritten.
+`ln` refuses existing link names. `mv` uses filesystem rename and reports
+cross-filesystem moves as unsupported by that operation; it does not silently
+fall back to a non-atomic copy/delete sequence. Recursive `rm` does not follow
+symbolic links and refuses the root and final `.`/`..` operands. These are basic
+file tools, not full GNU coreutils option compatibility.
 
 ## Diagnostic commands
 

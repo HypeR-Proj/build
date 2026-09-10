@@ -11,6 +11,14 @@ members = [
     "shell",
     "echo",
     "cat",
+    "mv",
+    "ln",
+    "rm",
+    "chmod",
+    "cp",
+    "mkdir",
+    "rmdir",
+    "touch",
     "ps",
     "handle",
     "ls",
@@ -53,6 +61,7 @@ unwrap_used = "deny"
 missing_safety_doc = "deny"
 
 [workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("hyper"))'] }
 unsafe_op_in_unsafe_fn = "deny"
 
 [profile.release]

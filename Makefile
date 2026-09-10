@@ -37,6 +37,14 @@ NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
 NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
 NATIVE_SHELL := $(APP_OUTPUT)/sh
 NATIVE_CAT := $(APP_OUTPUT)/cat
+NATIVE_MV := $(APP_OUTPUT)/mv
+NATIVE_LN := $(APP_OUTPUT)/ln
+NATIVE_RM := $(APP_OUTPUT)/rm
+NATIVE_CHMOD := $(APP_OUTPUT)/chmod
+NATIVE_CP := $(APP_OUTPUT)/cp
+NATIVE_MKDIR := $(APP_OUTPUT)/mkdir
+NATIVE_RMDIR := $(APP_OUTPUT)/rmdir
+NATIVE_TOUCH := $(APP_OUTPUT)/touch
 NATIVE_ECHO := $(APP_OUTPUT)/echo
 NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
 NATIVE_PS := $(APP_OUTPUT)/ps
@@ -198,6 +206,30 @@ app: app-fetch
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-cat" \
 		"$(NATIVE_CAT)"
 	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-mv" \
+		"$(NATIVE_MV)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-ln" \
+		"$(NATIVE_LN)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-rm" \
+		"$(NATIVE_RM)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-chmod" \
+		"$(NATIVE_CHMOD)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-cp" \
+		"$(NATIVE_CP)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-mkdir" \
+		"$(NATIVE_MKDIR)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-rmdir" \
+		"$(NATIVE_RMDIR)"
+	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-touch" \
+		"$(NATIVE_TOUCH)"
+	sh scripts/install-if-changed.sh 0755 \
 		"$(APP_CARGO_OUTPUT)/aarch64-unknown-hyper/release/hyper-echo" \
 		"$(NATIVE_ECHO)"
 	sh scripts/install-if-changed.sh 0755 \
@@ -290,6 +322,14 @@ native-initramfs: app $(NEWC_PACK) guest-itb
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/cat "$(NATIVE_CAT)" \
+		0755 bin/mv "$(NATIVE_MV)" \
+		0755 bin/ln "$(NATIVE_LN)" \
+		0755 bin/rm "$(NATIVE_RM)" \
+		0755 bin/chmod "$(NATIVE_CHMOD)" \
+		0755 bin/cp "$(NATIVE_CP)" \
+		0755 bin/mkdir "$(NATIVE_MKDIR)" \
+		0755 bin/rmdir "$(NATIVE_RMDIR)" \
+		0755 bin/touch "$(NATIVE_TOUCH)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
 		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
 		0755 bin/ps "$(NATIVE_PS)" \

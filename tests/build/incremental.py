@@ -72,6 +72,32 @@ class IncrementalTests(unittest.TestCase):
         state.preserve_times(old, new)
         self.assertNotEqual((new / "lib/a").stat().st_mtime_ns, timestamp)
 
+    def test_std_source_identity_ignores_timestamps_but_tracks_content(self):
+        output = self.root / "sdk"
+        sources = output / "share/hyper/rust-src/library/std/src"
+        sources.mkdir(parents=True)
+        source = sources / "lib.rs"
+        source.write_text("original")
+        requested = self.root / "inputs.json"
+        requested.write_text(json.dumps({"tools": {}, "environment": {}}))
+
+        def identities():
+            self.assertEqual(self.run_state("link-id", output, requested), 0)
+            return tuple((output / "share/hyper" / name).read_bytes()
+                         for name in ("link-fingerprint", "std-fingerprint"))
+
+        original = identities()
+        timestamp = source.stat().st_mtime_ns
+        os.utime(source, ns=(timestamp + 1000, timestamp + 1000))
+        self.assertEqual(identities(), original)
+        source.write_text("changed std interface")
+        os.utime(source, ns=(timestamp, timestamp))
+        changed = identities()
+        self.assertEqual(changed[0], original[0])
+        self.assertNotEqual(changed[1], original[1])
+        source.unlink()
+        self.assertNotEqual(identities()[1], changed[1])
+
     def test_archive_cache_and_failed_strip(self):
         packer = self.root / "packer"
         packer.write_text('#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nfor i in range(1, len(sys.argv), 3):\n sys.stdout.buffer.write(sys.argv[i].encode()+sys.argv[i+1].encode()+Path(sys.argv[i+2]).read_bytes())\n')
