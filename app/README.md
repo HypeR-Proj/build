@@ -70,13 +70,25 @@ physical Console <-> Console input/output workers <-> raw ByteChannels
 Init retains management authority. Each Console worker receives only one
 physical direction plus one matching byte-channel direction; the session
 manager receives no physical Console authority. Capability attenuation is
-monotonic and none of the children can duplicate or transfer these endpoints.
+monotonic; the Console workers and session router cannot delegate their relay
+endpoints.
 The two blocking workers provide a genuinely duplex data plane without
 polling or a generic per-byte protocol header. Manifest purposes are symbolic,
 image-scoped service-contract names; init resolves them to typed startup
 purposes before creating any process. Application code depends on the safe
 `hyper-os` binding and does not call the raw syscall crate or C runtime
 directly.
+
+Session and VM services also receive `stdio.output` and `stdio.error` write
+endpoints, so ordinary `println!` and `eprintln!` work. These feed the Console
+output worker directly, bypassing the session relay to avoid a dependency on
+the logging service consuming its own queue. VM-manager duplicates these
+streams into each VM-runtime; the Rust runtime owns them through process exit.
+The output queue is bounded and applies backpressure when full. It carries no
+read authority, and process termination closes that process's copies without
+closing other writers. The shell retains its foreground streams. Console
+workers keep only their existing transport endpoints and receive no standard
+streams; other background services receive no stdin.
 
 The same manifest selects the initial guest through an `initial-vm.image`
 path. Init validates this as a canonical absolute path, opens it through its
@@ -138,10 +150,10 @@ may set `HYPER_LINK_MODE=static` to select the SDK's equivalent `libhyper.a`
 link path; the integration image includes and executes one static Rust command
 as a contract test.
 
-`ARCH=riscv64` selects separate SDK and app output directories. Its boot image
-uses `init/config/services-native.json`: console services, session, and shell
-without a VM fleet. VM executables still compile, but no guest image or VM
-creation authority is supplied until the RISC-V VM lifecycle is implemented.
+`ARCH=riscv64` selects separate SDK and app output directories and runs the same
+service graph, including the userspace VM fleet. The optional
+`init/config/services-native.json` fixture contains console services, session,
+and shell without a VM fleet.
 The same init and shell binaries support service graphs with or without a VM
 manager; `vmm --help` does not require a running manager.
 
@@ -218,6 +230,32 @@ selected Process's handle kinds, rights, and object purposes; `handle
 --objects` reports the visible kernel-object graph. Both commands require
 explicit inspector capabilities, and every displayed KOID remains diagnostic
 metadata rather than authority.
+
+## Standard library and Native services
+
+Use std for ordinary files, standard output, argument handling, allocation,
+threads, synchronization and elapsed-time policy. File tools already follow
+this boundary. The VM manager reads its supplied configuration through std,
+and the VM runtime reads its supplied image through `std::fs::File` and
+`std::os::hyper::fs::FileExt`. Both consume the original capability through
+`hyper_os::fs::File::into_std()`; they do not reopen it by an ambient path.
+The runtime retains the READ-authorized Native image-length query because std
+metadata requires INSPECT, which its image capability deliberately lacks.
+
+Native SDK calls remain where their semantics are required:
+
+- VM construction, guest VMO writes, virtual serial and VM lifecycle;
+- capability transfer, resource domains, scoped process construction and
+  inspection (`ps`, `handle`, `free`, `top`);
+- console/session channel relays and multi-object waits, including the shell's
+  foreground input handoff and `vmm console` multiplexing;
+- absolute Native deadlines supplied to those waits and service protocols.
+
+The shell emits its own prompts and diagnostics through std stdout and flushes
+before blocking. Input ownership and child-channel routing remain Native;
+buffering that input in std while handing its channel to another consumer
+would require a separate handoff protocol. Init's bootstrap implementation is
+outside this application migration.
 
 ## Roadmap
 
