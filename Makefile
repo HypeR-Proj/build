@@ -98,7 +98,7 @@ NATIVE_GUEST_LOAD := 0x80200000
 NATIVE_GUEST_BOOTARGS := console=ttyS0 earlycon=uart8250,mmio,0x10000000 rdinit=/init loglevel=7
 else
 QEMU ?= qemu-system-aarch64
-QEMU_CPU ?= cortex-a72
+QEMU_CPU ?= max
 QEMU_MACHINE ?= virt,virtualization=on,gic-version=3,dtb-randomness=on
 NATIVE_TEST_VM := 1
 NATIVE_GUEST_ARCH := arm64
@@ -124,7 +124,7 @@ endif
 
 KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	clean-guest-assets build image release check test test-image test-timer \
-	test-qemu verify verify-runtime verify-image verify-boot verify-smp
+	test-qemu test-vhe-required verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
 	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke check-all test-all verify-all run clean

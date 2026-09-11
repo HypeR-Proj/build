@@ -110,6 +110,16 @@ checks require dynamic images to carry an interpreter and runtime dependency,
 and static images to carry neither. `make sdk-test` runs ABI layout tests,
 safe-binding host tests, and portable C runtime unit tests.
 
+## Application address-space policy
+
+The [Native 64-bit address-space contract](../kernel/docs/syscall-abi.md#native-64-bit-application-address-space-contract)
+reserves a profile-specific region for system-managed user mappings, such as a
+future vDSO. Current application limits are 128 TiB on AArch64 VA48 and 128 GiB
+on RISC-V Sv39. These values may change; the common ABI does not require equal
+halves or identical addresses across architectures. Applications, allocators,
+and loaders must obey their granted VMAR range. The current process layout
+remains below 4 GiB on both architectures.
+
 ## Application integration
 
 `make app` first assembles the SDK and then builds the Rust init, two Console
