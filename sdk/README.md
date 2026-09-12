@@ -86,6 +86,12 @@ application. The built-in
 carried by the validated ELF ABI rather than by pretending to implement
 another operating system target.
 
+All in-tree applications, including init, use the HypeR `std` build. Ordinary
+operations use standard-library APIs where supported; HypeR-specific bootstrap,
+capability and VM operations retain Native SDK bindings. Init's runtime
+initialization and early output do not depend on its child services; see the
+[init runtime contract](../kernel/docs/native-init.md#rust-runtime).
+
 `hyper-clang -shared` produces capability-loadable shared objects with the
 same W^X, page-alignment, and ELF-branding checks as applications. Shared
 objects must export their public entry points explicitly because the compiler

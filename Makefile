@@ -41,6 +41,7 @@ NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
 NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
 NATIVE_SHELL := $(APP_OUTPUT)/sh
 NATIVE_CAT := $(APP_OUTPUT)/cat
+NATIVE_GREP := $(APP_OUTPUT)/grep
 NATIVE_MV := $(APP_OUTPUT)/mv
 NATIVE_LN := $(APP_OUTPUT)/ln
 NATIVE_RM := $(APP_OUTPUT)/rm
@@ -229,6 +230,9 @@ app: app-fetch
 		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-cat" \
 		"$(NATIVE_CAT)"
 	sh scripts/install-if-changed.sh 0755 \
+		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-grep" \
+		"$(NATIVE_GREP)"
+	sh scripts/install-if-changed.sh 0755 \
 		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-mv" \
 		"$(NATIVE_MV)"
 	sh scripts/install-if-changed.sh 0755 \
@@ -346,6 +350,7 @@ native-initramfs: app $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
 		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
 		0755 bin/sh "$(NATIVE_SHELL)" \
 		0755 bin/cat "$(NATIVE_CAT)" \
+		0755 bin/grep "$(NATIVE_GREP)" \
 		0755 bin/mv "$(NATIVE_MV)" \
 		0755 bin/ln "$(NATIVE_LN)" \
 		0755 bin/rm "$(NATIVE_RM)" \

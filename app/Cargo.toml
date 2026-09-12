@@ -11,6 +11,7 @@ members = [
     "shell",
     "echo",
     "cat",
+    "grep",
     "mv",
     "ln",
     "rm",
