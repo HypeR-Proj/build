@@ -71,6 +71,9 @@ NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
 NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
+NATIVE_GUEST_VCPUS ?= 1
+NATIVE_SMP_GUEST_VCPUS ?= 4
+NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
 
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 ifeq ($(shell uname -s),Darwin)
@@ -128,7 +131,7 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	test-qemu test-vhe-required verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
-	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke check-all test-all verify-all run clean
+	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke guest-smp-initramfs test-guest-smp check-all test-all verify-all run clean
 
 all: image
 
@@ -334,7 +337,7 @@ fit-pack:
 guest-itb: fit-pack
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "guest images are not implemented for $(ARCH)" >&2; exit 2; }
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH="$(ARCH)"
-	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" 134217728 1 \
+	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" 134217728 "$(NATIVE_GUEST_VCPUS)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" \
 		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
@@ -428,6 +431,20 @@ test-runtime-crash: image native-initramfs
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/runtime-crash.cpio"
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(APP_OUTPUT)/runtime-crash.cpio" "$(APP_OUTPUT)/runtime-crash.log"
+
+# Keep the SMP guest fixture separate from the default single-vCPU image.
+# The same archive exercises both hardware GIC backends and host overcommit.
+guest-smp-initramfs: app $(NEWC_PACK)
+	@test "$(ARCH)" = aarch64 || { echo "guest SMP acceptance requires AArch64" >&2; exit 2; }
+	$(MAKE) -o app native-initramfs ARCH=aarch64 \
+		NATIVE_GUEST_VCPUS="$(NATIVE_SMP_GUEST_VCPUS)" \
+		NATIVE_GUEST_ITB="$(KERNEL_DIRECTORY)/target/guest/aarch64/alpine-smp.itb" \
+		NATIVE_INITRAMFS="$(NATIVE_SMP_INITRAMFS)"
+
+test-guest-smp: image guest-smp-initramfs
+	$(NATIVE_QEMU_ENV) GUEST_CPUS="$(NATIVE_SMP_GUEST_VCPUS)" \
+		python3 tests/qemu/verify-guest-smp.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(NATIVE_SMP_INITRAMFS)" "$(APP_OUTPUT)/guest-smp.log"
 
 check-all: check sdk-check app-check
 
