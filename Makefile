@@ -447,12 +447,9 @@ clean:
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" clean
 	rm -rf "$(CURDIR)/target"
 
-# Host GICv2 coverage: no GICv3 guest backend is available on this machine.
+# GICv2 host and Linux guest coverage with the standard Native service profile.
 .PHONY: test-native-gicv2
 test-native-gicv2:
 	$(MAKE) test-native ARCH=aarch64 QEMU_CPU=max \
 		QEMU_MACHINE=virt,virtualization=on,gic-version=2,dtb-randomness=on \
-		NATIVE_TEST_VM=0 NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
-		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/vms-empty.json" \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-native.json" \
 		NATIVE_INITRAMFS="$(CURDIR)/target/app/aarch64/initramfs-gicv2.cpio"
