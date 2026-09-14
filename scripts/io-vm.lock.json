@@ -1,0 +1,12 @@
+{
+  "SPDX-FileCopyrightText": "2026 roolrz",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "version": 1,
+  "platforms": {
+    "qemu": {
+      "reference": "ghcr.io/roolrz/hyper-io-vm@sha256:2d7c31e76ba19418091e9ceb3f154331e5d95eb625048befda28bae33f14be26",
+      "source_revision": "65cef4db74c5c41b52ae471c6dc34f9c30b47fd7",
+      "qualified_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34776697110"
+    }
+  }
+}

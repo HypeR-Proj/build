@@ -200,6 +200,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-io-runtime"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-vm-image",
+ "hyper-vm-runtime",
+]
+
+[[package]]
 name = "hyper-ln"
 version = "0.0.0"
 dependencies = [

@@ -27,6 +27,7 @@ members = [
     "top",
     "vm-manager",
     "vm-runtime",
+    "io-runtime",
     "vm-smoke",
     "vmm",
     "vm-policy",
