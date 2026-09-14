@@ -53,6 +53,9 @@ NATIVE_TOUCH := $(APP_OUTPUT)/touch
 NATIVE_ECHO := $(APP_OUTPUT)/echo
 NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
 NATIVE_PS := $(APP_OUTPUT)/ps
+# Test fixtures may substitute the packaged program without overwriting the
+# canonical application build output.
+NATIVE_PS_IMAGE ?= $(NATIVE_PS)
 NATIVE_HANDLE := $(APP_OUTPUT)/handle
 NATIVE_LS := $(APP_OUTPUT)/ls
 NATIVE_FREE := $(APP_OUTPUT)/free
@@ -74,6 +77,8 @@ NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
 NATIVE_GUEST_VCPUS ?= 1
 NATIVE_SMP_GUEST_VCPUS ?= 4
 NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
+STACK_OUTPUT := $(CURDIR)/target/stack-audit/$(ARCH)
+STACK_MINIMUM_REMAINING ?= 2048
 
 IO_VM_REFERENCE ?=
 IO_VM_PLATFORM ?= qemu
@@ -151,6 +156,23 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke test-io-vm guest-smp-initramfs test-guest-smp check-all test-all verify-all run clean
 
 all: image
+
+# Keep instrumentation and the inspector-authorized workload in a dedicated
+# fixture. The normal ps binary and production initramfs are unchanged.
+.PHONY: stack-initramfs test-stack
+stack-initramfs:
+	mkdir -p "$(STACK_OUTPUT)"
+	$(MAKE) native-initramfs NATIVE_INITRAMFS="$(STACK_OUTPUT)/initramfs.cpio" \
+		NATIVE_PS_IMAGE="$(NATIVE_STD_TEST_OUTPUT)/std-dynamic"
+
+test-stack: stack-initramfs
+	$(MAKE) image STACK_METADATA=1 CARGO_FEATURES="--features kernel-stack-audit"
+ifeq ($(ARCH),aarch64)
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" stack-budget STACK_REPORT="$(STACK_OUTPUT)/frames.json"
+endif
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-stack.py \
+		"$(QEMU)" "$(KERNEL_IMAGE)" "$(STACK_OUTPUT)/initramfs.cpio" \
+		"$(STACK_OUTPUT)/qemu.log" --minimum-remaining "$(STACK_MINIMUM_REMAINING)"
 
 $(KERNEL_TARGETS):
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" $@ $(if $(filter undefined,$(origin CONFIG_FILE)),,CONFIG_FILE="$(abspath $(CONFIG_FILE))")
@@ -381,7 +403,7 @@ native-initramfs: app $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
 		0755 bin/touch "$(NATIVE_TOUCH)" \
 		0755 bin/echo "$(NATIVE_ECHO)" \
 		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
-		0755 bin/ps "$(NATIVE_PS)" \
+		0755 bin/ps "$(NATIVE_PS_IMAGE)" \
 		0755 bin/handle "$(NATIVE_HANDLE)" \
 		0755 bin/ls "$(NATIVE_LS)" \
 		0755 bin/free "$(NATIVE_FREE)" \
