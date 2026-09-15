@@ -102,26 +102,73 @@ def prepare_payload(board, artifacts, directory):
             'uart_2ndstage=1\ncamera_auto_detect=0\ndisplay_auto_detect=0\n[all]\n')
         (directory / 'cmdline.txt').write_text('earlycon=pl011,0x107d001000,115200n8 loglevel=7\n')
 
-
-def image_tool(program, default, formula):
+def _find_executable(program, directories=()):
+    """Find an executable in PATH and then in additional directories."""
     resolved = shutil.which(program)
     if resolved:
         return resolved
-    # Explicit overrides remain authoritative. Homebrew may keep tools in
-    # sbin, which is not necessarily included in a developer's PATH.
-    brew = shutil.which('brew') if program == default else None
+
+    for directory in directories:
+        path = Path(directory) / program
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+
+    return None
+
+def image_tool(program, default, formula):
+    # 1. Respect PATH first.
+    resolved = _find_executable(program)
+    if resolved:
+        return resolved
+
+    # 2. Search common Linux sbin locations.
+    linux_sbin_dirs = (
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/sbin",
+    )
+    resolved = _find_executable(program, linux_sbin_dirs)
+    if resolved:
+        return resolved
+
+    # 3. Search Homebrew's bin/sbin.
+    #
+    # Only use brew when looking for the default program, preserving the
+    # existing behavior where an explicitly overridden executable remains
+    # authoritative.
+    brew = shutil.which("brew") if program == default else None
     if brew:
         try:
-            prefix = subprocess.run([brew, '--prefix', formula], check=True,
-                                    capture_output=True, text=True, timeout=10).stdout.strip()
+            prefix = subprocess.run(
+                [brew, "--prefix", formula],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
             if prefix and Path(prefix).is_absolute():
-                for directory in ('bin', 'sbin'):
-                    resolved = shutil.which(str(Path(prefix) / directory / program))
-                    if resolved:
-                        return resolved
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                resolved = _find_executable(
+                    program,
+                    (
+                        Path(prefix) / "bin",
+                        Path(prefix) / "sbin",
+                    ),
+                )
+                if resolved:
+                    return resolved
+
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
             pass
-    raise ValueError(f'{program} was not found; install {formula} or provide its executable path')
+
+    raise ValueError(
+        f"{program} was not found; install {formula} "
+        "or provide its executable path"
+    )
 
 
 def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy'):

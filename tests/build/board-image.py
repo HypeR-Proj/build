@@ -35,15 +35,34 @@ class BoardTests(unittest.TestCase):
                              '/tools/mkfs.fat')
             run.assert_not_called()
 
-    def test_image_tool_discovers_brew_sbin(self):
-        available = {'brew': '/tools/brew', '/custom brew/sbin/mkfs.fat':
-                     '/custom brew/sbin/mkfs.fat'}
-        with patch.object(packer.shutil, 'which', side_effect=available.get), \
-                patch.object(packer.subprocess, 'run') as run:
-            run.return_value.stdout = '/custom brew\n'
-            self.assertEqual(packer.image_tool('mkfs.fat', 'mkfs.fat', 'dosfstools'),
-                             '/custom brew/sbin/mkfs.fat')
-            self.assertEqual(run.call_args.args[0], ['/tools/brew', '--prefix', 'dosfstools'])
+def test_image_tool_discovers_brew_sbin(self):
+    with tempfile.TemporaryDirectory() as tmp:
+        brew = Path(tmp) / "brew"
+        sbin = Path(tmp) / "sbin"
+        executable = sbin / "mkfs.fat"
+
+        sbin.mkdir()
+        brew.touch()
+        executable.touch()
+
+        executable.chmod(0o755)
+
+        with patch.object(
+            packer.shutil, "which",
+            side_effect=lambda name: str(brew) if name == "brew" else None,
+        ), patch.object(packer.subprocess, "run") as run:
+            run.return_value.stdout = f"{tmp}\n"
+
+            self.assertEqual(
+                packer.image_tool("mkfs.fat", "mkfs.fat", "dosfstools"),
+                str(executable),
+            )
+
+            self.assertEqual(
+                run.call_args.args[0],
+                [str(brew), "--prefix", "dosfstools"],
+            )
+
 
     def test_missing_explicit_tool_does_not_fall_back(self):
         with patch.object(packer.shutil, 'which', return_value=None), \

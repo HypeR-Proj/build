@@ -9,6 +9,7 @@ script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd)
 workspace=$(pwd -P)
 config=$root/.vscode/rust-analyzer.toml
+PATH="$PATH:$HOME/.cargo/bin"
 
 case "$workspace" in
     "$root/app" | "$root/sdk/toolchain/tests/std-smoke" | "$root/sdk/toolchain/tests/rust-smoke")
