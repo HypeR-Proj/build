@@ -23,7 +23,7 @@ def bounded_read(path, limit):
     return data
 
 
-def package_payloads(package):
+def package_payloads(package, platform='qemu'):
     """Accept a complete external boot generation or a verified OCI import."""
     boot = package / 'boot-artifacts.json'
     if boot.exists():
@@ -51,7 +51,7 @@ def package_payloads(package):
         importer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(importer)
         layers = importer.validate_manifest(package / 'oci-manifest.json',
-                                            'sha256:' + package.name, 'qemu')
+                                            'sha256:' + package.name, platform)
         importer.validate_runtime(package, layers)
         image, initramfs = package / 'Image', package / 'initramfs.cpio.gz'
     if bounded_read(image, 32 * MIB)[56:60] != b'ARM\x64':
@@ -77,17 +77,30 @@ def prepare(package, fit_pack, output, test="basic"):
 
 
 def main():
+    from board_config import Board
+    from board_bootstrap import linux_overlay, stage
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--fit-pack', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--board', type=Path)
     args = parser.parse_args()
-    image, initramfs = package_payloads(args.package)
+    board = Board.load(args.board) if args.board else None
+    platform = 'rpi5' if board and board.source['boot'] == 'rpi5-tfa' else 'qemu'
+    image, initramfs = package_payloads(args.package, platform)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    arguments = ('console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init '
+                 'loglevel=4 hyper.role=io hyper.mode=standby')
+    if board:
+        stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
+        contents = linux_overlay(board, bounded_read(initramfs, 8 * MIB))
+        initramfs = args.output.parent / 'io-board.cpio.gz'
+        if not initramfs.exists() or initramfs.read_bytes() != contents:
+            initramfs.write_bytes(contents)
+        arguments += ' hyper.volumes=required'
     subprocess.run([str(args.fit_pack), str(args.output), 'arm64', str(64 * MIB), '1',
                     str(image), '0x40200000', '0x40200000', str(initramfs),
-                    'console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init '
-                    'loglevel=4 hyper.role=io hyper.mode=standby'], check=True)
+                    arguments], check=True)
 
 
 if __name__ == '__main__':

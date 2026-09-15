@@ -205,8 +205,11 @@ version = "0.0.0"
 dependencies = [
  "hyper-os",
  "hyper-rt",
+ "hyper-service",
  "hyper-vm-image",
  "hyper-vm-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

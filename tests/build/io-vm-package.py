@@ -6,8 +6,10 @@
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,15 +60,36 @@ class ImportTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0)
 
     def fetch(self):
-        return FETCH.fetch(self.reference, "qemu", self.output)
+        return FETCH.fetch(self.reference, "qemu", self.output, "oras")
 
     def test_verified_cache_is_offline_and_sources_are_not_fetched(self):
         with patch.object(FETCH.subprocess, "run", side_effect=self.registry):
             result = self.fetch()
-            self.assertEqual(self.fetch(), result)
+            with patch.object(FETCH, "ensure_oras") as install:
+                self.assertEqual(FETCH.fetch(self.reference, "qemu", self.output), result)
+                install.assert_not_called()
         self.assertEqual(len(self.calls), 3)
         self.assertEqual({p.name for p in result.iterdir()},
                          {"Image", "initramfs.cpio.gz", "oci-manifest.json"})
+
+    def test_same_common_digest_imports_for_both_boards(self):
+        self.manifest['annotations']['org.hyper.supported-platforms'] = '["qemu","rpi5"]'
+        self.pin()
+        with patch.object(FETCH.subprocess, 'run', side_effect=self.registry):
+            qemu = self.fetch()
+            pi = FETCH.fetch(self.reference, 'rpi5', self.output)
+        self.assertEqual(pi, qemu)
+        self.assertEqual(len(self.calls), 3)
+
+    def test_malformed_common_capabilities_are_rejected(self):
+        for capabilities in ('[]', '["rpi5"]', '["qemu","qemu"]',
+                             '["qemu","unknown"]', '"qemu"', '{}', 'null'):
+            with self.subTest(capabilities=capabilities):
+                self.manifest['annotations']['org.hyper.supported-platforms'] = capabilities
+                self.pin()
+                with patch.object(FETCH.subprocess, 'run', side_effect=self.registry):
+                    with self.assertRaises(ValueError):
+                        self.fetch()
 
     def test_tags_rejected_without_registry_access(self):
         with patch.object(FETCH.subprocess, "run") as run:
@@ -134,6 +157,68 @@ class ImportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.fetch()
         self.assertFalse(any(self.output.iterdir()))
+
+
+class OrasTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        patches = [
+            patch.object(FETCH, "__file__", str(self.root / "scripts/fetch-io-vm.py")),
+            patch.object(FETCH.shutil, "which", return_value=None),
+            patch.object(FETCH.host_platform, "system", return_value="Darwin"),
+            patch.object(FETCH.host_platform, "machine", return_value="arm64"),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def download(self, command, **_kwargs):
+        Path(command[command.index("--output") + 1]).write_bytes(self.archive)
+
+    def archive_with(self, symbolic=False):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+            member = tarfile.TarInfo("oras")
+            content = b"#!/bin/sh\nexit 0\n"
+            member.size = len(content)
+            if symbolic:
+                member.type = tarfile.SYMTYPE
+                member.linkname = "/tmp/elsewhere"
+            archive.addfile(member, io.BytesIO(content))
+        self.archive = stream.getvalue()
+        return hashlib.sha256(self.archive).hexdigest()
+
+    def test_install_and_offline_reuse(self):
+        checksum = self.archive_with()
+        with patch.dict(FETCH.ORAS_SHA256, darwin_arm64=checksum), \
+                patch.object(FETCH.subprocess, "run", side_effect=self.download) as download:
+            result = Path(FETCH.ensure_oras())
+            self.assertTrue(result.stat().st_mode & 0o111)
+            self.assertEqual(str(result), FETCH.ensure_oras())
+            download.assert_called_once()
+
+    def test_bad_checksum_does_not_publish(self):
+        self.archive_with()
+        with patch.object(FETCH.subprocess, "run", side_effect=self.download):
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                FETCH.ensure_oras()
+        self.assertEqual(list(self.root.rglob("oras")), [])
+
+    def test_archive_link_is_rejected(self):
+        checksum = self.archive_with(symbolic=True)
+        with patch.dict(FETCH.ORAS_SHA256, darwin_arm64=checksum), \
+                patch.object(FETCH.subprocess, "run", side_effect=self.download):
+            with self.assertRaisesRegex(ValueError, "invalid ORAS executable"):
+                FETCH.ensure_oras()
+        self.assertEqual(list(self.root.rglob("oras")), [])
+
+    def test_path_tool_wins_without_download(self):
+        with patch.object(FETCH.shutil, "which", return_value="/tools/oras"), \
+                patch.object(FETCH.subprocess, "run") as download:
+            self.assertEqual(FETCH.ensure_oras(), "/tools/oras")
+            download.assert_not_called()
 
 
 if __name__ == "__main__":
