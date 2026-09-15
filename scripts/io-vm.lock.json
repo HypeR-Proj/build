@@ -4,17 +4,17 @@
   "version": 1,
   "platforms": {
     "qemu": {
-      "reference": "ghcr.io/roolrz/hyper-io-vm@sha256:18f3e8693571bd9c6c0e3c9377e349660bd45113f47acdc865130922d49fa6fe",
-      "source_revision": "1cd38fa9a6caadd7216ab30298e1062546943acb",
-      "qualified_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34920704112",
-      "publication_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34922004386",
+      "reference": "ghcr.io/roolrz/hyper-io-vm@sha256:9bd8eb384744089462fc4699bb12b1450a671035a7e966b822e52f6ed2e0f1b5",
+      "source_revision": "16707a0f4e47f32427178570fecdfb622987a5b9",
+      "qualified_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34968328214",
+      "publication_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34969436842",
       "release_stage": "prerelease"
     },
     "rpi5": {
-      "reference": "ghcr.io/roolrz/hyper-io-vm@sha256:18f3e8693571bd9c6c0e3c9377e349660bd45113f47acdc865130922d49fa6fe",
-      "source_revision": "1cd38fa9a6caadd7216ab30298e1062546943acb",
-      "build_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34920704112",
-      "publication_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34922004386",
+      "reference": "ghcr.io/roolrz/hyper-io-vm@sha256:9bd8eb384744089462fc4699bb12b1450a671035a7e966b822e52f6ed2e0f1b5",
+      "source_revision": "16707a0f4e47f32427178570fecdfb622987a5b9",
+      "build_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34968328214",
+      "publication_run": "https://github.com/roolrz/HypeR-io-vm/actions/runs/34969436842",
       "release_stage": "prerelease",
       "hardware_qualified": false
     }

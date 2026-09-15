@@ -6,6 +6,7 @@
 
 import argparse
 import os
+import sys
 from pathlib import Path
 import importlib.util
 
@@ -56,7 +57,7 @@ def main():
     command = [args.qemu, '-machine', os.environ.get('QEMU_MACHINE', 'virt,virtualization=on,gic-version=3'),
                '-cpu', os.environ.get('QEMU_CPU', 'max'), '-smp', os.environ.get('QEMU_CPUS', '4'),
                '-m', os.environ.get('QEMU_MEMORY', '512M'), '-nodefaults', '-display', 'none',
-               '-serial', 'stdio', '-monitor', 'none', '-nic', 'none', '-no-reboot',
+               '-nic', 'none', '-no-reboot',
                '-kernel', str(args.image), '-initrd', str(args.initramfs),
                '-append', os.environ.get('QEMU_BOOTARGS', 'earlycon=pl011,mmio32,0x09000000'),
                '-global', 'virtio-mmio.force-legacy=false',
@@ -64,6 +65,12 @@ def main():
                + str(args.disk.resolve()).replace(',', ',,') + ',cache=writeback',
                '-device', 'virtio-scsi-device,id=physicalscsi,iommu_platform=on',
                '-device', 'scsi-hd,drive=physicaldisk,bus=physicalscsi.0,scsi-id=0,lun=0']
+    # The monitor's escape processing belongs to interactive terminals. Keep
+    # piped automation on the dedicated serial backend for lossless bursts.
+    if sys.stdin.isatty():
+        command.extend(['-serial', 'mon:stdio'])
+    else:
+        command.extend(['-serial', 'stdio', '-monitor', 'none'])
     if args.dtb:
         command.extend(['-dtb', str(args.dtb)])
     # Replace the launcher: terminal input, signals, and QEMU lifetime remain

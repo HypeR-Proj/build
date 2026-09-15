@@ -610,7 +610,7 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 board-image: image board-initramfs guest-itb
 	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --output "$(BOARD_IMAGE)" \
 		--default-artifact "hyper=$(KERNEL_IMAGE)" --default-artifact "bootstrap=$(BOARD_OUTPUT)/bootstrap.cpio" \
-		--default-artifact "io-vm=$(BOARD_OUTPUT)/io.itb" --default-artifact "alpine=$(NATIVE_GUEST_ITB)" $(BOARD_ARTIFACTS)
+		--default-artifact "alpine=$(NATIVE_GUEST_ITB)" $(BOARD_ARTIFACTS)
 
 board-run: image board-initramfs
 	@test "$(BOARD)" = qemu || { echo "board-run requires the QEMU deployment profile" >&2; exit 2; }

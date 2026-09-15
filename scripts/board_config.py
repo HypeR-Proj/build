@@ -126,9 +126,9 @@ class Board:
                                 uuid.uuid5(disk_id, 'config'), ESP, 'hyper')]
         if not isinstance(data['files'], dict):
             raise ValueError('files must map destination paths to artifact names')
-        required_files = {'hyper.img', 'bootstrap.cpio', 'vm/io.itb'}
+        required_files = {'hyper.img'}
         if data['boot'] == 'rpi5-tfa':
-            required_files |= {'bl31.bin', 'bcm2712-rpi-5-b.dtb'}
+            required_files |= {'bootstrap.cpio', 'bl31.bin', 'bcm2712-rpi-5-b.dtb'}
         if not required_files <= data['files'].keys():
             raise ValueError('missing boot profile payloads')
         destinations = set()

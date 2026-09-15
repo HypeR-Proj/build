@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import sys
 import json
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 
@@ -20,6 +21,24 @@ spec.loader.exec_module(runner)
 
 
 class DiskTests(unittest.TestCase):
+    def test_monitor_is_only_enabled_for_terminal_input(self):
+        for interactive in (False, True):
+            with self.subTest(interactive=interactive), \
+                    patch.object(sys, 'argv', ['run-io-vm.py', '--qemu', 'qemu',
+                                 '--image', 'kernel.img', '--initramfs', 'init.cpio',
+                                 '--disk', 'disk.img']), \
+                    patch.object(sys.stdin, 'isatty', return_value=interactive), \
+                    patch.object(runner, 'prepare_disk'), \
+                    patch.object(runner.os, 'execvp') as execute:
+                runner.main()
+                command = execute.call_args.args[1]
+                self.assertEqual(command[command.index('-serial') + 1],
+                                 'mon:stdio' if interactive else 'stdio')
+                if interactive:
+                    self.assertNotIn('-monitor', command)
+                else:
+                    self.assertEqual(command[command.index('-monitor') + 1], 'none')
+
     def test_board_boot_rejects_blank_and_mismatched_disk(self):
         from board_config import Board, SECTOR
         pack_spec = importlib.util.spec_from_file_location(
