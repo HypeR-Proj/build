@@ -8,6 +8,7 @@ import argparse
 import filecmp
 import hashlib
 import json
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -24,6 +25,8 @@ def inputs(args):
         "script": digest(__file__),
         "packer": digest(shutil.which(args.packer) or args.packer),
         "strip": digest(shutil.which(args.strip) or args.strip),
+        "deployment": ([digest(args.deployment), digest(Path(__file__).with_name("app-deployment.py"))]
+                       if args.deployment else None),
         "entries": args.entries,
         "contents": [digest(path) for path in args.entries[2::3]],
     }
@@ -34,11 +37,30 @@ def main():
     parser.add_argument("--packer", required=True)
     parser.add_argument("--strip", required=True)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("entries", nargs="+")
+    parser.add_argument("--deployment", type=Path)
+    parser.add_argument("--profile", choices=["system", "development"], default="development")
+    for root in ("apps", "sdk", "std", "arch"):
+        parser.add_argument("--" + root)
+    parser.add_argument("--replace", action="append", default=[])
+    parser.add_argument("entries", nargs="*")
     args = parser.parse_args()
     if len(args.entries) % 3:
         parser.error("entries must be MODE ARCHIVE_PATH SOURCE triples")
 
+    if args.deployment:
+        roots = {key: getattr(args, key) for key in ("apps", "sdk", "std", "arch")}
+        if not all(roots.values()):
+            parser.error("deployment requires --apps, --sdk, --std and --arch")
+        spec = importlib.util.spec_from_file_location(
+            "app_deployment", Path(__file__).with_name("app-deployment.py"))
+        deployment = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(deployment)
+        args.entries = deployment.compose(args.deployment, args.profile, roots, args.replace) + args.entries
+    elif args.replace:
+        parser.error("--replace requires --deployment")
+    if not args.entries:
+        parser.error("no initramfs entries selected")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     requested = inputs(args)
     state_path = Path(str(args.output) + ".build-state.json")
     try:

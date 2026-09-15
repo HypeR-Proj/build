@@ -34,35 +34,19 @@ SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
 APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
+APP_DEPLOYMENT := $(CURDIR)/app/deployment.json
+NATIVE_IMAGE_PROFILE ?= development
+ifeq ($(filter $(NATIVE_IMAGE_PROFILE),development system),)
+$(error NATIVE_IMAGE_PROFILE must be development or system)
+endif
 APP_STATIC_CARGO_OUTPUT := $(CURDIR)/target/app-cargo-static/$(NATIVE_ARCH)
 NATIVE_INIT := $(APP_OUTPUT)/init
-NATIVE_SESSION_SERVICE := $(APP_OUTPUT)/session-service
-NATIVE_CONSOLE_INPUT := $(APP_OUTPUT)/console-input
-NATIVE_CONSOLE_OUTPUT := $(APP_OUTPUT)/console-output
-NATIVE_SHELL := $(APP_OUTPUT)/sh
-NATIVE_CAT := $(APP_OUTPUT)/cat
-NATIVE_GREP := $(APP_OUTPUT)/grep
-NATIVE_MV := $(APP_OUTPUT)/mv
-NATIVE_LN := $(APP_OUTPUT)/ln
-NATIVE_RM := $(APP_OUTPUT)/rm
-NATIVE_CHMOD := $(APP_OUTPUT)/chmod
-NATIVE_CP := $(APP_OUTPUT)/cp
-NATIVE_MKDIR := $(APP_OUTPUT)/mkdir
-NATIVE_RMDIR := $(APP_OUTPUT)/rmdir
-NATIVE_TOUCH := $(APP_OUTPUT)/touch
-NATIVE_ECHO := $(APP_OUTPUT)/echo
 NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
-NATIVE_PS := $(APP_OUTPUT)/ps
 # Test fixtures may substitute the packaged program without overwriting the
 # canonical application build output.
-NATIVE_PS_IMAGE ?= $(NATIVE_PS)
-NATIVE_HANDLE := $(APP_OUTPUT)/handle
-NATIVE_LS := $(APP_OUTPUT)/ls
-NATIVE_FREE := $(APP_OUTPUT)/free
-NATIVE_TOP := $(APP_OUTPUT)/top
+NATIVE_PS_IMAGE ?= $(APP_OUTPUT)/ps
 NATIVE_VM_MANAGER := $(APP_OUTPUT)/vm-manager
 NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
-NATIVE_VMM := $(APP_OUTPUT)/vmm
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check/$(NATIVE_ARCH)
@@ -261,83 +245,18 @@ app-fetch: sdk
 
 app: app-fetch
 	mkdir -p "$(APP_OUTPUT)"
+	@app_bins=$$(python3 -B scripts/app-deployment.py binaries --manifest "$(APP_DEPLOYMENT)") || exit $$?; \
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-init" \
-		"$(NATIVE_INIT)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-session-service" \
-		"$(NATIVE_SESSION_SERVICE)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-console-input" \
-		"$(NATIVE_CONSOLE_INPUT)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-console-output" \
-		"$(NATIVE_CONSOLE_OUTPUT)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-shell" \
-		"$(NATIVE_SHELL)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-cat" \
-		"$(NATIVE_CAT)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-grep" \
-		"$(NATIVE_GREP)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-mv" \
-		"$(NATIVE_MV)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-ln" \
-		"$(NATIVE_LN)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-rm" \
-		"$(NATIVE_RM)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-chmod" \
-		"$(NATIVE_CHMOD)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-cp" \
-		"$(NATIVE_CP)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-mkdir" \
-		"$(NATIVE_MKDIR)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-rmdir" \
-		"$(NATIVE_RMDIR)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-touch" \
-		"$(NATIVE_TOUCH)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-echo" \
-		"$(NATIVE_ECHO)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-ps" \
-		"$(NATIVE_PS)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-handle" \
-		"$(NATIVE_HANDLE)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-ls" \
-		"$(NATIVE_LS)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-free" \
-		"$(NATIVE_FREE)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-top" \
-		"$(NATIVE_TOP)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-manager" \
-		"$(NATIVE_VM_MANAGER)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
-		"$(NATIVE_VM_RUNTIME)"
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vmm" \
-		"$(NATIVE_VMM)"
+		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline \
+		$$app_bins
+	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
+		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)"
+
+.PHONY: app-fixtures app-sdk-test
+app-fixtures: app
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
@@ -367,7 +286,18 @@ app-check: app-fetch
 		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
 		--manifest-path "app/Cargo.toml" --workspace --locked --offline -- -D warnings
 
-app-test: app-fetch
+app-test:
+	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
+		--manifest-path "app/Cargo.toml" $(if $(APP_TEST_PACKAGE),-p "$(APP_TEST_PACKAGE)",--workspace) --lib \
+		--target "$(HOST_TARGET)" --locked $(APP_TEST_ARGS) \
+		--config "patch.crates-io.hyper-abi.path = '$(SDK_ABI_SOURCE)'" \
+		--config "patch.crates-io.hyper-os.path = '$(SDK_RUST_SOURCE)/hyper-os'" \
+		--config "patch.crates-io.hyper-rt.path = '$(SDK_RUST_SOURCE)/hyper-rt'" \
+		--config "patch.crates-io.hyper-service.path = '$(SDK_RUST_SOURCE)/hyper-service'" \
+		--config "patch.crates-io.hyper-vm-image.path = '$(SDK_RUST_SOURCE)/hyper-vm-image'" \
+		--config "patch.crates-io.hyper-sys.path = '$(SDK_RUST_SOURCE)/hyper-sys'"
+
+app-sdk-test: app-fetch
 	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
 		--manifest-path "app/Cargo.toml" --workspace --lib \
 		--target "$(HOST_TARGET)" --locked --offline \
@@ -395,42 +325,19 @@ guest-itb: fit-pack
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
 		"$(NATIVE_GUEST_BOOTARGS)"
 
-native-initramfs: app $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
-	python3 scripts/pack-native-initramfs.py \
+# Development keeps the acceptance programs; system contains all ordinary apps.
+native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fixtures) $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
+	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(NATIVE_INITRAMFS)" \
-		0755 init "$(NATIVE_INIT)" \
-		0755 svc/console-input "$(NATIVE_CONSOLE_INPUT)" \
-		0755 svc/console-output "$(NATIVE_CONSOLE_OUTPUT)" \
-		0755 svc/session "$(NATIVE_SESSION_SERVICE)" \
-		0755 bin/sh "$(NATIVE_SHELL)" \
-		0755 bin/cat "$(NATIVE_CAT)" \
-		0755 bin/grep "$(NATIVE_GREP)" \
-		0755 bin/mv "$(NATIVE_MV)" \
-		0755 bin/ln "$(NATIVE_LN)" \
-		0755 bin/rm "$(NATIVE_RM)" \
-		0755 bin/chmod "$(NATIVE_CHMOD)" \
-		0755 bin/cp "$(NATIVE_CP)" \
-		0755 bin/mkdir "$(NATIVE_MKDIR)" \
-		0755 bin/rmdir "$(NATIVE_RMDIR)" \
-		0755 bin/touch "$(NATIVE_TOUCH)" \
-		0755 bin/echo "$(NATIVE_ECHO)" \
-		0755 bin/echo-static "$(NATIVE_STATIC_ECHO)" \
-		0755 bin/ps "$(NATIVE_PS_IMAGE)" \
-		0755 bin/handle "$(NATIVE_HANDLE)" \
-		0755 bin/ls "$(NATIVE_LS)" \
-		0755 bin/free "$(NATIVE_FREE)" \
-		0755 bin/top "$(NATIVE_TOP)" \
-		0755 bin/vmm "$(NATIVE_VMM)" \
-		0755 svc/vm-manager "$(NATIVE_VM_MANAGER)" \
-		0755 svc/vm-runtime "$(NATIVE_VM_RUNTIME)" \
+		--deployment "$(APP_DEPLOYMENT)" --profile "$(NATIVE_IMAGE_PROFILE)" \
+		--apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--std "$(NATIVE_STD_TEST_OUTPUT)" --arch "$(NATIVE_ARCH)" \
+		--replace "init=$(NATIVE_INIT)" \
+		--replace "bin/ps=$(NATIVE_PS_IMAGE)" \
+		--replace "svc/vm-manager=$(NATIVE_VM_MANAGER)" \
+		--replace "svc/vm-runtime=$(NATIVE_VM_RUNTIME)" \
 		$(NATIVE_GUEST_ENTRY) \
-		0755 bin/dynamic-test "$(NATIVE_DYNAMIC_TEST)" \
-		0755 bin/std-test "$(NATIVE_STD_TEST_OUTPUT)/std-dynamic" \
-		0755 bin/std-test-static "$(NATIVE_STD_TEST_OUTPUT)/std-static" \
-		0755 lib/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
-		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
-		0755 lib/libdynamic-probe.so "$(NATIVE_DYNAMIC_PLUGIN)" \
 		0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)" \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" $(NATIVE_EXTRA_ENTRIES)
 
@@ -460,7 +367,7 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
 		-p hyper-vm-smoke --release --locked --offline
 	mkdir -p "$(APP_OUTPUT)"
-	python3 scripts/pack-native-initramfs.py \
+	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/vm-smoke.cpio" \
 		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-smoke" \
@@ -481,7 +388,7 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
 		-p hyper-vm-runtime --bin hyper-io-smoke --release --locked --offline
-	python3 scripts/pack-native-initramfs.py \
+	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/io-vm.cpio" \
 		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-smoke" \
