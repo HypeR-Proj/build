@@ -89,7 +89,7 @@ class BoardTests(unittest.TestCase):
         source = copy.deepcopy(self.source)
         source['files']['vm/alpine.itb'] = 'custom'
         board = Board.parse(source)
-        defaults = ['hyper=kernel', 'bootstrap=initramfs', 'alpine=unused']
+        defaults = ['hyper=kernel', 'bootstrap=initramfs', 'alpine=unused', 'alpine-rootfs=root.ext4']
         actual = packer.artifact_inputs(board, defaults, ['custom=my-guest', 'hyper=my-kernel'])
         self.assertNotIn('alpine', actual)
         self.assertEqual(actual['custom'], Path('my-guest'))
@@ -117,6 +117,11 @@ class BoardTests(unittest.TestCase):
                 for key in board.source['files'].values():
                     artifacts[key] = root / key
                     artifacts[key].write_bytes(key.encode())
+                for part in board.partitions:
+                    if part.image:
+                        artifacts[part.image] = root / part.image
+                        with artifacts[part.image].open('wb') as disk:
+                            disk.truncate(part.sectors * SECTOR)
                 payload = root / 'payload'
                 payload.mkdir()
                 packer.prepare_payload(board, artifacts, payload)
@@ -254,7 +259,12 @@ class BoardTests(unittest.TestCase):
                 stream.write(b'guest-sector-zero')
             artifacts['guest-disk'] = disk
             output = directory / 'board.img'
-            packer.build(board, artifacts, output)
+            output.write_bytes(b'old user disk')
+            with patch.object(packer, 'prepare_payload', side_effect=ValueError('bad input')):
+                with self.assertRaises(ValueError):
+                    packer.build(board, artifacts, output, replace=True)
+            self.assertEqual(output.read_bytes(), b'old user disk')
+            packer.build(board, artifacts, output, replace=True)
             config_file = directory / 'volumes.json'
             subprocess.run([mcopy, '-i', f'{output}@@{board.partitions[0].start * SECTOR}',
                             '::/volumes.json', str(config_file)], check=True)

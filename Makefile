@@ -151,7 +151,11 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
 	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke test-io-vm guest-smp-initramfs test-guest-smp check-all test-all verify-all run clean
 
+ifeq ($(ARCH),aarch64)
+all: board-rebuild
+else
 all: image
+endif
 
 # Keep instrumentation and the inspector-authorized workload in a dedicated
 # fixture. The normal ps binary and production initramfs are unchanged.
@@ -492,7 +496,7 @@ test-io-standby: image io-initramfs
 		--initramfs "$(APP_OUTPUT)/initramfs-io.cpio" \
 		--log "$(APP_OUTPUT)/io-standby-$(QEMU_CPUS).log"
 
-.PHONY: board-plan board-initramfs board-image board-run
+.PHONY: board-plan board-initramfs board-image board-rebuild board-run board-guest-images
 board-plan:
 	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --plan
 
@@ -512,12 +516,25 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/vms-io.json" \
 		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(BOARD_OUTPUT)/io.itb" 0644 etc/hyper/board.json "$(BOARD_OUTPUT)/board/board.json" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
 
-# Always create a new image. Refusing existing outputs is intentional: a normal
-# rebuild must never format a disk carrying changes made by HypeR or its guests.
-board-image: image board-initramfs guest-itb
-	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --output "$(BOARD_IMAGE)" \
+# Explicit image creation refuses existing outputs. The default build opts
+# into atomic replacement; run continues to reuse the persistent disk.
+board-rebuild: image board-initramfs board-guest-images
+	@echo "Rebuilding $(BOARD_IMAGE): disk data will be reset after successful packing."
+	$(MAKE) -o image -o board-initramfs -o board-guest-images board-image BOARD_IMAGE_REPLACE=--replace
+
+board-guest-images: guest-itb
+	python3 -B scripts/pack-guest-disk.py --board "$(BOARD_CONFIG)" \
+		--rootfs "$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/rootfs.tar" --output "$(BOARD_OUTPUT)/alpine.ext4"
+	"$(FIT_PACK)" "$(BOARD_OUTPUT)/alpine.itb" "$(NATIVE_GUEST_ARCH)" 134217728 "$(NATIVE_GUEST_VCPUS)" \
+		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" "$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
+		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
+		"$(NATIVE_GUEST_BOOTARGS) hyper.root=/dev/sda"
+
+board-image: image board-initramfs board-guest-images
+	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --output "$(BOARD_IMAGE)" $(BOARD_IMAGE_REPLACE) \
 		--default-artifact "hyper=$(KERNEL_IMAGE)" --default-artifact "bootstrap=$(BOARD_OUTPUT)/bootstrap.cpio" \
-		--default-artifact "alpine=$(NATIVE_GUEST_ITB)" $(BOARD_ARTIFACTS)
+		--default-artifact "alpine=$(BOARD_OUTPUT)/alpine.itb" \
+		--default-artifact "alpine-rootfs=$(BOARD_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
 
 board-run: image board-initramfs
 	@test "$(BOARD)" = qemu || { echo "board-run requires the QEMU deployment profile" >&2; exit 2; }
@@ -621,3 +638,16 @@ test-userspace-device: app image
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept" \
 		--require-userspace-device \
 		$(if $(filter 1,$(STACK_METADATA)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
+
+.PHONY: test-alpine-rootfs
+test-alpine-rootfs: app image
+	@test "$(ARCH)" = aarch64 || { echo "Alpine board rootfs acceptance requires aarch64" >&2; exit 2; }
+	mkdir -p "$(BOARD_TEST_OUTPUT)"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/alpine.XXXXXX") && \
+	$(MAKE) -o image -o app board-image BOARD=qemu \
+		BOARD_CONFIG="$(CURDIR)/boards/qemu.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_IMAGE="$$fixture/disk.img" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-alpine-rootfs.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--initramfs "$$fixture/bootstrap.cpio" --disk "$$fixture/disk.img" \
+		--board "$(CURDIR)/boards/qemu.json" --log "$$fixture/accept.log"

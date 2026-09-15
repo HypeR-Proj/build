@@ -171,8 +171,8 @@ def image_tool(program, default, formula):
     )
 
 
-def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy'):
-    if output.exists() or output.is_symlink():
+def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=False):
+    if not replace and (output.exists() or output.is_symlink()):
         raise ValueError('refusing to overwrite an existing image; choose a new output path')
     mkfs = image_tool(mkfs, 'mkfs.fat', 'dosfstools')
     mcopy = image_tool(mcopy, 'mcopy', 'mtools')
@@ -206,8 +206,12 @@ def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy'):
             os.fsync(stream.fileno())
         if checksums != {key: digest(path) for key, path in artifacts.items()}:
             raise ValueError('artifacts changed while packing; retry')
-        # Atomic no-replace publication, including races with another packer.
-        os.link(image, output)
+        # Keep the old disk intact until the complete replacement is ready.
+        if replace:
+            os.replace(image, output)
+        else:
+            # Atomic no-replace publication, including races with another packer.
+            os.link(image, output)
     print(f'{output}: {board.disk_sectors * SECTOR} bytes; {len(board.partitions)} volumes')
 
 
@@ -242,6 +246,8 @@ def main():
     parser.add_argument('--default-artifact', action='append', default=[], metavar='NAME=PATH',
                         help='build default, selected only when referenced by board policy')
     parser.add_argument('--plan', action='store_true', help='validate and print volume layout only')
+    parser.add_argument('--replace', action='store_true',
+                        help='atomically replace the output, resetting all disk data')
     parser.add_argument('--mkfs', default='mkfs.fat')
     parser.add_argument('--mcopy', default='mcopy')
     args = parser.parse_args()
@@ -253,7 +259,7 @@ def main():
         if args.output is None:
             raise ValueError('--output is required when building an image')
         artifacts = artifact_inputs(board, args.default_artifact, args.artifact)
-        build(board, artifacts, args.output, args.mkfs, args.mcopy)
+        build(board, artifacts, args.output, args.mkfs, args.mcopy, replace=args.replace)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'board image: {error}\n')
 
