@@ -64,14 +64,16 @@ transactional `ProcessBuilder` ABI. Normal bytes currently follow this route:
 
 ```text
 physical Console <-> Console input/output workers <-> raw ByteChannels
-                 <-> foreground session manager <-> shell <-> command
+                 <-> virtual console manager <-> shell <-> command
 ```
 
 Init retains management authority. Each Console worker receives only one
 physical direction plus one matching byte-channel direction; the session
 manager receives no physical Console authority. Capability attenuation is
-monotonic; the Console workers and session router cannot delegate their relay
-endpoints.
+monotonic; the Console workers and virtual console manager cannot delegate their
+physical transport endpoints. The manager creates fresh client channels before
+starting a noncritical shell and supervises its lifetime. Shell exit or failure
+restarts only that client, with a delay for rapid failures.
 The two blocking workers provide a genuinely duplex data plane without
 polling or a generic per-byte protocol header. Manifest purposes are symbolic,
 image-scoped service-contract names; init resolves them to typed startup
@@ -125,7 +127,7 @@ Guest serial output is never routed directly to the physical Console.
 
 The initial shell provides bounded line editing, quoting and escaping, `cd`,
 `pwd`, `help`, `echo`, `clear`, and `exit`, plus external command launch from `/bin`.
-It does not receive ambient process creation: init delegates an immutable root
+It does not receive ambient process creation: the console manager delegates a root
 `Directory` plus attenuated TaskFactory, TaskGroup, and ResourceDomain handles.
 The shell keeps the root private, resolves parent-directory changes itself, and
 gives each command only a read-only handle rooted at its current directory.
@@ -152,8 +154,9 @@ as a contract test.
 
 `ARCH=riscv64` selects separate SDK and app output directories and runs the same
 service graph, including the userspace VM fleet. The optional
-`init/config/services-native.json` fixture contains console services, session,
-and shell without a VM fleet.
+`init/config/native/services.json` profile contains console workers and the
+virtual console manager without a VM fleet. The manager starts its shell.
+Acceptance-only manifests live under `init/tests/config/`.
 The same init and shell binaries support service graphs with or without a VM
 manager; `vmm --help` does not require a running manager.
 
@@ -165,9 +168,9 @@ app/
   cat/ chmod/ cp/ echo/ free/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
-    config/           Boot service manifest (installed as /etc/hyper/services.json)
+    config/           Production service template and standalone Native profile
     src/              Bootstrap and supervision
-    tests/            Manifest, supervision, and diagnostic unit tests
+    tests/            Unit tests and acceptance-only config/ manifests
   session/
   shell/
   vm-manager/ vm-runtime/ vmm/

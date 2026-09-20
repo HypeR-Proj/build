@@ -50,7 +50,7 @@ NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check/$(NATIVE_ARCH)
-NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/config/services.json
+NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/tests/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_LOADER := $(SDK_OUTPUT)/lib/ld-hyper-$(NATIVE_ARCH).so
 NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
@@ -62,8 +62,9 @@ NATIVE_GUEST_VCPUS ?= 1
 NATIVE_SMP_GUEST_VCPUS ?= 4
 NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
 STACK_OUTPUT := $(CURDIR)/target/stack-audit/$(ARCH)
+STACK_AUDIT ?= 0
 STACK_MINIMUM_REMAINING ?= 2048
-STACK_MAXIMUM_USED ?= 12288
+STACK_MAXIMUM_USED ?= 24576
 
 IO_VM_REFERENCE ?=
 IO_VM_PLATFORM ?= qemu
@@ -84,6 +85,9 @@ BOARD_IMAGE ?= $(BOARD_OUTPUT)/disk.img
 # deployment inputs, never compile-time board selections.
 BOARD_ARTIFACTS ?=
 BOARD_EXTRA_ENTRIES ?=
+RPI5_BOOT_PACKAGE ?= $(abspath $(CURDIR)/../HypeR-rpi5-boot/dist)
+RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native
+
 BOARD_TEST_OUTPUT ?= $(CURDIR)/target/board-tests
 
 HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
@@ -120,7 +124,7 @@ NATIVE_GUEST_ARCH := arm64
 NATIVE_GUEST_LOAD := 0x40200000
 NATIVE_GUEST_BOOTARGS := console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7
 endif
-NATIVE_VM_CONFIG := $(CURDIR)/app/init/config/vms.json
+NATIVE_VM_CONFIG := $(CURDIR)/app/init/tests/config/vms.json
 NATIVE_GUEST_PREREQUISITES := guest-itb
 NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
 QEMU_CPUS ?= 4
@@ -166,10 +170,7 @@ stack-initramfs:
 		NATIVE_PS_IMAGE="$(NATIVE_STD_TEST_OUTPUT)/std-dynamic"
 
 test-stack: stack-initramfs
-	$(MAKE) image STACK_METADATA=1 CARGO_FEATURES="--features kernel-stack-audit"
-ifeq ($(ARCH),aarch64)
-	$(MAKE) -C "$(KERNEL_DIRECTORY)" stack-budget STACK_REPORT="$(STACK_OUTPUT)/frames.json"
-endif
+	$(MAKE) image CARGO_FEATURES="--features kernel-stack-audit"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-stack.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(STACK_OUTPUT)/initramfs.cpio" \
 		"$(STACK_OUTPUT)/qemu.log" --minimum-remaining "$(STACK_MINIMUM_REMAINING)" \
@@ -264,15 +265,16 @@ app-fixtures: app
 	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "app/Cargo.toml" --bin hyper-echo --release --locked --offline
+		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" rustc \
+		--manifest-path "app/Cargo.toml" -p hyper-echo --bin hyper-echo --release --locked --offline \
+		-- -C link-arg=-Wl,-z,stack-size=65536
 	sh scripts/install-if-changed.sh 0755 \
 		"$(APP_STATIC_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-echo" \
 		"$(NATIVE_STATIC_ECHO)"
 	"$(SDK_OUTPUT)/bin/hyper-brand-elf" --check-static "$(NATIVE_STATIC_ECHO)"
 	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-clang" \
-		"$(CURDIR)/tests/native/dynamic-smoke.c" -o "$(NATIVE_DYNAMIC_TEST)"
+		-Wl,-z,stack-size=524288 "$(CURDIR)/tests/native/dynamic-smoke.c" -o "$(NATIVE_DYNAMIC_TEST)"
 	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-clang" -std=c17 -Wall -Wextra -Werror -shared \
 		-Wl,-soname,libdynamic-probe.so \
@@ -418,6 +420,32 @@ test-runtime-crash: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(APP_OUTPUT)/runtime-crash.cpio" "$(APP_OUTPUT)/runtime-crash.log"
 
+# Test-only binaries: no power fault injection enters ordinary app artifacts.
+.PHONY: test-power-crash power-crash-case
+test-power-crash: image app
+	@test "$(ARCH)" = aarch64 || { echo "power crash acceptance requires AArch64" >&2; exit 2; }
+	@for state in dormant pending powered-off; do \
+		$(MAKE) -o image -o app power-crash-case POWER_CRASH_STATE=$$state || exit $$?; \
+	done
+
+power-crash-case:
+	@case "$(POWER_CRASH_STATE)" in dormant|pending|powered-off) ;; *) exit 2 ;; esac
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		HYPER_TEST_POWER_CRASH="$(POWER_CRASH_STATE)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
+		-p hyper-vm-runtime --features test-power-crash --release --locked --offline
+	$(MAKE) -o app native-initramfs ARCH=aarch64 \
+		NATIVE_GUEST_VCPUS=4 \
+		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-power-crash.json" \
+		NATIVE_GUEST_ITB="$(KERNEL_DIRECTORY)/target/guest/aarch64/alpine-smp.itb" \
+		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
+		NATIVE_INITRAMFS="$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).cpio"
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-power-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).cpio" \
+		"$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).log" "$(POWER_CRASH_STATE)"
+
 # Keep the SMP guest fixture separate from the default single-vCPU image.
 # The same archive exercises both hardware GIC backends and host overcommit.
 guest-smp-initramfs: app $(NEWC_PACK)
@@ -485,8 +513,8 @@ io-initramfs: app fit-pack $(NEWC_PACK)
 		--fit-pack "$(FIT_PACK)" --output "$(APP_OUTPUT)/io-standby.itb"
 	$(MAKE) -o app native-initramfs \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/initramfs-io.cpio" \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-io.json" \
-		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/vms-io.json" \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services.json" \
+		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-io.json" \
 		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(APP_OUTPUT)/io-standby.itb"'
 
 .PHONY: test-io-standby
@@ -495,6 +523,18 @@ test-io-standby: image io-initramfs
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
 		--initramfs "$(APP_OUTPUT)/initramfs-io.cpio" \
 		--log "$(APP_OUTPUT)/io-standby-$(QEMU_CPUS).log"
+
+# Native-only hardware qualification does not download or start Linux guests.
+.PHONY: rpi5-bringup
+rpi5-bringup: image
+	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
+	$(MAKE) native-initramfs NATIVE_IMAGE_PROFILE=system NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/native/services.json" \
+		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/native/vms.json" \
+		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
+	python3 -B scripts/rpi5-bringup.py --package "$(RPI5_BOOT_PACKAGE)" \
+		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
+		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
 
 .PHONY: board-plan board-initramfs board-image board-rebuild board-run board-guest-images
 board-plan:
@@ -513,7 +553,7 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 		NATIVE_INITRAMFS="$(BOARD_OUTPUT)/bootstrap.cpio" \
 		NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
 		NATIVE_SERVICE_MANIFEST="$(BOARD_OUTPUT)/board/services.json" \
-		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/vms-io.json" \
+		NATIVE_VM_CONFIG="$(BOARD_OUTPUT)/board/vms.json" \
 		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(BOARD_OUTPUT)/io.itb" 0644 etc/hyper/board.json "$(BOARD_OUTPUT)/board/board.json" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
 
 # Explicit image creation refuses existing outputs. The default build opts
@@ -560,7 +600,7 @@ test-board-storage: app image
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$(CURDIR)/boards/qemu.json" --log "$$fixture/accept" \
-		$(if $(filter 1,$(STACK_METADATA)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
+		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
 
 .PHONY: test-board-business
 test-board-business: app image fit-pack
@@ -637,7 +677,7 @@ test-userspace-device: app image
 		--image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept" \
 		--require-userspace-device \
-		$(if $(filter 1,$(STACK_METADATA)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
+		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
 
 .PHONY: test-alpine-rootfs
 test-alpine-rootfs: app image

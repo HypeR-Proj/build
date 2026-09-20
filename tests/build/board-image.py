@@ -90,10 +90,11 @@ class BoardTests(unittest.TestCase):
         source['files']['vm/alpine.itb'] = 'custom'
         board = Board.parse(source)
         defaults = ['hyper=kernel', 'bootstrap=initramfs', 'alpine=unused', 'alpine-rootfs=root.ext4']
-        actual = packer.artifact_inputs(board, defaults, ['custom=my-guest', 'hyper=my-kernel'])
+        actual = packer.artifact_inputs(board, defaults, ['custom=my-guest', 'alpine-rootfs=my-rootfs'])
         self.assertNotIn('alpine', actual)
         self.assertEqual(actual['custom'], Path('my-guest'))
-        self.assertEqual(actual['hyper'], Path('my-kernel'))
+        self.assertNotIn('hyper', actual)
+        self.assertEqual(actual['alpine-rootfs'], Path('my-rootfs'))
         for explicit in ([], ['custom=x', 'typo=y'], ['custom=x', 'custom=y']):
             with self.assertRaises(ValueError):
                 packer.artifact_inputs(board, defaults, explicit)
@@ -126,6 +127,7 @@ class BoardTests(unittest.TestCase):
                 payload.mkdir()
                 packer.prepare_payload(board, artifacts, payload)
                 self.assertFalse((payload / 'vm/io.itb').exists())
+                self.assertEqual((payload / 'hyper.img').is_file(), profile == 'rpi5')
                 self.assertEqual((payload / 'bootstrap.cpio').is_file(), profile == 'rpi5')
                 self.assertTrue((payload / 'vm/alpine.itb').is_file())
 
