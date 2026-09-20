@@ -81,11 +81,11 @@ BOARD ?= qemu
 BOARD_CONFIG ?= $(CURDIR)/boards/$(BOARD).json
 BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)
 BOARD_IMAGE ?= $(BOARD_OUTPUT)/disk.img
-# Additional named inputs such as --artifact tfa=/path/to/bl31.bin. These are
+# Additional named inputs such as --artifact host-dtb=/path/to/bcm2712-rpi-5-b.dtb. These are
 # deployment inputs, never compile-time board selections.
 BOARD_ARTIFACTS ?=
 BOARD_EXTRA_ENTRIES ?=
-RPI5_BOOT_PACKAGE ?= $(abspath $(CURDIR)/../HypeR-rpi5-boot/dist)
+RPI5_BOOT_PACKAGE ?=
 RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native
 
 BOARD_TEST_OUTPUT ?= $(CURDIR)/target/board-tests
@@ -532,9 +532,42 @@ rpi5-bringup: image
 		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/native/services.json" \
 		NATIVE_VM_CONFIG="$(CURDIR)/app/init/config/native/vms.json" \
 		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
-	python3 -B scripts/rpi5-bringup.py --package "$(RPI5_BOOT_PACKAGE)" \
+	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
 		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
+
+# Diskless Linux appliance qualification; no /data or device assignment.
+.PHONY: rpi5-io-bringup
+rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
+	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
+	@package="$(IO_VM_PACKAGE)"; \
+	if test -z "$$package"; then \
+		package=$$(python3 -B scripts/fetch-io-vm.py --platform rpi5 \
+			--reference "$(IO_VM_REFERENCE)" --oras "$(IO_VM_ORAS)") || exit $$?; \
+	fi; \
+	python3 -B scripts/io-vm-images.py --package "$$package" --platform rpi5 --bringup \
+		--fit-pack "$(FIT_PACK)" --output "$(RPI5_BRINGUP_OUTPUT)/io.itb"
+	$(MAKE) -o app native-initramfs NATIVE_IMAGE_PROFILE=system NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
+		NATIVE_SERVICE_MANIFEST="$(RPI5_BRINGUP_OUTPUT)/bringup/services.json" \
+		NATIVE_VM_CONFIG="$(RPI5_BRINGUP_OUTPUT)/bringup/vms.json" \
+		NATIVE_EXTRA_ENTRIES='0644 vm/io.itb "$(RPI5_BRINGUP_OUTPUT)/io.itb"' \
+		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
+	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
+		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
+		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
+
+# Physical SD backend with the same minimal Alpine root disk as QEMU.
+.PHONY: rpi5-sd
+rpi5-sd: image
+	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
+	$(MAKE) board-initramfs board-guest-images BOARD=rpi5 BOARD_CONFIG="$(CURDIR)/boards/rpi5-sd.json" \
+		BOARD_OUTPUT="$(RPI5_BRINGUP_OUTPUT)" NATIVE_IMAGE_PROFILE=system
+	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
+		--board "$(CURDIR)/boards/rpi5-sd.json" --kernel "$(KERNEL_IMAGE)" \
+		--initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
+		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE) \
+		--artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
+		--artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4"
 
 .PHONY: board-plan board-initramfs board-image board-rebuild board-run board-guest-images
 board-plan:

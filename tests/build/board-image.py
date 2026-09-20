@@ -118,6 +118,11 @@ class BoardTests(unittest.TestCase):
                 for key in board.source['files'].values():
                     artifacts[key] = root / key
                     artifacts[key].write_bytes(key.encode())
+                    if key == 'hyper' and profile == 'rpi5':
+                        header = bytearray(64)
+                        header[16:24] = (4096).to_bytes(8, 'little')
+                        header[56:60] = b'ARM\x64'
+                        artifacts[key].write_bytes(header)
                 for part in board.partitions:
                     if part.image:
                         artifacts[part.image] = root / part.image
@@ -130,6 +135,21 @@ class BoardTests(unittest.TestCase):
                 self.assertEqual((payload / 'hyper.img').is_file(), profile == 'rpi5')
                 self.assertEqual((payload / 'bootstrap.cpio').is_file(), profile == 'rpi5')
                 self.assertTrue((payload / 'vm/alpine.itb').is_file())
+
+    def test_pi_image_reserves_noload_extent_without_modifying_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / 'hyper.img'
+            header = bytearray(64)
+            header[16:24] = (8192).to_bytes(8, 'little')
+            header[56:60] = b'ARM\x64'
+            image.write_bytes(header)
+            packer.pad_arm64_boot_image(image)
+            self.assertEqual(image.stat().st_size, 8192)
+            self.assertEqual(image.read_bytes()[:64], header)
+            self.assertEqual(image.read_bytes()[64:], bytes(8192 - 64))
+            image.write_bytes(b'not an Image')
+            with self.assertRaisesRegex(ValueError, 'Image header'):
+                packer.pad_arm64_boot_image(image)
 
     def test_rpi5_firmware_requires_bootstrap_archive(self):
         source = json.loads((ROOT / 'boards/rpi5.json').read_text())

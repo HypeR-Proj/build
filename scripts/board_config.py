@@ -15,7 +15,8 @@ ALIGN_SECTORS = MIB // SECTOR
 GPT_ENTRIES = 128
 GPT_ENTRY_BYTES = 128
 GPT_TABLE_SECTORS = GPT_ENTRIES * GPT_ENTRY_BYTES // SECTOR
-ESP = uuid.UUID('c12a7328-f81f-11d2-ba4b-00a0c93ec93b')
+# Ordinary FAT data volume; neither direct boot profile uses UEFI.
+BASIC_DATA = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7')
 # Opaque VM disks must not be advertised as host Linux filesystems or LVM PVs.
 VM_DISK = uuid.UUID('a6edb737-452f-4a43-bd9f-bc04aa5323cf')
 _NAME = re.compile(r'[a-z][a-z0-9-]{0,30}\Z')
@@ -103,7 +104,7 @@ class Board:
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
-        if data['boot'] not in ('qemu-direct', 'rpi5-tfa'):
+        if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
         selector = data['io-device']
         keys(selector, ('profile',), ('compatible', 'path'))
@@ -123,12 +124,14 @@ class Board:
             raise ValueError('disk UUID must not be nil')
         config_size = integer(data['disk']['config-mib'], 64, 32768) * MIB // SECTOR
         partitions = [Partition('config', ALIGN_SECTORS, config_size,
-                                uuid.uuid5(disk_id, 'config'), ESP, 'hyper')]
+                                uuid.uuid5(disk_id, 'config'), BASIC_DATA, 'hyper')]
         if not isinstance(data['files'], dict):
             raise ValueError('files must map destination paths to artifact names')
-        required_files = {'hyper.img'} if data['boot'] == 'rpi5-tfa' else set()
-        if data['boot'] == 'rpi5-tfa':
-            required_files |= {'bootstrap.cpio', 'bl31.bin', 'bcm2712-rpi-5-b.dtb'}
+        required_files = {'hyper.img'} if data['boot'] == 'rpi5-firmware' else set()
+        if data['boot'] == 'rpi5-firmware':
+            required_files |= {'bootstrap.cpio', 'bcm2712-rpi-5-b.dtb',
+                               'bcm2712d0-rpi-5-b.dtb',
+                               'overlays/bcm2712d0.dtbo', 'overlays/overlay_map.dtb'}
         if not required_files <= data['files'].keys():
             raise ValueError('missing boot profile payloads')
         destinations = set()

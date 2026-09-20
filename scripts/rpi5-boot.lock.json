@@ -1,0 +1,29 @@
+{
+  "SPDX-FileCopyrightText": "2026 roolrz",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "format": 1,
+  "firmware": "12eeaa12865869b07db760f4bbb7507ec6f1976c",
+  "linux": "95b85bebbedcaedfa7ca79116ed38b7376fba412",
+  "files": {
+    "bcm2712-rpi-5-b.dtb": {
+      "url": "https://raw.githubusercontent.com/raspberrypi/firmware/12eeaa12865869b07db760f4bbb7507ec6f1976c/boot/bcm2712-rpi-5-b.dtb",
+      "sha256": "652bb30ba94f47f17dc2e4ac5d1f63ddd72a21d3304a44be55c0caaf8e24de96"
+    },
+    "bcm2712d0-rpi-5-b.dtb": {
+      "url": "https://raw.githubusercontent.com/raspberrypi/firmware/12eeaa12865869b07db760f4bbb7507ec6f1976c/boot/bcm2712d0-rpi-5-b.dtb",
+      "sha256": "4ed5a973bd4517b6382d23cacfcdf322fa9cfe65278cbe2575bb4b85f7679282"
+    },
+    "overlays/bcm2712d0.dtbo": {
+      "url": "https://raw.githubusercontent.com/raspberrypi/firmware/12eeaa12865869b07db760f4bbb7507ec6f1976c/boot/overlays/bcm2712d0.dtbo",
+      "sha256": "b73210c9256ff4b4963365f9acc49c0f7449f17eeddf21355e23dd011da899ec"
+    },
+    "overlays/overlay_map.dtb": {
+      "url": "https://raw.githubusercontent.com/raspberrypi/firmware/12eeaa12865869b07db760f4bbb7507ec6f1976c/boot/overlays/overlay_map.dtb",
+      "sha256": "18a5fac97ef3dfbd2b3fb00b622e60772a126cbf8789a8fe53cd69b61db6547f"
+    },
+    "sources.tar.gz": {
+      "url": "https://codeload.github.com/raspberrypi/linux/tar.gz/95b85bebbedcaedfa7ca79116ed38b7376fba412",
+      "sha256": "618e4939c13d067aac3daa99c75b9920d2e0cbadf730c7b01c6a3d2adf519159"
+    }
+  }
+}

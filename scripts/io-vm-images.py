@@ -30,6 +30,8 @@ def package_payloads(package, platform='qemu'):
         metadata = json.loads(bounded_read(boot, MIB))
         if metadata.get('format') != 1 or metadata.get('architecture') != 'aarch64':
             raise ValueError('unsupported boot artifact format or architecture')
+        if metadata.get('platform', 'qemu') != platform:
+            raise ValueError('boot artifact platform mismatch')
         paths = []
         for field, pattern, limit in (
                 ('kernel', r'Image-([0-9a-f]{64})', 32 * MIB),
@@ -76,6 +78,20 @@ def prepare(package, fit_pack, output, test="basic"):
 
 
 
+def bringup_config(output):
+    """Boot the appliance as a supervised VM without physical-device authority."""
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / 'app/init/config/services.json').read_text())
+    manifest['services'] = [service for service in manifest['services']
+                            if service['name'] != 'io-runtime']
+    manifest['virtual-machines'] = {'config': '/etc/hyper/vms.json'}
+    vms = {'format': 'hyper.vm-config', 'virtual-machines': [
+        {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False}]}
+    output.mkdir(parents=True, exist_ok=True)
+    for name, value in [('services.json', manifest), ('vms.json', vms)]:
+        (output / name).write_text(json.dumps(value, indent=2) + '\n')
+
+
 def main():
     from board_config import Board
     from board_bootstrap import linux_overlay, stage
@@ -84,13 +100,24 @@ def main():
     parser.add_argument('--fit-pack', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--board', type=Path)
+    parser.add_argument('--bringup', action='store_true', help='diskless supervised VM, no storage service')
+    parser.add_argument('--platform', choices=('qemu', 'rpi5'))
     args = parser.parse_args()
+    if args.bringup and args.board:
+        parser.error('--bringup cannot accept a storage board configuration')
     board = Board.load(args.board) if args.board else None
-    platform = 'rpi5' if board and board.source['boot'] == 'rpi5-tfa' else 'qemu'
+    platform = 'rpi5' if board and board.source['boot'] == 'rpi5-firmware' else 'qemu'
+    if args.platform:
+        if board and args.platform != platform:
+            parser.error('--platform differs from board')
+        platform = args.platform
     image, initramfs = package_payloads(args.package, platform)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     arguments = ('console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init '
                  'loglevel=4 hyper.role=io hyper.mode=standby')
+    if args.bringup:
+        arguments = arguments.replace('hyper.mode=standby', 'hyper.mode=bringup')
+        bringup_config(args.output.parent / 'bringup')
     if board:
         stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
         contents = linux_overlay(board, bounded_read(initramfs, 8 * MIB))
