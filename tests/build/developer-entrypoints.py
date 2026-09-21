@@ -38,6 +38,61 @@ class EntrypointTests(unittest.TestCase):
             self.assertNotIn('--replace', run)
             self.assertIn('$(BOARD_IMAGE)', run)
 
+    def test_editor_and_build_keep_lockfiles_stable(self):
+        # Exercise Cargo resolution, not just configuration spelling. No network,
+        # installed SDK or Native compiler artifacts are needed for this fixture.
+        with tempfile.TemporaryDirectory(prefix='hyper lockfiles ') as directory:
+            root = Path(directory).resolve()
+            shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+            shared = root / '.vscode/rust-analyzer.toml'
+            shared.parent.mkdir()
+            shutil.copyfile(ROOT / '.vscode/rust-analyzer.toml', shared)
+            crates = ('abi', 'os', 'rt', 'service', 'sys', 'vm-image')
+            for name in crates:
+                paths = [root / ('sdk/abi' if name == 'abi' else f'sdk/rust/hyper-{name}'),
+                         root / f'installed/hyper-{name}']
+                for path in paths:
+                    path.mkdir(parents=True)
+                    (path / 'Cargo.toml').write_text(
+                        f'[package]\nname="hyper-{name}"\nversion="0.0.0"\n'
+                        '[lib]\npath="lib.rs"\n')
+                    (path / 'lib.rs').write_text('')
+            for workspace in ('tools/fit-pack', 'app', 'sdk/toolchain/tests/std-smoke',
+                              'sdk/toolchain/tests/rust-smoke'):
+                cwd = root / workspace
+                cwd.mkdir(parents=True)
+                native = workspace != 'tools/fit-pack'
+                deps = ''.join(f'hyper-{name}="=0.0.0"\n' for name in crates) if native else (
+                    'hyper-abi={path="../../sdk/abi"}\n')
+                (cwd / 'Cargo.toml').write_text(
+                    '[package]\nname="probe"\nversion="0.0.0"\n'
+                    '[workspace]\n[lib]\npath="lib.rs"\n[dependencies]\n' + deps)
+                (cwd / 'lib.rs').write_text('')
+                if native:
+                    (cwd / '.cargo').mkdir()
+                    shutil.copyfile(ROOT / workspace / '.cargo/config.toml',
+                                    cwd / '.cargo/config.toml')
+                command = ['cargo', 'metadata', '--offline', '--format-version=1',
+                           '--config', 'build.target="aarch64-unknown-none"']
+                result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lock = (cwd / 'Cargo.lock').read_bytes()
+                for mode in ('editor', 'installed', 'editor'):
+                    args = command + ['--locked', '--config', str(shared)]
+                    if native and mode == 'installed':
+                        for name in crates:
+                            args += ['--config', f'patch.crates-io.hyper-{name}.path="'
+                                     f'{root}/installed/hyper-{name}"']
+                    result = subprocess.run(args, cwd=cwd, check=True,
+                                            capture_output=True, text=True)
+                    self.assertEqual((cwd / 'Cargo.lock').read_bytes(), lock)
+                    if native:
+                        crate = next(p for p in json.loads(result.stdout)['packages']
+                                     if p['name'] == 'hyper-os')
+                        expected = root / ('installed/hyper-os' if mode == 'installed'
+                                           else 'sdk/rust/hyper-os') / 'Cargo.toml'
+                        self.assertEqual(Path(crate['manifest_path']), expected)
+
     def test_analyzer_patches_only_native_workspaces(self):
         with tempfile.TemporaryDirectory(prefix='hyper editor ') as directory:
             root = Path(directory).resolve()
@@ -70,7 +125,7 @@ class EntrypointTests(unittest.TestCase):
                     self.assertEqual(result['config'], str(root / 'kernel/configs/qemu_aarch64_defconfig'))
                 else:
                     index = result['argv'].index('--config')
-                    self.assertEqual(result['argv'][index + 1], str(root / '.vscode/rust-analyzer.toml'))
+                    self.assertEqual(result['argv'][index + 1], str(cwd / '.cargo/config.toml'))
                     self.assertEqual(result['std'], '0' if workspace.endswith('rust-smoke') else '1')
             env['HYPER_CONFIG'] = '/chosen/board.config'
             subprocess.run(['sh', str(script)], cwd=root / 'kernel', env=env, check=True)

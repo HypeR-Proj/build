@@ -8,7 +8,7 @@ set -eu
 script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 workspace=$(pwd -P)
-config=$root/.vscode/rust-analyzer.toml
+config=$workspace/.cargo/config.toml
 PATH="$PATH:$HOME/.cargo/bin"
 
 case "$workspace" in
