@@ -27,6 +27,7 @@ members = [
     "top",
     "vm-manager",
     "vm-runtime",
+    "vm-support",
     "io-runtime",
     "vm-smoke",
     "vmm",
@@ -46,6 +47,7 @@ hyper-rt = { version = "=0.0.0", features = ["std"] }
 hyper-service = "=0.0.0"
 hyper-vm-image = "=0.0.0"
 hyper-vm-policy = { path = "vm-policy" }
+hyper-vm-support = { path = "vm-support" }
 clap = { version = "=4.6.6", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

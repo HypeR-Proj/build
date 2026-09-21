@@ -207,7 +207,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-image",
- "hyper-vm-runtime",
+ "hyper-vm-support",
  "serde",
  "serde_json",
 ]
@@ -364,6 +364,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-image",
+ "hyper-vm-support",
 ]
 
 [[package]]
@@ -372,6 +373,15 @@ version = "0.0.0"
 dependencies = [
  "hyper-os",
  "hyper-rt",
+]
+
+[[package]]
+name = "hyper-vm-support"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-service",
+ "hyper-vm-image",
 ]
 
 [[package]]

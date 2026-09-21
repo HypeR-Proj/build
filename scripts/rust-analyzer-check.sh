@@ -5,8 +5,8 @@
 # rust-analyzer runs this from each linked Cargo workspace. Use the same Native
 # driver as production, while checking kernel/host projects on the host target.
 set -eu
-script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
-root=$(CDPATH='' cd -- "$script_directory/.." && pwd)
+script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 workspace=$(pwd -P)
 config=$root/.vscode/rust-analyzer.toml
 PATH="$PATH:$HOME/.cargo/bin"
@@ -28,7 +28,11 @@ case "$workspace" in
             --config "$config" --target-dir "$root/target/rust-analyzer/native"
         ;;
     *)
+        # Kernel/tool workspaces must not receive app SDK patches: in those
+        # workspaces they create unused-patch warnings and alter resolution.
+        # Preserve the board configuration needed by the kernel build script.
+        export HYPER_CONFIG="${HYPER_CONFIG:-$root/kernel/configs/qemu_aarch64_defconfig}"
         exec cargo check --workspace --all-targets --message-format=json \
-            --config "$config" --target-dir "$root/target/rust-analyzer/host"
+            --target-dir "$root/target/rust-analyzer/host"
         ;;
 esac
