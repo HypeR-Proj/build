@@ -105,7 +105,7 @@ board-rebuild: image board-initramfs board-guest-images
 board-guest-images: guest-itb
 	python3 -B scripts/pack-guest-disk.py --board "$(BOARD_CONFIG)" \
 		--rootfs "$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/rootfs.tar" --output "$(BOARD_OUTPUT)/alpine.ext4"
-	"$(FIT_PACK)" "$(BOARD_OUTPUT)/alpine.itb" "$(NATIVE_GUEST_ARCH)" 134217728 "$(NATIVE_GUEST_VCPUS)" \
+	"$(FIT_PACK)" "$(BOARD_OUTPUT)/alpine.itb" "$(NATIVE_GUEST_ARCH)" "$(NATIVE_GUEST_MEMORY_BYTES)" "$(NATIVE_GUEST_VCPUS)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" "$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
 		"$(NATIVE_GUEST_BOOTARGS) hyper.root=/dev/sda"

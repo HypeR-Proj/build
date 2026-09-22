@@ -9,7 +9,7 @@ fit-pack:
 guest-itb: fit-pack
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "guest images are not implemented for $(ARCH)" >&2; exit 2; }
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH="$(ARCH)"
-	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" 134217728 "$(NATIVE_GUEST_VCPUS)" \
+	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" "$(NATIVE_GUEST_MEMORY_BYTES)" "$(NATIVE_GUEST_VCPUS)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" \
 		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
@@ -143,4 +143,3 @@ test-guest-smp: image guest-smp-initramfs
 	$(NATIVE_QEMU_ENV) GUEST_CPUS="$(NATIVE_SMP_GUEST_VCPUS)" \
 		python3 tests/qemu/verify-guest-smp.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_SMP_INITRAMFS)" "$(APP_OUTPUT)/guest-smp.log"
-

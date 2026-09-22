@@ -58,7 +58,9 @@ NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
 NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
-NATIVE_GUEST_VCPUS ?= 1
+# AArch64 Alpine exercises SMP by default; RISC-V guests remain single-vCPU.
+NATIVE_GUEST_VCPUS ?= $(if $(filter aarch64,$(ARCH)),2,1)
+NATIVE_GUEST_MEMORY_BYTES ?= 268435456
 NATIVE_SMP_GUEST_VCPUS ?= 4
 NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
 STACK_OUTPUT := $(CURDIR)/target/stack-audit/$(ARCH)
@@ -128,7 +130,7 @@ NATIVE_VM_CONFIG := $(CURDIR)/app/init/tests/config/vms.json
 NATIVE_GUEST_PREREQUISITES := guest-itb
 NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
 QEMU_CPUS ?= 4
-QEMU_MEMORY ?= 512M
+QEMU_MEMORY ?= 1G
 QEMU_BOOTARGS ?= earlycon=pl011,mmio32,0x09000000
 
 NATIVE_RUN_PREREQUISITES :=

@@ -125,7 +125,7 @@ def main():
         if not initramfs.exists() or initramfs.read_bytes() != contents:
             initramfs.write_bytes(contents)
         arguments += ' hyper.volumes=required'
-    subprocess.run([str(args.fit_pack), str(args.output), 'arm64', str(64 * MIB), '1',
+    subprocess.run([str(args.fit_pack), str(args.output), 'arm64', str(128 * MIB), '1',
                     str(image), '0x40200000', '0x40200000', str(initramfs),
                     arguments], check=True)
 
