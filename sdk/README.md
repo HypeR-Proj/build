@@ -151,6 +151,5 @@ LLVM compatibility range. SDK release versioning is separate from the ABI
 revision; publishing a toolchain package does not by itself declare ABI
 stability.
 
-Linux, FreeBSD, POSIX, and other foreign interfaces are not part of this SDK.
-They remain separately versioned compatibility personalities built above the
-HypeR Native capability boundary.
+Foreign OS compatibility is outside this SDK. No Linux, FreeBSD or POSIX
+personality is currently shipped or promised by the Native SDK.

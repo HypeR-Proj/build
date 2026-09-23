@@ -6,9 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 # HypeR Native applications
 
 This directory contains the capability-oriented system applications that
-run directly on the HypeR Native ABI. Applications consume only the assembled
-Native SDK; they do not reach into Kernel, ABI, or Lib
-implementation sources.
+run directly on the HypeR Native ABI. Target builds consume the assembled
+Native SDK; source-level host tests use workspace SDK patches. Applications
+do not reach into kernel or runtime implementation internals.
 
 VM management remains a distinct security boundary within this repository. A
 long-lived fleet manager owns definitions and policy, isolated per-VM runtimes
@@ -17,7 +17,7 @@ receives only the control or runtime byte-channel authority needed for one comma
 
 ## Application development
 
-All 14 executables use the SDK's partial Rust std port. Command-line interfaces
+The in-tree executables use the SDK's partial Rust std port. Command-line interfaces
 use clap, shell words use shlex, and formatting, collections, paths, and ordinary
 command output use std. `echo` keeps option-looking text literal, including
 `--help` and `-n`; other public commands provide clap help and reject extra or
@@ -35,8 +35,9 @@ these now use Native thread and atomic wait/wake syscalls. Ordinary sleeps use
 `std::thread::sleep`. Absolute deadlines passed to Native object waits retain
 the SDK clock types, since std does not expose that capability wait contract.
 
-Native directory/process/VM operations and service channel multiplexing still
-use hyper-os: the partial std port does not implement these capability APIs.
+Ordinary path-based filesystem and subprocess operations can use std. Explicit
+directory/process capability delegation, VM operations and service channel
+multiplexing use hyper-os because std does not represent those authority APIs.
 The bootstrap manifest keeps its restrictive schema parser (including duplicate
 field and escape rejection); its bounded collections now use Vec storage.
 `make app-check`, `make app-test`, and `make test-native` validate the migration.
@@ -92,49 +93,48 @@ closing other writers. The shell retains its foreground streams. Console
 workers keep only their existing transport endpoints and receive no standard
 streams; other background services receive no stdin.
 
-The same manifest selects the initial guest through an `initial-vm.image`
-path. Init validates this as a canonical absolute path, opens it through its
-root Directory authority, and transfers the resulting opaque File capability
-to the unique service which declares the VM provisioning contract. Neither the
-VM manager nor the runtime infers guest identity from a built-in path or
-process name.
+The manifest's optional `virtual-machines.config` path selects a file of named
+VM definitions. Board packaging generates `/data/vms.json` and gates its use on
+I/O runtime readiness; standalone tests use files under `init/tests/config/`.
+Init transfers the configuration File to the VM manager. The manager validates
+and opens guest images, then creates a fresh child resource domain, task group,
+creation lease and isolated runtime for each start. There are up to eight
+business definitions; the fleet also budgets a separate resident I/O VM.
+Admission remains subject to available resources.
 
-The manager retains the read-only VM definition and creates a fresh resource
-domain, task group, creation lease, runtime process, and console connector for
-every start. The current fleet contains one definition named `default` and at
-most one active instance. Its control connector accepts multiple clients;
-every shell invocation creates private control and capability channels before
-launching `/bin/vmm`, so an attached console does not prevent another physical
-session from issuing a lifecycle or status request. Management messages remain
-on the control plane. Guest bytes flow through a ByteChannel supplied to the VM runtime, and
-the manager grants that connection to at most one client at a time. The runtime
-allocates and registers a read-only shared ring with the kernel, waits for
-readiness through a persistent WaitSet, and owns output retention and
-nonblocking client forwarding. Consumption is acknowledged in batches; idle
-console transport has no periodic wakeup.
-
-`vmm` accepts the following commands:
+Each `vmm` invocation receives private control and capability channels. The
+manager supports multiple clients and reports exhausted connection capacity.
+A runtime owns its read-only shared serial ring, WaitSet subscriptions and
+bounded output retention. Only one client may attach to a VM's console, while
+other clients can still issue lifecycle requests. Guest output does not bypass
+the runtime to reach the physical Console.
 
 ```text
-vmm [list|status|start|stop|restart|console]
+vmm list
+vmm status alpine
+vmm start alpine
+vmm console alpine
+vmm affinity alpine 0 1,3
+vmm stop alpine
+vmm restart alpine
+vmm create test --image /data/vm/alpine.itb
+vmm delete test
 ```
 
-No argument is equivalent to `list`. `console` attaches to the buffered guest
-serial stream only while `default` is running. Pressing Ctrl-] opens a local
-menu; `d`, `q`, or Ctrl-] detaches without changing VM power state. Closing
-that client's private control channel also releases the exclusive attachment.
-Guest serial output is never routed directly to the physical Console.
+No subcommand means `list`; VM operations require a name. Ctrl-] opens the
+console detach menu. Nonblocking guest input and a bounded pending buffer keep
+detach responsive even when the guest stops reading. Deployment configuration
+is persistent; `create`/`delete` affect only the running manager. There is no
+`save`/`load` command. See [Native applications](../docs/applications.md) for
+console, affinity, read-only I/O VM observation and accounting semantics.
 
-The initial shell provides bounded line editing, quoting and escaping, `cd`,
-`pwd`, `help`, `echo`, `clear`, and `exit`, plus external command launch from `/bin`.
-It does not receive ambient process creation: the console manager delegates a root
-`Directory` plus attenuated TaskFactory, TaskGroup, and ResourceDomain handles.
-The shell keeps the root private, resolves parent-directory changes itself, and
-gives each command only a read-only handle rooted at its current directory.
-Commands cannot use `..` to acquire parent authority. Each command also receives
-fresh ByteChannel endpoints under the standard typed I/O contract. The shell
-waits on command output, input, and process termination in one kernel-backed
-multi-object wait and inspects the Process handle for its terminal result.
+The shell supports bounded editing, quoting, `cd`, `pwd`, `help`, `clear` and
+`exit`, external commands, concurrent pipelines and file redirection. `echo`
+is an external application. It receives explicit process-construction authority
+from the virtual console manager. Child commands inherit attenuated root and
+cwd Directory capabilities, standard streams and authorized process resources;
+path traversal remains bounded by the delegated root. This is not confinement
+to the child's initial cwd. See [shell syntax and limits](../docs/shell.md).
 
 ## Build
 
@@ -165,7 +165,7 @@ manager; `vmm --help` does not require a running manager.
 ```text
 app/
   Cargo.toml          Workspace, dependency versions, and shared lints
-  cat/ chmod/ cp/ echo/ free/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
+  cat/ chmod/ cp/ echo/ free/ grep/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
     config/           Production service template and standalone Native profile
@@ -173,7 +173,8 @@ app/
     tests/            Unit tests and acceptance-only config/ manifests
   session/
   shell/
-  vm-manager/ vm-runtime/ vmm/
+  io-runtime/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
+  vm-support/         Shared guest-image, device and protocol mechanisms
   vm-policy/          Resource policy shared by init and the VM manager
 ```
 
@@ -183,9 +184,9 @@ live in its own `tests/` and are included by that package's library. Packages
 set `autotests = false` so Cargo does not also treat these unit-test files as
 standalone integration targets. No command tests are loaded by init.
 
-Run all host tests with `make app-test`, or select one package, for example
-`cargo test --manifest-path app/Cargo.toml -p hyper-ls --lib`, supplying the
-assembled SDK patches as in the Makefile. `make app-check` and `make app` cover
+Run all host tests with `make app-test`, or select a package with
+`make app-test APP_TEST_PACKAGE=hyper-ls`. This source-level host-test entry
+uses the workspace's SDK source patches and does not require SDK assembly. `make app-check` and `make app` cover
 all workspace members. Target executable names and installed paths are unchanged.
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
@@ -223,12 +224,13 @@ file tools, not full GNU coreutils option compatibility.
 
 ## Diagnostic commands
 
-`ls` enumerates the current Directory capability, or one relative descendant,
-without receiving the shell's root authority. `ps` lists Processes by default,
+`ls` uses std filesystem APIs for supplied absolute or relative paths within
+its delegated root and cwd capabilities. `ps` lists Processes by default,
 including their immutable service label,
 lifecycle state, and active/pending Thread counts. `ps --threads` (or `ps -T`)
 also places every visible Thread directly below its owning Process and lists
-kernel Threads with `-` as the owner. `handle <process-koid>` decodes the
+kernel Threads with `kernel` as the owner; thread rows include their process
+name and per-CPU idle threads use `idle/CPU`. `handle <process-koid>` decodes the
 selected Process's handle kinds, rights, and object purposes; `handle
 --objects` reports the visible kernel-object graph. Both commands require
 explicit inspector capabilities, and every displayed KOID remains diagnostic
@@ -257,19 +259,14 @@ Native SDK calls remain where their semantics are required:
 The shell emits its own prompts and diagnostics through std stdout and flushes
 before blocking. Input ownership and child-channel routing remain Native;
 buffering that input in std while handing its channel to another consumer
-would require a separate handoff protocol. Init's bootstrap implementation is
-outside this application migration.
+would require a separate handoff protocol. Init also uses std, retaining Native APIs for bootstrap and delegation.
 
-## Roadmap
+## Planned work
 
-- add capability-rendezvous foreground-session handoff and WaitSet-backed
-  multi-service supervision;
-- grow the command set around typed service APIs without introducing ambient
-  namespaces or a generic message envelope;
-- extend capability-aware diagnostics beyond the existing `ps` and `handle`
-  tools;
-- add stable machine-readable output modes; and
-- produce signed Native application images through HypeR Toolchain.
+The shared [roadmap](../docs/roadmap.md) owns project commitments. Existing
+Native application functionality remains supported while I/O backend and
+hardware qualification work continues. Multi-UART transport discovery and
+wiring are not yet implemented; the current deployment has one physical console.
 
 ## License
 
