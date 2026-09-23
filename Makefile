@@ -133,7 +133,7 @@ QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 1G
 QEMU_BOOTARGS ?= earlycon=pl011,mmio32,0x09000000
 
-NATIVE_RUN_PREREQUISITES :=
+NATIVE_BUILD_PREREQUISITES :=
 ifneq ($(filter $(ARCH),aarch64 riscv64),)
 ifeq ($(origin INITRAMFS),undefined)
 INITRAMFS := $(NATIVE_INITRAMFS)
@@ -141,9 +141,9 @@ ifeq ($(RUN_PROFILE),board)
 INITRAMFS := $(BOARD_OUTPUT)/bootstrap.cpio
 else ifeq ($(RUN_PROFILE),io)
 INITRAMFS := $(APP_OUTPUT)/initramfs-io.cpio
-NATIVE_RUN_PREREQUISITES := io-initramfs
+NATIVE_BUILD_PREREQUISITES := io-initramfs
 else
-NATIVE_RUN_PREREQUISITES := native-initramfs
+NATIVE_BUILD_PREREQUISITES := native-initramfs
 endif
 endif
 else
@@ -155,12 +155,18 @@ KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
 	test-qemu test-vhe-required verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \
-	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke test-io-vm guest-smp-initramfs test-guest-smp check-all test-all verify-all run clean
+	fit-pack guest-itb native-initramfs test-native test-apps test-console test-runtime-crash test-vm-smoke test-io-vm guest-smp-initramfs test-guest-smp check-all test-all verify-all run rebuild clean
 
-ifeq ($(ARCH),aarch64)
-all: board-rebuild
+ifeq ($(RUN_PROFILE),board)
+all: board-build
+rebuild: board-rebuild
 else
-all: image
+all: image $(NATIVE_BUILD_PREREQUISITES)
+rebuild: all
+ifeq ($(RUN_PROFILE),io)
+all:
+	python3 -B -c 'import runpy, sys; from pathlib import Path; runpy.run_path("scripts/run-io-vm.py")["prepare_disk"](Path(sys.argv[1]), 64 * 1024 * 1024)' "$(IO_VM_DISK)"
+endif
 endif
 
 # Keep instrumentation and the inspector-authorized workload in a dedicated
@@ -195,7 +201,7 @@ test-all: test sdk-test app-test test-native
 
 verify-all: check-all test-all
 
-run: $(NATIVE_RUN_PREREQUISITES)
+run:
 	@test -n "$(INITRAMFS)" || { \
 		echo "INITRAMFS must name a newc archive containing an executable /init" >&2; \
 		exit 2; \
@@ -204,7 +210,6 @@ ifeq ($(RUN_PROFILE),board)
 	$(MAKE) board-run
 else ifeq ($(RUN_PROFILE),io)
 	@test "$(ARCH)" = aarch64 || { echo "I/O VM run profile requires aarch64" >&2; exit 2; }
-	$(MAKE) image
 	$(NATIVE_QEMU_ENV) python3 -B scripts/run-io-vm.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
 		--initramfs "$(abspath $(INITRAMFS))" --disk "$(IO_VM_DISK)"

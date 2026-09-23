@@ -76,7 +76,7 @@ rpi5-sd: image
 		--artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
 		--artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4"
 
-.PHONY: board-plan board-initramfs board-image board-rebuild board-run board-guest-images
+.PHONY: board-plan board-initramfs board-image board-build board-rebuild board-run board-guest-images
 board-plan:
 	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --plan
 
@@ -96,8 +96,14 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 		NATIVE_VM_CONFIG="$(BOARD_OUTPUT)/board/vms.json" \
 		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(BOARD_OUTPUT)/io.itb" 0644 etc/hyper/board.json "$(BOARD_OUTPUT)/board/board.json" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
 
-# Explicit image creation refuses existing outputs. The default build opts
-# into atomic replacement; run continues to reuse the persistent disk.
+# QEMU loads kernel/bootstrap directly from the host. Refresh these on every
+# build, but populate persistent volumes only when creating the first disk.
+board-build: image board-initramfs
+	@if test ! -e "$(BOARD_IMAGE)" && test ! -L "$(BOARD_IMAGE)"; then \
+		$(MAKE) -o image -o board-initramfs board-image; \
+	fi
+
+# Explicit full repacking resets persistent volumes only after successful packing.
 board-rebuild: image board-initramfs board-guest-images
 	@echo "Rebuilding $(BOARD_IMAGE): disk data will be reset after successful packing."
 	$(MAKE) -o image -o board-initramfs -o board-guest-images board-image BOARD_IMAGE_REPLACE=--replace
@@ -116,9 +122,8 @@ board-image: image board-initramfs board-guest-images
 		--default-artifact "alpine=$(BOARD_OUTPUT)/alpine.itb" \
 		--default-artifact "alpine-rootfs=$(BOARD_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
 
-board-run: image board-initramfs
+board-run:
 	@test "$(BOARD)" = qemu || { echo "board-run requires the QEMU deployment profile" >&2; exit 2; }
-	@if test ! -e "$(BOARD_IMAGE)"; then $(MAKE) -o image -o board-initramfs board-image; fi
 	$(NATIVE_QEMU_ENV) python3 -B scripts/run-io-vm.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(BOARD_OUTPUT)/bootstrap.cpio" \
 		--disk "$(BOARD_IMAGE)" --board "$(BOARD_CONFIG)"

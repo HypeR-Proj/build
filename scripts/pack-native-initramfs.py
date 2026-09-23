@@ -12,6 +12,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
@@ -60,6 +61,15 @@ def main():
         parser.error("--replace requires --deployment")
     if not args.entries:
         parser.error("no initramfs entries selected")
+    # Validate the actual selected/generated manifest before cache hits or any
+    # output mutation. The host tool shares init's parser and admission policy.
+    manifests = [args.entries[index + 2] for index in range(0, len(args.entries), 3)
+                 if args.entries[index + 1].lstrip('/') == 'etc/hyper/services.json']
+    if len(manifests) > 1:
+        parser.error("duplicate etc/hyper/services.json entries")
+    if manifests:
+        subprocess.run([sys.executable, str(Path(__file__).with_name('check-service-manifest.py')),
+                        manifests[0], *args.entries[1::3]], check=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     requested = inputs(args)
     state_path = Path(str(args.output) + ".build-state.json")

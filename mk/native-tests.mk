@@ -44,6 +44,14 @@ test-apps: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-apps.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/apps.log"
 
+.PHONY: test-clock
+# The no-RTC case intentionally tests Native std without starting a guest VM.
+test-clock: NATIVE_VM_CONFIG = $(CURDIR)/app/init/config/native/vms.json
+test-clock: image native-initramfs
+	@test "$(ARCH)" = aarch64 || { echo "clock fixture requires aarch64" >&2; exit 2; }
+	python3 tests/qemu/verify-clock.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/clock"
+
 test-console: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-console.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/console.log"

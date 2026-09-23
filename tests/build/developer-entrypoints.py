@@ -27,16 +27,49 @@ class EntrypointTests(unittest.TestCase):
                      f'ARCH={arch}'], cwd=ROOT, check=True, capture_output=True, text=True)
             database = result.stdout
             self.assertRegex(database, r'(?m)^\.DEFAULT_GOAL\s*:?=\s*all$')
-            expected = 'board-rebuild' if arch == 'aarch64' else 'image'
+            expected = 'board-build' if arch == 'aarch64' else ('image native-initramfs' if arch == 'riscv64' else 'image')
             self.assertRegex(database, rf'(?m)^all: {expected}$')
-            self.assertRegex(database, r'(?m)^board-run: image board-initramfs$')
+            self.assertRegex(database, r'(?m)^board-run: *$')
             self.assertRegex(database, r'(?m)^board-rebuild: image board-initramfs board-guest-images$')
             # Ask Make for its evaluated recipes, not a guessed source filename.
             rebuild = re.search(r'(?ms)^board-rebuild:.*?(?=^[^\s#]|\Z)', database).group(0)
             self.assertIn('--replace', rebuild)
             run = re.search(r'(?ms)^board-run:.*?(?=^[^\s#]|\Z)', database).group(0)
             self.assertNotIn('--replace', run)
+            self.assertNotIn('board-image', run)
+            self.assertRegex(database, r'(?m)^run: *$')
+            expected_rebuild = 'board-rebuild' if arch == 'aarch64' else 'all'
+            self.assertRegex(database, rf'(?m)^rebuild: {expected_rebuild}$')
             self.assertIn('$(BOARD_IMAGE)', run)
+
+    def test_run_has_no_build_commands(self):
+        for arch, profile in [('aarch64', 'board'), ('aarch64', 'native'),
+                              ('aarch64', 'io'), ('riscv64', 'native')]:
+            result = subprocess.run(
+                ['make', '-n', 'run', f'ARCH={arch}', f'RUN_PROFILE={profile}'],
+                cwd=ROOT, check=True, capture_output=True, text=True)
+            for build_command in ('cargo build', 'cargo run', 'build-sysroot.sh',
+                                  'pack-native-initramfs.py', 'pack-board-image.py',
+                                  'fetch-io-vm.py', 'prepare_disk'):
+                self.assertNotIn(build_command, result.stdout)
+
+    def test_board_build_keeps_existing_disk_and_run_does_not_create_missing_disk(self):
+        with tempfile.TemporaryDirectory(prefix='hyper run policy ') as directory:
+            output = Path(directory)
+            disk = output / 'disk.img'
+            disk.write_bytes(b'persistent disk contents')
+            result = subprocess.run(
+                ['make', '-o', 'image', '-o', 'board-initramfs', 'board-build',
+                 f'BOARD_OUTPUT={output}'], cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(disk.read_bytes(), b'persistent disk contents')
+            disk.unlink()
+            result = subprocess.run(
+                ['make', 'run', f'BOARD_OUTPUT={output}', 'QEMU=false'],
+                cwd=ROOT, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('run make first', result.stderr)
+            self.assertEqual(list(output.iterdir()), [])
 
     def test_editor_and_build_keep_lockfiles_stable(self):
         # Exercise Cargo resolution, not just configuration spelling. No network,

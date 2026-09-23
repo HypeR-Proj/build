@@ -50,10 +50,14 @@ def main():
     parser.add_argument('--board', type=Path)
     parser.add_argument('--dtb', type=Path, default=os.environ.get('QEMU_DTB'))
     args = parser.parse_args()
+    for path in (args.image, args.initramfs, args.disk):
+        if not path.is_file():
+            parser.error(f'missing artifact {path}; run make first')
     if args.board:
         validate_board_disk(args.disk, args.board)
     else:
-        prepare_disk(args.disk, 64 * 1024 * 1024)
+        if args.disk.stat().st_size < 8 * 1024 * 1024:
+            parser.error('I/O VM disk must be at least 8 MiB')
     command = [args.qemu, '-machine', os.environ.get('QEMU_MACHINE', 'virt,virtualization=on,gic-version=3'),
                '-cpu', os.environ.get('QEMU_CPU', 'max'), '-smp', os.environ.get('QEMU_CPUS', '4'),
                '-m', os.environ.get('QEMU_MEMORY', '1G'), '-nodefaults', '-display', 'none',

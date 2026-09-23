@@ -8,6 +8,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 import sys
 import json
 from unittest.mock import patch
@@ -28,7 +29,8 @@ class DiskTests(unittest.TestCase):
                                  '--image', 'kernel.img', '--initramfs', 'init.cpio',
                                  '--disk', 'disk.img']), \
                     patch.object(sys.stdin, 'isatty', return_value=interactive), \
-                    patch.object(runner, 'prepare_disk'), \
+                    patch.object(Path, 'is_file', return_value=True), \
+                    patch.object(Path, 'stat', return_value=SimpleNamespace(st_size=8 * 1024 * 1024)), \
                     patch.object(runner.os, 'execvp') as execute:
                 runner.main()
                 command = execute.call_args.args[1]
