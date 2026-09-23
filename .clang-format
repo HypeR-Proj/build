@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+BasedOnStyle: LLVM
+Language: Cpp
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+IndentCaseLabels: false
+ContinuationIndentWidth: 8
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+SeparateDefinitionBlocks: Always
+PointerAlignment: Right
+SortIncludes: Never
+IncludeBlocks: Preserve
+BreakStringLiterals: false
+ReflowComments: IndentOnly
+SpaceBeforeParens: ControlStatements
