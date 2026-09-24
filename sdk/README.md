@@ -123,8 +123,8 @@ reserves a profile-specific region for system-managed user mappings, such as a
 future vDSO. Current application limits are 128 TiB on AArch64 VA48 and 128 GiB
 on RISC-V Sv39. These values may change; the common ABI does not require equal
 halves or identical addresses across architectures. Applications, allocators,
-and loaders must obey their granted VMAR range. The current process layout
-remains below 4 GiB on both architectures.
+and loaders must obey their granted VMAR range. The loader grants ROOT_VMAR from one page to the selected application limit;
+the SDK places final stacks near that limit after retiring the kernel bootstrap stack.
 
 ## Application integration
 
