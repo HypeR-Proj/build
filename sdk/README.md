@@ -60,6 +60,7 @@ share/hyper/rust/hyper-sys/
 share/hyper/rust/hyper-os/
 share/hyper/rust/hyper-rt/
 share/hyper/rust/hyper-service/
+share/hyper/rust/hyper-vm-image/
 share/hyper/manifest
 ```
 
