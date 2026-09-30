@@ -154,7 +154,7 @@ as a contract test.
 
 `ARCH=riscv64` selects separate SDK and app output directories and runs the same
 service graph, including the userspace VM fleet. The optional
-`init/config/native/services.json` profile contains console workers and the
+`init/config/services-console-only.json` profile contains console workers and the
 virtual console manager without a VM fleet. The manager starts its shell.
 Acceptance-only manifests live under `init/tests/config/`.
 The same init and shell binaries support service graphs with or without a VM
@@ -168,7 +168,7 @@ app/
   cat/ chmod/ cp/ echo/ free/ grep/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
-    config/           Production service template and standalone Native profile
+    config/           Service manifests for VM-enabled and console-only startup
     src/              Bootstrap and supervision
     tests/            Unit tests and acceptance-only config/ manifests
   session/

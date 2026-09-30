@@ -50,7 +50,7 @@ class BoardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Board.parse(invalid)
         invalid = copy.deepcopy(changed)
-        invalid['io-vm']['memory-bytes'] = 64 * 1024 * 1024
+        invalid['io-vm']['configuration']['memory-bytes'] = 64 * 1024 * 1024
         with self.assertRaises(ValueError):
             Board.parse(invalid)
 
@@ -66,12 +66,52 @@ class BoardTests(unittest.TestCase):
             for target in ('business', 'io'):
                 with self.subTest(affinity=invalid, target=target):
                     changed = copy.deepcopy(self.source)
-                    config = (changed['io-vm'] if target == 'io' else
+                    config = (changed['io-vm']['configuration'] if target == 'io' else
                               changed['virtual-machines'][0]['configuration'])
-                    config['vcpus'] = 2
+                    config['vcpus'] = 1 if target == 'io' else 2
                     config['affinity'] = invalid
                     with self.assertRaises(ValueError):
                         Board.parse(changed)
+
+    def test_io_vm_has_one_complete_bootstrap_definition(self):
+        for profile in ('qemu', 'rpi5', 'rpi5-native', 'rpi5-sd'):
+            board = Board.load(ROOT / f'boards/{profile}.json')
+            resident = board.source['io-vm']
+            self.assertEqual(resident['runtime'], 'io-runtime')
+            self.assertEqual(resident['configuration']['memory-bytes'], 128 * 1024 * 1024)
+            self.assertEqual(resident['configuration']['vcpus'], 1)
+            self.assertNotIn('io-device', board.source)
+            self.assertNotIn(resident['name'], [vm['name'] for vm in board.vms()['virtual-machines']])
+        for field, value in [('runtime', 'vm-runtime'), ('name', ''), ('name', '-io'),
+                             ('name', 'x' * 33), ('name', 'alpine'), ('image', '/data/io.itb'),
+                             ('image', '/vm/../io.itb'), ('image', '/vm//io.itb'),
+                             ('image', '/vm/./io.itb'), ('image', '/vm/io.itb/'),
+                             ('image', '/vm/io.elf'), ('image', '/vm/i\\o.itb'),
+                             ('image', '/vm/i\x7fo.itb'), ('image', '/vm/' + 'x' * 505 + '.itb'),
+                             ('image', '/vm/' + '\u00e9' * 253 + '.itb')]:
+            invalid = copy.deepcopy(self.source)
+            invalid['io-vm'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                Board.parse(invalid)
+        for field in ('runtime', 'name', 'image', 'configuration', 'io-device'):
+            invalid = copy.deepcopy(self.source)
+            del invalid['io-vm'][field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                Board.parse(invalid)
+        for field, value in [('memory-bytes', 64 * 1024 * 1024), ('vcpus', 2)]:
+            invalid = copy.deepcopy(self.source)
+            invalid['io-vm']['configuration'][field] = value
+            with self.assertRaisesRegex(ValueError, '128 MiB and one vCPU'):
+                Board.parse(invalid)
+        invalid = copy.deepcopy(self.source)
+        invalid['io-device'] = invalid['io-vm']['io-device']
+        with self.assertRaises(ValueError):
+            Board.parse(invalid)
+        valid = copy.deepcopy(self.source)
+        valid['io-vm']['name'] = 'Storage_IO.1'
+        valid['io-vm']['image'] = '/vm/' + 'x' * 504 + '.itb'
+        self.assertEqual(len(valid['io-vm']['image']), 512)
+        Board.parse(valid)
 
     def test_image_tool_prefers_path(self):
         with patch.object(packer.shutil, 'which', return_value='/tools/mkfs.fat'), \
@@ -209,11 +249,11 @@ class BoardTests(unittest.TestCase):
                          {'profile': 'virtio-mmio-scsi', 'path': '/soc/../device'},
                          {'profile': 'virtio-mmio-scsi', 'compatible': ''}):
             source = copy.deepcopy(self.source)
-            source['io-device'] = selector
+            source['io-vm']['io-device'] = selector
             with self.assertRaises(ValueError):
                 Board.parse(source)
         source = copy.deepcopy(self.source)
-        source['io-device'] = {'profile': 'virtio-mmio-scsi', 'path': '/soc/virtio@a000000'}
+        source['io-vm']['io-device'] = {'profile': 'virtio-mmio-scsi', 'path': '/soc/virtio@a000000'}
         Board.parse(source)
         source['virtual-machines'] = [dict(source['virtual-machines'][0], name=f'vm{i}') for i in range(9)]
         with self.assertRaises(ValueError):

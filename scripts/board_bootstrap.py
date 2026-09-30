@@ -35,7 +35,7 @@ def linux_overlay(board, original):
 
 
 def services(board, root):
-    manifest = json.loads((root / 'app/init/config/services.json').read_bytes())
+    manifest = json.loads((root / 'app/init/config/services-with-vms.json').read_bytes())
     manifest['virtual-machines']['config'] = '/data/vms.json'
     for service in manifest['services']:
         if service['name'] == 'vm-manager':
@@ -62,7 +62,7 @@ def stage(board, root, output):
     contents = board.bootstrap_clients()
     if not clients.exists() or clients.read_text() != contents:
         clients.write_text(contents)
-    for name, value in [('board.json', board.source), ('services.json', services(board, root)),
+    for name, value in [('services.json', services(board, root)),
                         ('vms.json', board.vms())]:
         contents = json.dumps(value, indent=2) + '\n'
         target = output / name

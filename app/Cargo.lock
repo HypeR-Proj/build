@@ -207,6 +207,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-image",
+ "hyper-vm-policy",
  "hyper-vm-support",
  "serde",
  "serde_json",

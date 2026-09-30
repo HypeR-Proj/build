@@ -17,7 +17,7 @@ from board_config import Board
 from board_bootstrap import services
 
 CHECK = ROOT / 'scripts/check-service-manifest.py'
-BASE = ROOT / 'app/init/config/native/services.json'
+BASE = ROOT / 'app/init/config/services-console-only.json'
 
 
 class ManifestTests(unittest.TestCase):
@@ -26,7 +26,7 @@ class ManifestTests(unittest.TestCase):
                               capture_output=True, text=True)
 
     def test_shipped_and_generated(self):
-        for path in (ROOT / 'app/init').rglob('services.json'):
+        for path in (ROOT / 'app/init').rglob('services*.json'):
             with self.subTest(path=path):
                 result = self.check_manifest(path)
                 self.assertEqual(result.returncode, 0, result.stderr)

@@ -21,9 +21,10 @@ io-initramfs: app fit-pack $(NEWC_PACK)
 		--fit-pack "$(FIT_PACK)" --output "$(APP_OUTPUT)/io-standby.itb"
 	$(MAKE) -o app native-initramfs \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/initramfs-io.cpio" \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services.json" \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-with-vms.json" \
 		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-io.json" \
-		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(APP_OUTPUT)/io-standby.itb" 0644 etc/hyper/io-vms.json "$(APP_OUTPUT)/io-standby.json"'
+		NATIVE_ENTRY_MANIFEST="$(APP_OUTPUT)/io-standby.entries.json" \
+		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime"'
 
 .PHONY: test-io-standby
 test-io-standby: image io-initramfs
@@ -37,7 +38,7 @@ test-io-standby: image io-initramfs
 rpi5-bringup: image
 	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
 	$(MAKE) native-initramfs NATIVE_IMAGE_PROFILE=system NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/native/services.json" \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-console-only.json" \
 		NATIVE_VM_CONFIG= \
 		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
@@ -59,7 +60,7 @@ rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
 	$(MAKE) -o app native-initramfs NATIVE_IMAGE_PROFILE=system NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
 		NATIVE_SERVICE_MANIFEST="$(RPI5_BRINGUP_OUTPUT)/bringup/services.json" \
 		NATIVE_VM_CONFIG="$(RPI5_BRINGUP_OUTPUT)/bringup/vms.json" \
-		NATIVE_EXTRA_ENTRIES='0644 vm/io.itb "$(RPI5_BRINGUP_OUTPUT)/io.itb"' \
+		NATIVE_ENTRY_MANIFEST="$(RPI5_BRINGUP_OUTPUT)/io.entries.json" \
 		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
 		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
@@ -96,7 +97,8 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 		NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
 		NATIVE_SERVICE_MANIFEST="$(BOARD_OUTPUT)/board/services.json" \
 		NATIVE_VM_CONFIG="$(BOARD_OUTPUT)/board/vms.json" \
-		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 vm/io.itb "$(BOARD_OUTPUT)/io.itb" 0644 etc/hyper/io-vms.json "$(BOARD_OUTPUT)/io.json" 0644 etc/hyper/board.json "$(BOARD_OUTPUT)/board/board.json" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
+		NATIVE_ENTRY_MANIFEST="$(BOARD_OUTPUT)/io.entries.json" \
+		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
 
 # QEMU loads kernel/bootstrap directly from the host. Refresh these on every
 # build, but populate persistent volumes only when creating the first disk.
@@ -140,12 +142,12 @@ test-board-storage: app image
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
-		BOARD_CONFIG="$(CURDIR)/boards/qemu.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_CONFIG="$(BOARD_CONFIG)" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-storage-probe"' && \
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
-		--disk "$$fixture/disk.img" --board "$(CURDIR)/boards/qemu.json" --log "$$fixture/accept" \
+		--disk "$$fixture/disk.img" --board "$(BOARD_CONFIG)" --log "$$fixture/accept" \
 		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
 
 .PHONY: test-board-business

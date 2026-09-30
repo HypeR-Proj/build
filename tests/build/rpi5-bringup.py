@@ -76,9 +76,10 @@ class BringupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = json.loads((ROOT / 'boards/qemu.json').read_text())
-            source['io-vm']['vcpus'] = 3
-            source['io-vm']['affinity'] = [{'vcpu': 0, 'cpus': [1, 3]}]
-            source['io-vm']['bootargs'] += ' custom.option=board-value'
+            source['io-vm']['name'] = 'Storage_IO.1'
+            source['io-vm']['image'] = '/vm/custom image.itb'
+            source['io-vm']['configuration']['affinity'] = [{'vcpu': 0, 'cpus': [1, 3]}]
+            source['io-vm']['configuration']['bootargs'] += ' custom.option=board-value'
             policy = root / 'board.json'
             policy.write_text(json.dumps(source))
             ramdisk = root / 'initramfs.gz'
@@ -98,19 +99,31 @@ class BringupTests(unittest.TestCase):
                     self.assertEqual(stage.call_count, int(mode == 'storage'))
                     self.assertEqual(overlay.call_count, int(mode == 'storage'))
                     self.assertEqual(len(pack.call_args.args[0]), 7)
-                    config = json.loads(output.with_suffix('.json').read_text())['virtual-machines'][0]['configuration']
-                    self.assertEqual(config['vcpus'], 3)
-                    self.assertEqual(config['affinity'], source['io-vm']['affinity'])
-                    self.assertEqual(config['memory-bytes'], source['io-vm']['memory-bytes'])
+                    snapshot = json.loads(output.with_suffix('.board.json').read_text())
+                    config = snapshot['io-vm']['configuration']
+                    self.assertEqual(snapshot['io-vm']['name'], source['io-vm']['name'])
+                    self.assertEqual(snapshot['io-vm']['image'], source['io-vm']['image'])
+                    entries = json.loads(output.with_suffix('.entries.json').read_text())
+                    self.assertEqual(entries, [
+                        ['0644', 'vm/custom image.itb', str(output.resolve())],
+                        ['0644', 'etc/hyper/board.json',
+                         str(output.with_suffix('.board.json').resolve())],
+                    ])
+                    self.assertFalse(output.with_suffix('.json').exists())
+                    self.assertEqual(config['vcpus'], 1)
+                    self.assertEqual(config['affinity'], source['io-vm']['configuration']['affinity'])
+                    self.assertEqual(config['memory-bytes'], source['io-vm']['configuration']['memory-bytes'])
                     self.assertIn('custom.option=board-value', config['bootargs'])
                     if mode == 'storage':
-                        self.assertEqual(config, source['io-vm'])
+                        self.assertEqual(snapshot, source)
                     else:
                         self.assertNotIn('hyper.volumes=', config['bootargs'])
                         self.assertIn(f'hyper.mode={mode}', config['bootargs'])
                     if mode == 'bringup':
                         vm = json.loads((output.parent / 'bringup/vms.json').read_text())['virtual-machines'][0]
                         self.assertEqual(vm['configuration'], config)
+                        self.assertEqual(vm['name'], source['io-vm']['name'])
+                        self.assertEqual(vm['image'], source['io-vm']['image'])
             self.assertEqual(json.loads(policy.read_text()), source)
 
     def test_diskless_io_config_has_supervision_without_device_assignment(self):
@@ -120,8 +133,9 @@ class BringupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
             board = bringup.Board.load(ROOT / 'boards/rpi5.json')
-            configuration = images.io_configuration(board, 'bringup')
-            images.bringup_config(output, configuration)
+            board = images.deployment_board(board, 'bringup')
+            images.bringup_config(output, board)
+            resident = board.source['io-vm']
             manifest = json.loads((output / 'services.json').read_text())
             names = {service['name'] for service in manifest['services']}
             self.assertIn('vm-manager', names)
@@ -133,13 +147,13 @@ class BringupTests(unittest.TestCase):
                     self.assertNotEqual(cap['source'], 'bootstrap.device-assignment-authority')
             vms = json.loads((output / 'vms.json').read_text())
             self.assertEqual(vms['virtual-machines'], [
-                {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False,
-                 'configuration': configuration}])
+                {'name': resident['name'], 'image': resident['image'], 'autostart': False,
+                 'configuration': resident['configuration']}])
 
     def test_sd_profile_exports_configuration_and_qemu_equivalent_alpine(self):
         from board_bootstrap import services
         board = bringup.Board.load(ROOT / 'boards/rpi5-sd.json')
-        self.assertEqual(board.source['io-device'], {
+        self.assertEqual(board.source['io-vm']['io-device'], {
             'profile': 'bcm2712-sdhci', 'path': '/soc@107c000000/mmc@fff000'})
         self.assertEqual(board.source['disk']['config-mib'], 1024)
         self.assertEqual(len(board.partitions), 2)
@@ -159,7 +173,7 @@ class BringupTests(unittest.TestCase):
         self.assertEqual(board.source['virtual-machines'], [])
         self.assertEqual(board.source['disk']['config-mib'], 64)
         self.assertNotIn('io-vm', board.source['files'].values())
-        services = json.loads((ROOT / 'app/init/config/native/services.json').read_text())
+        services = json.loads((ROOT / 'app/init/config/services-console-only.json').read_text())
         self.assertNotIn('io-runtime', [item['name'] for item in services['services']])
 
     def test_payload_has_firmware_boot_config_and_notices(self):

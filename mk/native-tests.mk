@@ -26,6 +26,7 @@ native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fix
 		--replace "bin/ps=$(NATIVE_PS_IMAGE)" \
 		--replace "svc/vm-manager=$(NATIVE_VM_MANAGER)" \
 		--replace "svc/vm-runtime=$(NATIVE_VM_RUNTIME)" \
+		$(if $(strip $(NATIVE_ENTRY_MANIFEST)),--entries-from "$(NATIVE_ENTRY_MANIFEST)") \
 		$(NATIVE_GUEST_ENTRY) \
 		$(if $(strip $(NATIVE_VM_CONFIG)),0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)") \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" $(NATIVE_EXTRA_ENTRIES)
@@ -45,7 +46,7 @@ test-apps: image native-initramfs
 
 .PHONY: test-clock
 # The no-RTC case intentionally tests Native std without starting a guest VM.
-test-clock: NATIVE_SERVICE_MANIFEST = $(CURDIR)/app/init/config/native/services.json
+test-clock: NATIVE_SERVICE_MANIFEST = $(CURDIR)/app/init/config/services-console-only.json
 test-clock: NATIVE_VM_CONFIG =
 test-clock: image native-initramfs
 	@test "$(ARCH)" = aarch64 || { echo "clock fixture requires aarch64" >&2; exit 2; }
@@ -102,16 +103,39 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 # Explicit fixture target; ordinary app builds never enable this feature.
 test-runtime-crash: image native-initramfs
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "VM runtime acceptance is not implemented for $(ARCH)" >&2; exit 2; }
+	python3 -B tests/qemu/vm_fixtures.py "$(NATIVE_VM_CONFIG)" "$(APP_OUTPUT)/fleet-fixtures"
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
 		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
 		-p hyper-vm-runtime --features test-runtime-crash --release --locked --offline
 	$(MAKE) -o app native-initramfs \
+		NATIVE_VM_CONFIG="$(APP_OUTPUT)/fleet-fixtures/victim-first.json" \
 		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/runtime-crash.cpio"
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(APP_OUTPUT)/runtime-crash.cpio" "$(APP_OUTPUT)/runtime-crash.log"
+	$(MAKE) -o app native-initramfs \
+		NATIVE_VM_CONFIG="$(APP_OUTPUT)/fleet-fixtures/survivor-first.json" \
+		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
+		NATIVE_INITRAMFS="$(APP_OUTPUT)/runtime-crash-reordered.cpio"
+	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(APP_OUTPUT)/runtime-crash-reordered.cpio" "$(APP_OUTPUT)/runtime-crash-reordered.log" \
+		--isolation-only
+
+# Definition admission is a bootstrap result, independent of autostart outcomes.
+.PHONY: test-fleet-config
+test-fleet-config: image app
+	@test "$(NATIVE_TEST_VM)" = 1 || { echo "VM fleet acceptance is not implemented for $(ARCH)" >&2; exit 2; }
+	python3 -B tests/qemu/vm_fixtures.py "$(NATIVE_VM_CONFIG)" "$(APP_OUTPUT)/fleet-fixtures"
+	@for case in empty no-autostart malformed missing-image start-failure; do \
+		$(MAKE) -o app native-initramfs \
+			NATIVE_VM_CONFIG="$(APP_OUTPUT)/fleet-fixtures/$$case.json" \
+			NATIVE_INITRAMFS="$(APP_OUTPUT)/fleet-$$case.cpio" || exit $$?; \
+		$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-fleet-config.py \
+			"$(QEMU)" "$(KERNEL_IMAGE)" "$(APP_OUTPUT)/fleet-$$case.cpio" \
+			"$(APP_OUTPUT)/fleet-$$case.log" "$$case" || exit $$?; \
+	done
 
 # Test-only binaries: no power fault injection enters ordinary app artifacts.
 .PHONY: test-power-crash power-crash-case

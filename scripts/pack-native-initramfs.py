@@ -9,7 +9,8 @@ import filecmp
 import hashlib
 import json
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,44 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def load_entries(path):
+    with path.open('rb') as source:
+        data = source.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024:
+        raise ValueError('archive entry manifest exceeds 1 MiB')
+    records = json.loads(data)
+    if not isinstance(records, list):
+        raise ValueError('archive entry manifest must contain a list of triples')
+    entries = []
+    for record in records:
+        if (not isinstance(record, list) or len(record) != 3
+                or any(not isinstance(field, str) for field in record)):
+            raise ValueError('archive entries must be MODE ARCHIVE_PATH SOURCE triples')
+        if not Path(record[2]).is_absolute():
+            raise ValueError('archive entry manifest sources must be absolute paths')
+        entries.extend(record)
+    return entries, hashlib.sha256(data).hexdigest()
+
+
+def validate_entries(entries):
+    destinations = set()
+    for index in range(0, len(entries), 3):
+        mode, name, source = entries[index:index + 3]
+        if not re.fullmatch(r'0[0-7]{3}', mode):
+            raise ValueError(f'invalid archive mode: {mode}')
+        if (not name or name.startswith('/') or '\0' in name
+                or any(part in ('', '.', '..') for part in name.split('/'))):
+            raise ValueError(f'invalid archive path: {name}')
+        if not source or '\0' in source:
+            raise ValueError(f'invalid archive source: {source}')
+        if name in destinations:
+            raise ValueError(f'duplicate archive path: {name}')
+        destinations.add(name)
+    for name in destinations:
+        if any(str(parent) in destinations for parent in PurePosixPath(name).parents):
+            raise ValueError(f'archive file shadows a directory: {name}')
+
+
 def inputs(args):
     return {
         "script": digest(__file__),
@@ -28,6 +67,7 @@ def inputs(args):
         "strip": digest(shutil.which(args.strip) or args.strip),
         "deployment": ([digest(args.deployment), digest(Path(__file__).with_name("app-deployment.py"))]
                        if args.deployment else None),
+        "entry_manifests": [[str(path), digest(path)] for path in args.entries_from],
         "entries": args.entries,
         "contents": [digest(path) for path in args.entries[2::3]],
     }
@@ -43,10 +83,17 @@ def main():
     for root in ("apps", "sdk", "std", "arch"):
         parser.add_argument("--" + root)
     parser.add_argument("--replace", action="append", default=[])
+    parser.add_argument("--entries-from", type=Path, action="append", default=[],
+                        help="JSON list of MODE ARCHIVE_PATH absolute-SOURCE triples")
     parser.add_argument("entries", nargs="*")
     args = parser.parse_args()
     if len(args.entries) % 3:
         parser.error("entries must be MODE ARCHIVE_PATH SOURCE triples")
+    loaded_manifests = []
+    for path in args.entries_from:
+        entries, checksum = load_entries(path)
+        args.entries.extend(entries)
+        loaded_manifests.append([str(path), checksum])
 
     if args.deployment:
         roots = {key: getattr(args, key) for key in ("apps", "sdk", "std", "arch")}
@@ -61,6 +108,7 @@ def main():
         parser.error("--replace requires --deployment")
     if not args.entries:
         parser.error("no initramfs entries selected")
+    validate_entries(args.entries)
     # Validate the actual selected/generated manifest before cache hits or any
     # output mutation. The host tool shares init's parser and admission policy.
     manifests = [args.entries[index + 2] for index in range(0, len(args.entries), 3)
@@ -72,6 +120,8 @@ def main():
                         manifests[0], *args.entries[1::3]], check=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     requested = inputs(args)
+    if requested["entry_manifests"] != loaded_manifests:
+        raise RuntimeError("Native entry manifests changed while loading; retry the build")
     state_path = Path(str(args.output) + ".build-state.json")
     try:
         previous = json.loads(state_path.read_bytes())

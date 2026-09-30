@@ -20,6 +20,7 @@ BASIC_DATA = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7')
 # Opaque VM disks must not be advertised as host Linux filesystems or LVM PVs.
 VM_DISK = uuid.UUID('a6edb737-452f-4a43-bd9f-bc04aa5323cf')
 _NAME = re.compile(r'[a-z][a-z0-9-]{0,30}\Z')
+_VM_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,31}\Z')
 _LICENSE = {'SPDX-FileCopyrightText', 'SPDX-License-Identifier'}
 
 
@@ -84,6 +85,36 @@ def relative_path(value):
     return str(PurePosixPath(value))
 
 
+def io_vm(value):
+    keys(value, ('runtime', 'name', 'image', 'configuration', 'io-device'))
+    if value['runtime'] != 'io-runtime':
+        raise ValueError('resident I/O VM requires io-runtime')
+    if not isinstance(value['name'], str) or not _VM_NAME.fullmatch(value['name']):
+        raise ValueError('invalid I/O VM name')
+    image = value['image']
+    if (not isinstance(image, str) or not image.startswith('/vm/') or not image.endswith('.itb')
+            or len(image.encode()) > 512 or '\\' in image
+            or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in image)
+            or any(part in ('', '.', '..') for part in image.split('/')[1:])):
+        raise ValueError('I/O VM image must be a canonical /vm/ ITB path of at most 512 bytes')
+    config = vm_configuration(value['configuration'])
+    if config['memory-bytes'] != 128 * MIB or config['vcpus'] != 1:
+        raise ValueError('resident I/O VM requires 128 MiB and one vCPU')
+    selector = value['io-device']
+    keys(selector, ('profile',), ('compatible', 'path'))
+    if selector['profile'] not in ('virtio-mmio-scsi', 'bcm2712-sdhci'):
+        raise ValueError('unsupported assignment profile')
+    identities = [key for key in ('compatible', 'path') if key in selector]
+    if len(identities) != 1:
+        raise ValueError('device requires exactly one firmware identity')
+    identity = selector[identities[0]]
+    if not isinstance(identity, str) or not identity or len(identity.encode()) > 512 or any(ord(c) <= 32 or ord(c) == 127 for c in identity):
+        raise ValueError('invalid firmware identity')
+    if identities[0] == 'path' and (not identity.startswith('/') or any(part in ('', '.', '..') for part in identity.split('/')[1:])):
+        raise ValueError('firmware path must be canonical and absolute')
+    return value
+
+
 def unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -130,27 +161,13 @@ class Board:
 
     @classmethod
     def parse(cls, data):
-        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-device', 'io-vm'))
+        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-vm'))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
-        io_vm = vm_configuration(data['io-vm'])
-        if io_vm['memory-bytes'] != 128 * MIB:
-            raise ValueError('resident I/O VM requires a 128 MiB configuration')
+        resident = io_vm(data['io-vm'])
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
-        selector = data['io-device']
-        keys(selector, ('profile',), ('compatible', 'path'))
-        if selector['profile'] not in ('virtio-mmio-scsi', 'bcm2712-sdhci'):
-            raise ValueError('unsupported assignment profile')
-        identities = [key for key in ('compatible', 'path') if key in selector]
-        if len(identities) != 1:
-            raise ValueError('device requires exactly one firmware identity')
-        identity = selector[identities[0]]
-        if not isinstance(identity, str) or not identity or len(identity.encode()) > 512 or any(ord(c) <= 32 or ord(c) == 127 for c in identity):
-            raise ValueError('invalid firmware identity')
-        if identities[0] == 'path' and (not identity.startswith('/') or any(part in ('', '.', '..') for part in identity.split('/')[1:])):
-            raise ValueError('firmware path must be canonical and absolute')
         keys(data['disk'], ('uuid', 'config-mib'))
         disk_id = uuid.UUID(data['disk']['uuid'])
         if disk_id.int == 0:
@@ -184,7 +201,7 @@ class Board:
         vms = data['virtual-machines']
         if not isinstance(vms, list) or len(vms) > 8:
             raise ValueError('too many VMs or invalid VM list')
-        seen = {'config'}
+        seen = {'config', resident['name']}
         for vm in vms:
             keys(vm, ('name', 'image', 'autostart', 'disk-mib', 'configuration'), ('disk-image',))
             vm_configuration(vm['configuration'])

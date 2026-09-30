@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,9 @@ PACK = ROOT / "scripts/pack-native-initramfs.py"
 spec = importlib.util.spec_from_file_location("state", STATE)
 state = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(state)
+pack_spec = importlib.util.spec_from_file_location("native_pack", PACK)
+native_pack = importlib.util.module_from_spec(pack_spec)
+pack_spec.loader.exec_module(native_pack)
 
 
 class IncrementalTests(unittest.TestCase):
@@ -140,6 +144,81 @@ class IncrementalTests(unittest.TestCase):
         source.write_bytes(original)
         run()
         self.assertEqual(source.read_bytes(), original)
+
+    def test_entry_manifest_paths_cache_and_failed_publication(self):
+        packer = self.root / 'packer'
+        packer.write_text('#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\n'
+                          'for i in range(1, len(sys.argv), 3):\n'
+                          ' sys.stdout.buffer.write(sys.argv[i].encode()+sys.argv[i+1].encode()'
+                          '+Path(sys.argv[i+2]).read_bytes())\n')
+        packer.chmod(0o755)
+        strip = self.root / 'strip'
+        strip.write_text('#!/bin/sh\nexit 0\n')
+        strip.chmod(0o755)
+        source = self.root / "guest image $();'.itb"
+        source.write_bytes(b'guest image')
+        manifest = self.root / 'entries.json'
+        entries = [['0644', "vm/guest image $();'.itb", str(source)]]
+        manifest.write_text(json.dumps(entries))
+        output = self.root / 'archive'
+        command = [sys.executable, str(PACK), '--packer', str(packer), '--strip', str(strip),
+                   '--output', str(output), '--entries-from', str(manifest)]
+
+        def run(success=True):
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode == 0, success, result.stderr)
+            return result.stdout
+
+        run()
+        self.assertEqual(output.read_bytes(), b"0644vm/guest image $();'.itbguest image")
+        self.assertIn('up to date', run())
+        entries[0][1] = 'vm/renamed.itb'
+        manifest.write_text(json.dumps(entries))
+        self.assertNotIn('up to date', run())
+        self.assertIn(b'vm/renamed.itb', output.read_bytes())
+        source.write_bytes(b'changed image')
+        self.assertNotIn('up to date', run())
+        self.assertIn(b'changed image', output.read_bytes())
+        previous = output.read_bytes()
+        original_inputs = native_pack.inputs
+
+        def changed_after_decode(args):
+            manifest.write_text(json.dumps([['0644', 'vm/new-generation.itb', str(source)]]))
+            return original_inputs(args)
+
+        with patch.object(sys, 'argv', command[1:]), \
+                patch.object(native_pack, 'inputs', side_effect=changed_after_decode), \
+                self.assertRaisesRegex(RuntimeError, 'manifests changed while loading'):
+            native_pack.main()
+        self.assertEqual(output.read_bytes(), previous)
+        for invalid in (entries + entries, [['0644', '../escape', str(source)]],
+                        [['0644', 'vm/valid.itb', str(self.root / 'missing')]]):
+            manifest.write_text(json.dumps(invalid))
+            run(success=False)
+            self.assertEqual(output.read_bytes(), previous)
+        manifest.write_text(json.dumps(entries))
+        command.extend(['0644', 'vm/renamed.itb', str(source)])
+        run(success=False)
+        self.assertEqual(output.read_bytes(), previous)
+
+    def test_entry_manifest_rejects_invalid_shapes_and_archive_collisions(self):
+        manifest = self.root / 'entries.json'
+        for invalid in ({}, ['0644', 'vm/io.itb', '/host/io.itb'],
+                        [['0644', 'vm/io.itb']], [[644, 'vm/io.itb', '/host/io.itb']],
+                        [['0644', 'vm/io.itb', 'relative.itb']]):
+            manifest.write_text(json.dumps(invalid))
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                native_pack.load_entries(manifest)
+        for entries in (['0999', 'vm/io.itb', '/host/io.itb'],
+                        ['0644', '/vm/io.itb', '/host/io.itb'],
+                        ['0644', 'vm//io.itb', '/host/io.itb'],
+                        ['0644', 'vm/./io.itb', '/host/io.itb'],
+                        ['0644', 'vm/../io.itb', '/host/io.itb'],
+                        ['0644', 'vm/io.itb', 'bad\0source'],
+                        ['0644', 'vm/io.itb', '/one', '0755', 'vm/io.itb', '/two'],
+                        ['0644', 'vm/io.itb', '/one', '0644', 'vm', '/two']):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                native_pack.validate_entries(entries)
 
 
 if __name__ == "__main__":

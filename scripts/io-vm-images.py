@@ -5,6 +5,7 @@
 """Validate an I/O VM appliance and compose HypeR-owned guest FIT images."""
 
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -87,28 +88,31 @@ def write_json(path, value):
         path.write_text(contents)
 
 
-def bringup_config(output, configuration):
+def bringup_config(output, board):
     """Boot the appliance as a supervised VM without physical-device authority."""
     root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((root / 'app/init/config/services.json').read_text())
+    manifest = json.loads((root / 'app/init/config/services-with-vms.json').read_text())
     manifest['services'] = [service for service in manifest['services']
                             if service['name'] != 'io-runtime']
     manifest['virtual-machines'] = {'config': '/etc/hyper/vms.json'}
+    resident = board.source['io-vm']
     vms = {'format': 'hyper.vm-config', 'virtual-machines': [
-        {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False,
-         'configuration': configuration}]}
+        {'name': resident['name'], 'image': resident['image'], 'autostart': False,
+         'configuration': resident['configuration']}]}
     output.mkdir(parents=True, exist_ok=True)
     for name, value in [('services.json', manifest), ('vms.json', vms)]:
         (output / name).write_text(json.dumps(value, indent=2) + '\n')
 
 
-def io_configuration(board, mode):
-    """Project board policy; diskless modes cannot require storage volumes."""
-    config = dict(board.source['io-vm'])
+def deployment_board(board, mode):
+    """Retain one board snapshot; diskless qualification cannot require volumes."""
+    from board_config import Board
+    source = copy.deepcopy(board.source)
+    config = source['io-vm']['configuration']
     if mode != 'storage':
         arguments = re.sub(r'(?<!\S)hyper\.(?:mode|volumes)=\S+\s*', '', config['bootargs'])
         config['bootargs'] = (arguments.rstrip() + f' hyper.mode={mode}').lstrip()
-    return config
+    return Board.parse(source)
 
 
 def main():
@@ -123,13 +127,12 @@ def main():
     parser.add_argument('--mode', choices=('storage', 'standby', 'bringup'), default='storage',
                         help='storage deployment, idle backend, or diskless supervised bring-up')
     args = parser.parse_args()
-    board = Board.load(args.board)
+    board = deployment_board(Board.load(args.board), args.mode)
     platform = 'rpi5' if board.source['boot'] == 'rpi5-firmware' else 'qemu'
     image, initramfs = package_payloads(args.package, platform)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    configuration = io_configuration(board, args.mode)
     if args.mode == 'bringup':
-        bringup_config(args.output.parent / 'bringup', configuration)
+        bringup_config(args.output.parent / 'bringup', board)
     if args.mode == 'storage':
         stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
         contents = linux_overlay(board, bounded_read(initramfs, 8 * MIB))
@@ -138,8 +141,13 @@ def main():
             initramfs.write_bytes(contents)
     subprocess.run([str(args.fit_pack), str(args.output), 'arm64',
                     str(image), '0x40200000', '0x40200000', str(initramfs)], check=True)
-    write_json(args.output.with_suffix('.json'), {'format': 'hyper.vm-config', 'virtual-machines': [
-        {'name': 'io', 'image': '/vm/io.itb', 'configuration': configuration}]})
+    snapshot = args.output.with_suffix('.board.json')
+    write_json(snapshot, board.source)
+    # Guest paths remain data all the way into the packer, never shell fragments.
+    write_json(args.output.with_suffix('.entries.json'), [
+        ['0644', board.source['io-vm']['image'][1:], str(args.output.resolve())],
+        ['0644', 'etc/hyper/board.json', str(snapshot.resolve())],
+    ])
 
 
 if __name__ == '__main__':
