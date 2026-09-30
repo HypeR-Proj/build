@@ -9,11 +9,10 @@ fit-pack:
 guest-itb: fit-pack
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "guest images are not implemented for $(ARCH)" >&2; exit 2; }
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" guest-assets ARCH="$(ARCH)"
-	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" "$(NATIVE_GUEST_MEMORY_BYTES)" "$(NATIVE_GUEST_VCPUS)" \
+	"$(FIT_PACK)" "$(NATIVE_GUEST_ITB)" "$(NATIVE_GUEST_ARCH)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" \
 		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
-		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz" \
-		"$(NATIVE_GUEST_BOOTARGS)"
+		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz"
 
 # Development keeps the acceptance programs; system contains all ordinary apps.
 native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fixtures) $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
@@ -28,7 +27,7 @@ native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fix
 		--replace "svc/vm-manager=$(NATIVE_VM_MANAGER)" \
 		--replace "svc/vm-runtime=$(NATIVE_VM_RUNTIME)" \
 		$(NATIVE_GUEST_ENTRY) \
-		0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)" \
+		$(if $(strip $(NATIVE_VM_CONFIG)),0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)") \
 		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" $(NATIVE_EXTRA_ENTRIES)
 
 NATIVE_QEMU_ENV = QEMU_MACHINE="$(QEMU_MACHINE)" QEMU_CPU="$(QEMU_CPU)" \
@@ -46,7 +45,8 @@ test-apps: image native-initramfs
 
 .PHONY: test-clock
 # The no-RTC case intentionally tests Native std without starting a guest VM.
-test-clock: NATIVE_VM_CONFIG = $(CURDIR)/app/init/config/native/vms.json
+test-clock: NATIVE_SERVICE_MANIFEST = $(CURDIR)/app/init/config/native/services.json
+test-clock: NATIVE_VM_CONFIG =
 test-clock: image native-initramfs
 	@test "$(ARCH)" = aarch64 || { echo "clock fixture requires aarch64" >&2; exit 2; }
 	python3 tests/qemu/verify-clock.py "$(QEMU)" "$(KERNEL_IMAGE)" \
@@ -93,6 +93,7 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 		0755 lib/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0644 vm/io.itb "$(APP_OUTPUT)/io-vm/io.itb" \
+		0644 etc/hyper/io-vms.json "$(APP_OUTPUT)/io-vm/io-vms.json" \
 		0644 vm/business.itb "$(APP_OUTPUT)/io-vm/business.itb"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-io-vm.py run \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(APP_OUTPUT)/io-vm.cpio" \
@@ -129,7 +130,6 @@ power-crash-case:
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
 		-p hyper-vm-runtime --features test-power-crash --release --locked --offline
 	$(MAKE) -o app native-initramfs ARCH=aarch64 \
-		NATIVE_GUEST_VCPUS=4 \
 		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-power-crash.json" \
 		NATIVE_GUEST_ITB="$(KERNEL_DIRECTORY)/target/guest/aarch64/alpine-smp.itb" \
 		NATIVE_VM_RUNTIME="$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
@@ -138,16 +138,16 @@ power-crash-case:
 		"$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).cpio" \
 		"$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).log" "$(POWER_CRASH_STATE)"
 
-# Keep the SMP guest fixture separate from the default single-vCPU image.
+# Select SMP policy from JSON; reuse the same guest payload bundle.
 # The same archive exercises both hardware GIC backends and host overcommit.
 guest-smp-initramfs: app $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "guest SMP acceptance requires AArch64" >&2; exit 2; }
 	$(MAKE) -o app native-initramfs ARCH=aarch64 \
-		NATIVE_GUEST_VCPUS="$(NATIVE_SMP_GUEST_VCPUS)" \
+		NATIVE_VM_CONFIG="$(NATIVE_SMP_VM_CONFIG)" \
 		NATIVE_GUEST_ITB="$(KERNEL_DIRECTORY)/target/guest/aarch64/alpine-smp.itb" \
 		NATIVE_INITRAMFS="$(NATIVE_SMP_INITRAMFS)"
 
 test-guest-smp: image guest-smp-initramfs
-	$(NATIVE_QEMU_ENV) GUEST_CPUS="$(NATIVE_SMP_GUEST_VCPUS)" \
+	$(NATIVE_QEMU_ENV) GUEST_CPUS="$$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["virtual-machines"][0]["configuration"]["vcpus"])' "$(NATIVE_SMP_VM_CONFIG)")" \
 		python3 tests/qemu/verify-guest-smp.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_SMP_INITRAMFS)" "$(APP_OUTPUT)/guest-smp.log"

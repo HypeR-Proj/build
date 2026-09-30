@@ -28,6 +28,51 @@ class BoardTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads((ROOT / 'boards/qemu.json').read_text())
 
+    def test_vm_policy_is_projected_without_image_mutation(self):
+        original = Board.parse(copy.deepcopy(self.source))
+        changed = copy.deepcopy(self.source)
+        config = changed['virtual-machines'][0]['configuration']
+        config.update({'vcpus': 4, 'memory-bytes': 128 * 1024 * 1024,
+                       'bootargs': 'console=ttyAMA0 debug',
+                       'affinity': [{'vcpu': 1, 'cpus': [0, 2, 64, 255]}]})
+        board = Board.parse(changed)
+        self.assertEqual(board.vms()['virtual-machines'][0]['configuration'], config)
+        self.assertEqual(board.source['files'], original.source['files'])
+        self.assertEqual(board.partitions, original.partitions)
+        for field, value in [('vcpus', 0), ('vcpus', 9), ('memory-bytes', 123456789),
+                             ('bootargs', 'a\0b'), ('platform', 'other')]:
+            invalid = copy.deepcopy(changed)
+            invalid['virtual-machines'][0]['configuration'][field] = value
+            with self.assertRaises(ValueError):
+                Board.parse(invalid)
+        invalid = copy.deepcopy(changed)
+        del invalid['virtual-machines'][0]['configuration']
+        with self.assertRaises(ValueError):
+            Board.parse(invalid)
+        invalid = copy.deepcopy(changed)
+        invalid['io-vm']['memory-bytes'] = 64 * 1024 * 1024
+        with self.assertRaises(ValueError):
+            Board.parse(invalid)
+
+    def test_affinity_validation_for_business_and_io_vms(self):
+        for invalid in [None, {}, [{'vcpu': 0, 'cpus': []}],
+                        [{'vcpu': 8, 'cpus': [0]}],
+                        [{'vcpu': 0, 'cpus': [0, 0]}],
+                        [{'vcpu': 0, 'cpus': [-1]}],
+                        [{'vcpu': 0, 'cpus': [256]}],
+                        [{'vcpu': 0, 'cpus': [True]}],
+                        [{'vcpu': 0, 'cpus': [0], 'extra': 1}],
+                        [{'vcpu': 0, 'cpus': [0]}, {'vcpu': 0, 'cpus': [1]}]]:
+            for target in ('business', 'io'):
+                with self.subTest(affinity=invalid, target=target):
+                    changed = copy.deepcopy(self.source)
+                    config = (changed['io-vm'] if target == 'io' else
+                              changed['virtual-machines'][0]['configuration'])
+                    config['vcpus'] = 2
+                    config['affinity'] = invalid
+                    with self.assertRaises(ValueError):
+                        Board.parse(changed)
+
     def test_image_tool_prefers_path(self):
         with patch.object(packer.shutil, 'which', return_value='/tools/mkfs.fat'), \
                 patch.object(packer.subprocess, 'run') as run:

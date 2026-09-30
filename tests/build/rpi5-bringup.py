@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -47,13 +48,80 @@ class BringupTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'platform mismatch'):
                     images.package_payloads(output, 'rpi5')
 
+    def test_io_fixture_keeps_role_and_machine_policy_outside_fit(self):
+        spec = importlib.util.spec_from_file_location('io_images', ROOT / 'scripts/io-vm-images.py')
+        images = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(images)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            with patch.object(images, 'package_payloads', return_value=(Path('Image'), Path('initramfs.gz'))), \
+                    patch.object(images.subprocess, 'run') as pack:
+                images.prepare(Path('package'), Path('fit-pack'), output, 'reset')
+            self.assertEqual(pack.call_count, 2)
+            # Only OUTPUT differs; no machine policy reaches the packer.
+            commands = [call.args[0] for call in pack.call_args_list]
+            self.assertEqual(commands[0][2:], commands[1][2:])
+            self.assertEqual(commands[0][2:], ['arm64', 'Image', '0x40200000', '0x40200000', 'initramfs.gz'])
+            config = json.loads((output / 'io-vms.json').read_text())
+            for role, vm in zip(('io', 'business'), config['virtual-machines']):
+                self.assertEqual(vm['configuration']['vcpus'], 1)
+                self.assertEqual(vm['configuration']['memory-bytes'], 64 * 1024 * 1024)
+                self.assertIn(f'hyper.role={role} hyper.test=reset', vm['configuration']['bootargs'])
+
+    def test_all_io_modes_use_selected_board_as_configuration_source(self):
+        spec = importlib.util.spec_from_file_location('io_images', ROOT / 'scripts/io-vm-images.py')
+        images = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(images)
+        import board_bootstrap
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = json.loads((ROOT / 'boards/qemu.json').read_text())
+            source['io-vm']['vcpus'] = 3
+            source['io-vm']['affinity'] = [{'vcpu': 0, 'cpus': [1, 3]}]
+            source['io-vm']['bootargs'] += ' custom.option=board-value'
+            policy = root / 'board.json'
+            policy.write_text(json.dumps(source))
+            ramdisk = root / 'initramfs.gz'
+            ramdisk.write_bytes(b'payload')
+            for mode in ('storage', 'standby', 'bringup'):
+                output = root / mode / 'io.itb'
+                with self.subTest(mode=mode), \
+                        patch.object(sys, 'argv', ['io-vm-images.py', '--package', str(root),
+                                     '--fit-pack', 'fit-pack', '--output', str(output),
+                                     '--board', str(policy), '--mode', mode]), \
+                        patch.object(images, 'package_payloads', return_value=(root / 'Image', ramdisk)) as payloads, \
+                        patch.object(images.subprocess, 'run') as pack, \
+                        patch.object(board_bootstrap, 'stage') as stage, \
+                        patch.object(board_bootstrap, 'linux_overlay', return_value=b'overlay') as overlay:
+                    images.main()
+                    payloads.assert_called_once_with(root, 'qemu')
+                    self.assertEqual(stage.call_count, int(mode == 'storage'))
+                    self.assertEqual(overlay.call_count, int(mode == 'storage'))
+                    self.assertEqual(len(pack.call_args.args[0]), 7)
+                    config = json.loads(output.with_suffix('.json').read_text())['virtual-machines'][0]['configuration']
+                    self.assertEqual(config['vcpus'], 3)
+                    self.assertEqual(config['affinity'], source['io-vm']['affinity'])
+                    self.assertEqual(config['memory-bytes'], source['io-vm']['memory-bytes'])
+                    self.assertIn('custom.option=board-value', config['bootargs'])
+                    if mode == 'storage':
+                        self.assertEqual(config, source['io-vm'])
+                    else:
+                        self.assertNotIn('hyper.volumes=', config['bootargs'])
+                        self.assertIn(f'hyper.mode={mode}', config['bootargs'])
+                    if mode == 'bringup':
+                        vm = json.loads((output.parent / 'bringup/vms.json').read_text())['virtual-machines'][0]
+                        self.assertEqual(vm['configuration'], config)
+            self.assertEqual(json.loads(policy.read_text()), source)
+
     def test_diskless_io_config_has_supervision_without_device_assignment(self):
         spec = importlib.util.spec_from_file_location('io_images', ROOT / 'scripts/io-vm-images.py')
         images = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(images)
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
-            images.bringup_config(output)
+            board = bringup.Board.load(ROOT / 'boards/rpi5.json')
+            configuration = images.io_configuration(board, 'bringup')
+            images.bringup_config(output, configuration)
             manifest = json.loads((output / 'services.json').read_text())
             names = {service['name'] for service in manifest['services']}
             self.assertIn('vm-manager', names)
@@ -65,7 +133,8 @@ class BringupTests(unittest.TestCase):
                     self.assertNotEqual(cap['source'], 'bootstrap.device-assignment-authority')
             vms = json.loads((output / 'vms.json').read_text())
             self.assertEqual(vms['virtual-machines'], [
-                {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False}])
+                {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False,
+                 'configuration': configuration}])
 
     def test_sd_profile_exports_configuration_and_qemu_equivalent_alpine(self):
         from board_bootstrap import services

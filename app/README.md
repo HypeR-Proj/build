@@ -117,7 +117,7 @@ vmm console alpine
 vmm affinity alpine 0 1,3
 vmm stop alpine
 vmm restart alpine
-vmm create test --image /data/vm/alpine.itb
+vmm create test --config /data/new-vms.json
 vmm delete test
 ```
 

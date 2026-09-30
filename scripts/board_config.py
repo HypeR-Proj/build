@@ -32,6 +32,36 @@ def keys(value, required, optional=()):
         raise ValueError(f'invalid configuration keys: missing={sorted(missing)}, unknown={sorted(extra)}')
 
 
+def vm_configuration(value):
+    keys(value, ('memory-bytes', 'vcpus', 'bootargs'), ('affinity',))
+    integer(value['vcpus'], 1, 8)
+    memory = integer(value['memory-bytes'], 64 * MIB, 1 << 63)
+    if memory & (memory - 1):
+        raise ValueError('VM memory-bytes must be a power of two')
+    args = value['bootargs']
+    if not isinstance(args, str) or len(args.encode()) > 2048 or '\0' in args:
+        raise ValueError('VM bootargs must contain at most 2048 bytes and no NUL')
+    affinity = value.get('affinity', [])
+    if not isinstance(affinity, list) or len(affinity) > value['vcpus']:
+        raise ValueError('VM affinity must be a list with at most one entry per vCPU')
+    seen = set()
+    for entry in affinity:
+        keys(entry, ('vcpu', 'cpus'))
+        vcpu = integer(entry['vcpu'], 0, value['vcpus'] - 1)
+        if vcpu in seen:
+            raise ValueError('VM affinity contains a duplicate vCPU')
+        seen.add(vcpu)
+        cpus = entry['cpus']
+        # Native ABI: four 64-bit host CPU mask words.
+        if not isinstance(cpus, list) or not 1 <= len(cpus) <= 256:
+            raise ValueError('VM affinity requires a nonempty bounded CPU list')
+        for cpu in cpus:
+            integer(cpu, 0, 255)
+        if len(set(cpus)) != len(cpus):
+            raise ValueError('VM affinity contains a duplicate host CPU')
+    return value
+
+
 def name(value):
     if not isinstance(value, str) or not _NAME.fullmatch(value):
         raise ValueError(f'invalid deployment name: {value!r}')
@@ -100,10 +130,13 @@ class Board:
 
     @classmethod
     def parse(cls, data):
-        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-device'))
+        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-device', 'io-vm'))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
+        io_vm = vm_configuration(data['io-vm'])
+        if io_vm['memory-bytes'] != 128 * MIB:
+            raise ValueError('resident I/O VM requires a 128 MiB configuration')
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
         selector = data['io-device']
@@ -153,7 +186,8 @@ class Board:
             raise ValueError('too many VMs or invalid VM list')
         seen = {'config'}
         for vm in vms:
-            keys(vm, ('name', 'image', 'autostart', 'disk-mib'), ('disk-image',))
+            keys(vm, ('name', 'image', 'autostart', 'disk-mib', 'configuration'), ('disk-image',))
+            vm_configuration(vm['configuration'])
             vm_name = name(vm['name'])
             if vm_name in seen:
                 raise ValueError('duplicate or reserved VM name')
@@ -179,7 +213,7 @@ class Board:
     def vms(self):
         return {'format': 'hyper.vm-config', 'virtual-machines': [
             {'name': vm['name'], 'image': '/data/' + vm['image'],
-             'autostart': vm['autostart'],
+             'autostart': vm['autostart'], 'configuration': vm['configuration'],
              'disk': {'client': index, 'volume': vm['name']}}
             for index, vm in enumerate(self.source['virtual-machines'], start=1)]}
 

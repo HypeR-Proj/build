@@ -69,16 +69,25 @@ def package_payloads(package, platform='qemu'):
 def prepare(package, fit_pack, output, test="basic"):
     image, initramfs = package_payloads(package)
     output.mkdir(parents=True, exist_ok=True)
+    definitions = []
     for role in ('io', 'business'):
         bootargs = ('console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 '
                     f'rdinit=/init loglevel=7 hyper.role={role} hyper.test={test}')
         subprocess.run([str(fit_pack), str(output / f'{role}.itb'), 'arm64',
-                        str(64 * MIB), '1', str(image), '0x40200000', '0x40200000',
-                        str(initramfs), bootargs], check=True)
+                        str(image), '0x40200000', '0x40200000', str(initramfs)], check=True)
+        definitions.append({'name': role, 'image': f'/vm/{role}.itb',
+                            'configuration': {'memory-bytes': 64 * MIB, 'vcpus': 1,
+                                              'bootargs': bootargs}})
+    write_json(output / 'io-vms.json', {'format': 'hyper.vm-config', 'virtual-machines': definitions})
 
 
+def write_json(path, value):
+    contents = json.dumps(value, indent=2) + '\n'
+    if not path.exists() or path.read_text() != contents:
+        path.write_text(contents)
 
-def bringup_config(output):
+
+def bringup_config(output, configuration):
     """Boot the appliance as a supervised VM without physical-device authority."""
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / 'app/init/config/services.json').read_text())
@@ -86,10 +95,20 @@ def bringup_config(output):
                             if service['name'] != 'io-runtime']
     manifest['virtual-machines'] = {'config': '/etc/hyper/vms.json'}
     vms = {'format': 'hyper.vm-config', 'virtual-machines': [
-        {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False}]}
+        {'name': 'io-bringup', 'image': '/vm/io.itb', 'autostart': False,
+         'configuration': configuration}]}
     output.mkdir(parents=True, exist_ok=True)
     for name, value in [('services.json', manifest), ('vms.json', vms)]:
         (output / name).write_text(json.dumps(value, indent=2) + '\n')
+
+
+def io_configuration(board, mode):
+    """Project board policy; diskless modes cannot require storage volumes."""
+    config = dict(board.source['io-vm'])
+    if mode != 'storage':
+        arguments = re.sub(r'(?<!\S)hyper\.(?:mode|volumes)=\S+\s*', '', config['bootargs'])
+        config['bootargs'] = (arguments.rstrip() + f' hyper.mode={mode}').lstrip()
+    return config
 
 
 def main():
@@ -99,35 +118,28 @@ def main():
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--fit-pack', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--board', type=Path)
-    parser.add_argument('--bringup', action='store_true', help='diskless supervised VM, no storage service')
-    parser.add_argument('--platform', choices=('qemu', 'rpi5'))
+    parser.add_argument('--board', type=Path, required=True,
+                        help='board JSON owning the I/O VM configuration')
+    parser.add_argument('--mode', choices=('storage', 'standby', 'bringup'), default='storage',
+                        help='storage deployment, idle backend, or diskless supervised bring-up')
     args = parser.parse_args()
-    if args.bringup and args.board:
-        parser.error('--bringup cannot accept a storage board configuration')
-    board = Board.load(args.board) if args.board else None
-    platform = 'rpi5' if board and board.source['boot'] == 'rpi5-firmware' else 'qemu'
-    if args.platform:
-        if board and args.platform != platform:
-            parser.error('--platform differs from board')
-        platform = args.platform
+    board = Board.load(args.board)
+    platform = 'rpi5' if board.source['boot'] == 'rpi5-firmware' else 'qemu'
     image, initramfs = package_payloads(args.package, platform)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments = ('console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init '
-                 'loglevel=4 hyper.role=io hyper.mode=standby')
-    if args.bringup:
-        arguments = arguments.replace('hyper.mode=standby', 'hyper.mode=bringup')
-        bringup_config(args.output.parent / 'bringup')
-    if board:
+    configuration = io_configuration(board, args.mode)
+    if args.mode == 'bringup':
+        bringup_config(args.output.parent / 'bringup', configuration)
+    if args.mode == 'storage':
         stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
         contents = linux_overlay(board, bounded_read(initramfs, 8 * MIB))
         initramfs = args.output.parent / 'io-board.cpio.gz'
         if not initramfs.exists() or initramfs.read_bytes() != contents:
             initramfs.write_bytes(contents)
-        arguments += ' hyper.volumes=required'
-    subprocess.run([str(args.fit_pack), str(args.output), 'arm64', str(128 * MIB), '1',
-                    str(image), '0x40200000', '0x40200000', str(initramfs),
-                    arguments], check=True)
+    subprocess.run([str(args.fit_pack), str(args.output), 'arm64',
+                    str(image), '0x40200000', '0x40200000', str(initramfs)], check=True)
+    write_json(args.output.with_suffix('.json'), {'format': 'hyper.vm-config', 'virtual-machines': [
+        {'name': 'io', 'image': '/vm/io.itb', 'configuration': configuration}]})
 
 
 if __name__ == '__main__':

@@ -59,9 +59,7 @@ FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
 NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
 # AArch64 Alpine exercises SMP by default; RISC-V guests remain single-vCPU.
-NATIVE_GUEST_VCPUS ?= $(if $(filter aarch64,$(ARCH)),2,1)
-NATIVE_GUEST_MEMORY_BYTES ?= 268435456
-NATIVE_SMP_GUEST_VCPUS ?= 4
+NATIVE_SMP_VM_CONFIG ?= $(CURDIR)/app/init/tests/config/vms-smp-4.json
 NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
 STACK_OUTPUT := $(CURDIR)/target/stack-audit/$(ARCH)
 STACK_AUDIT ?= 0
@@ -116,7 +114,6 @@ QEMU_BOOTARGS ?= earlycon=uart8250,mmio,0x10000000
 NATIVE_TEST_VM := 1
 NATIVE_GUEST_ARCH := riscv
 NATIVE_GUEST_LOAD := 0x80200000
-NATIVE_GUEST_BOOTARGS := console=ttyS0 earlycon=uart8250,mmio,0x10000000 rdinit=/init loglevel=7
 else
 QEMU ?= qemu-system-aarch64
 QEMU_CPU ?= max
@@ -124,9 +121,8 @@ QEMU_MACHINE ?= virt,virtualization=on,gic-version=3,dtb-randomness=on
 NATIVE_TEST_VM := 1
 NATIVE_GUEST_ARCH := arm64
 NATIVE_GUEST_LOAD := 0x40200000
-NATIVE_GUEST_BOOTARGS := console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 rdinit=/init loglevel=7
 endif
-NATIVE_VM_CONFIG := $(CURDIR)/app/init/tests/config/vms.json
+NATIVE_VM_CONFIG := $(CURDIR)/app/init/tests/config/$(if $(filter riscv64,$(ARCH)),vms-riscv64.json,vms.json)
 NATIVE_GUEST_PREREQUISITES := guest-itb
 NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
 QEMU_CPUS ?= 4
