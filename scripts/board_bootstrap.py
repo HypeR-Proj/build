@@ -30,7 +30,8 @@ def linux_overlay(board, original):
     # Keep the verified upstream member intact, including its hard-link inode
     # table. A separate compressed archive contributes only HypeR configuration.
     overlay = newc({'etc/hyper-volumes.conf': board.bootstrap_volumes().encode(),
-                    'etc/hyper-clients.conf': board.bootstrap_clients().encode()})
+                    'etc/hyper-clients.conf': board.bootstrap_clients().encode(),
+                    'etc/hyper-networks.conf': board.bootstrap_networks().encode()})
     return original + gzip.compress(overlay, mtime=0)
 
 

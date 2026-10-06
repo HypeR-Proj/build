@@ -10,6 +10,7 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,14 @@ spec.loader.exec_module(packer)
 class BoardTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads((ROOT / 'boards/qemu.json').read_text())
+
+    def network_fixture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'network.json'
+            subprocess.run([sys.executable, '-B', str(ROOT / 'tests/qemu/verify-network.py'),
+                            'prepare', '--board', str(ROOT / 'boards/qemu.json'),
+                            '--output', str(output)], check=True, stdout=subprocess.DEVNULL)
+            return json.loads(output.read_text())
 
     def test_vm_policy_is_projected_without_image_mutation(self):
         original = Board.parse(copy.deepcopy(self.source))
@@ -74,7 +83,7 @@ class BoardTests(unittest.TestCase):
                         Board.parse(changed)
 
     def test_io_vm_has_one_complete_bootstrap_definition(self):
-        for profile in ('qemu', 'rpi5', 'rpi5-native', 'rpi5-sd'):
+        for profile in ('qemu', 'rpi5', 'rpi5-native'):
             board = Board.load(ROOT / f'boards/{profile}.json')
             resident = board.source['io-vm']
             self.assertEqual(resident['runtime'], 'io-runtime')
@@ -256,19 +265,159 @@ class BoardTests(unittest.TestCase):
         source['io-vm']['io-device'] = {'profile': 'virtio-mmio-scsi', 'path': '/soc/virtio@a000000'}
         Board.parse(source)
         source['virtual-machines'] = [dict(source['virtual-machines'][0], name=f'vm{i}') for i in range(9)]
+        for vm in source['virtual-machines']:
+            vm.pop('network')
         with self.assertRaises(ValueError):
             Board.parse(source)
 
     def test_bootstrap_projection_uses_same_volume_identity(self):
-        board = Board.parse(self.source)
+        source = copy.deepcopy(self.source)
+        for field in ('network-device', 'networks'):
+            del source['io-vm'][field]
+        del source['virtual-machines'][0]['network']
+        board = Board.parse(source)
         lines = board.bootstrap_volumes().splitlines()
         self.assertEqual(lines[0], 'hyper.volumes.v1')
         for line, volume in zip(lines[1:], board.volumes()['volumes'], strict=True):
             self.assertEqual(line.split(), [volume['name'], volume['partuuid'],
                              str(volume['sectors']), volume['owner'], volume['mapper']])
-        self.assertEqual(board.bootstrap_clients(), 'hyper.clients.v1\n0 config\n1 alpine\n')
+        self.assertEqual(board.bootstrap_clients(), 'hyper.clients.v2\n0 config - -\n1 alpine - -\n')
+        self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\n')
         self.assertEqual(board.vms()['virtual-machines'][0]['disk'],
                          {'client': 1, 'volume': 'alpine'})
+
+    def test_network_projection_shares_client_and_preserves_native_reservation(self):
+        self.assertEqual(len(Board.load(ROOT / 'boards/qemu.json').vms()['virtual-machines']), 1)
+        board = Board.parse(self.network_fixture())
+        definitions = board.vms()['virtual-machines']
+        self.assertEqual(definitions[0]['disk']['client'], definitions[0]['network']['client'])
+        self.assertEqual(definitions[0]['network'],
+                         {'client': 1, 'network': 'default', 'mac': '02:48:59:00:00:01'})
+        self.assertNotIn('disk', definitions[1])
+        self.assertEqual(definitions[1]['network']['client'], 2)
+        self.assertEqual([part.name for part in board.partitions], ['config', 'alpine'])
+        self.assertEqual(board.bootstrap_clients(),
+                         'hyper.clients.v2\n0 config - -\n'
+                         '1 alpine default 02:48:59:00:00:01\n'
+                         '2 - default 02:48:59:00:00:02\n')
+        self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\ndefault hbr0 eth0\n')
+
+    def test_client_numbers_do_not_follow_disk_partition_numbers(self):
+        source = self.network_fixture()
+        source['virtual-machines'].reverse()
+        isolated = copy.deepcopy(source['virtual-machines'][0])
+        isolated['name'] = 'isolated'
+        del isolated['network']
+        source['virtual-machines'].insert(1, isolated)
+        board = Board.parse(source)
+        self.assertEqual([part.name for part in board.partitions], ['config', 'alpine'])
+        self.assertEqual(board.vms()['virtual-machines'][2]['disk']['client'], 3)
+        self.assertEqual(board.vms()['virtual-machines'][2]['network']['client'], 3)
+        self.assertEqual(board.bootstrap_clients(),
+                         'hyper.clients.v2\n0 config - -\n'
+                         '1 - default 02:48:59:00:00:02\n'
+                         '3 alpine default 02:48:59:00:00:01\n')
+
+    def test_rpi5_network_assigns_whole_pci_function_and_shared_client_contract(self):
+        board = Board.load(ROOT / 'boards/rpi5.json')
+        qemu = Board.load(ROOT / 'boards/qemu.json')
+        self.assertEqual(board.source['io-vm']['network-device'],
+                         {'profile': 'pci-function', 'pci-id': '1de4:0001'})
+        self.assertEqual(board.source['io-vm']['io-device']['profile'], 'bcm2712-sdhci')
+        self.assertEqual(board.bootstrap_clients(), qemu.bootstrap_clients())
+        self.assertEqual(board.bootstrap_networks(), qemu.bootstrap_networks())
+        self.assertEqual(board.vms(), qemu.vms())
+        self.assertEqual(len(board.source['virtual-machines']), 1)
+
+        for source, controller in ((board.source, qemu.source['io-vm']['network-device']),
+                                   (qemu.source, board.source['io-vm']['network-device'])):
+            invalid = copy.deepcopy(source)
+            invalid['io-vm']['network-device'] = controller
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                Board.parse(invalid)
+
+    def test_pci_identity_is_canonical_and_profile_specific(self):
+        source = json.loads((ROOT / 'boards/rpi5.json').read_text())
+        for selector in (
+            {'profile': 'pci-function', 'pci-id': None},
+            {'profile': 'pci-function', 'pci-id': '1DE4:0001'},
+            {'profile': 'pci-function', 'pci-id': '1de4:1'},
+            {'profile': 'pci-function', 'pci-id': '1de4-0001'},
+            {'profile': 'pci-function', 'compatible': 'pci1de4,1'},
+            {'profile': 'pci-function', 'path': '/pcie/rp1'},
+            {'profile': 'pci-function', 'pci-id': '1de4:0001', 'path': '/pcie/rp1'},
+            {'profile': 'virtio-mmio-net', 'pci-id': '1de4:0001'},
+        ):
+            invalid = copy.deepcopy(source)
+            invalid['io-vm']['network-device'] = selector
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                Board.parse(invalid)
+
+    def test_network_policy_is_explicit_and_bounded(self):
+        source = json.loads((ROOT / 'boards/qemu.json').read_text())
+        cases = []
+        for field in ('networks', 'network-device'):
+            invalid = copy.deepcopy(source)
+            del invalid['io-vm'][field]
+            cases.append(invalid)
+        for networks in (None, {}, [], source['io-vm']['networks'] * 2,
+                         [{'name': 'default', 'bridge': 'same', 'uplink': 'same'}],
+                         [{'name': 'default', 'bridge': 'hbr0', 'uplink': '../eth0'}],
+                         [{'name': 'default', 'bridge': 'x' * 16, 'uplink': 'eth0'}],
+                         [{'name': 'default', 'bridge': 'hbr0', 'uplink': 'eth0', 'mtu': 9000}]):
+            invalid = copy.deepcopy(source)
+            invalid['io-vm']['networks'] = networks
+            cases.append(invalid)
+        invalid = copy.deepcopy(source)
+        invalid['io-vm']['network-device']['profile'] = 'virtio-mmio-scsi'
+        cases.append(invalid)
+        invalid = json.loads((ROOT / 'boards/rpi5.json').read_text())
+        invalid['io-vm'].update({field: source['io-vm'][field]
+                                for field in ('network-device', 'networks')})
+        cases.append(invalid)
+        for case in cases:
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                Board.parse(case)
+
+    def test_guest_network_rejects_unknown_network_invalid_mac_and_split_client(self):
+        source = self.network_fixture()
+        cases = [{'network': 'unknown', 'mac': '02:48:59:00:00:01'}, None,
+                 {'network': 'default', 'mac': '02:48:59:00:00:01', 'client': 2}]
+        for mac in ('00:48:59:00:00:01', '03:48:59:00:00:01', 'ff:ff:ff:ff:ff:ff',
+                    '02:48:59:00:00:AA', '02:48:59:00:00', '02:48:59:00:00:01\n', None):
+            cases.append({'network': 'default', 'mac': mac})
+        for network in cases:
+            invalid = copy.deepcopy(source)
+            invalid['virtual-machines'][0]['network'] = network
+            with self.subTest(network=network), self.assertRaises(ValueError):
+                Board.parse(invalid)
+        source['virtual-machines'][1]['network'] = source['virtual-machines'][0]['network']
+        with self.assertRaisesRegex(ValueError, 'MAC addresses must be unique'):
+            Board.parse(source)
+        source = copy.deepcopy(self.source)
+        del source['io-vm']['network-device']
+        del source['io-vm']['networks']
+        with self.assertRaisesRegex(ValueError, 'configured I/O VM network'):
+            Board.parse(source)
+
+    def test_disk_image_requires_a_disk_size(self):
+        source = copy.deepcopy(self.source)
+        del source['virtual-machines'][0]['disk-mib']
+        with self.assertRaisesRegex(ValueError, 'disk-image requires disk-mib'):
+            Board.parse(source)
+
+    def test_linux_overlay_keeps_network_and_client_policy_together(self):
+        import board_bootstrap
+        board = Board.load(ROOT / 'boards/qemu.json')
+        with patch.object(board_bootstrap, 'newc', return_value=b'archive') as archive:
+            original = b'verified linux archive'
+            overlay = board_bootstrap.linux_overlay(board, original)
+        self.assertTrue(overlay.startswith(original))
+        self.assertEqual(archive.call_args.args[0], {
+            'etc/hyper-volumes.conf': board.bootstrap_volumes().encode(),
+            'etc/hyper-clients.conf': board.bootstrap_clients().encode(),
+            'etc/hyper-networks.conf': board.bootstrap_networks().encode(),
+        })
 
     def test_gpt_headers_and_backup_agree(self):
         board = Board.parse(self.source)

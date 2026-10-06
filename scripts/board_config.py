@@ -21,6 +21,8 @@ BASIC_DATA = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7')
 VM_DISK = uuid.UUID('a6edb737-452f-4a43-bd9f-bc04aa5323cf')
 _NAME = re.compile(r'[a-z][a-z0-9-]{0,30}\Z')
 _VM_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,31}\Z')
+_INTERFACE = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,14}\Z')
+_MAC = re.compile(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\Z')
 _LICENSE = {'SPDX-FileCopyrightText', 'SPDX-License-Identifier'}
 
 
@@ -85,8 +87,56 @@ def relative_path(value):
     return str(PurePosixPath(value))
 
 
+def device_selector(selector, profiles):
+    keys(selector, ('profile',), ('compatible', 'path', 'pci-id'))
+    if selector['profile'] not in profiles:
+        raise ValueError('unsupported assignment profile')
+    identities = [key for key in ('compatible', 'path', 'pci-id') if key in selector]
+    if len(identities) != 1:
+        raise ValueError('device requires exactly one firmware identity')
+    identity = selector[identities[0]]
+    if (selector['profile'] == 'pci-function') != (identities[0] == 'pci-id'):
+        raise ValueError('device identity does not match its assignment profile')
+    if identities[0] == 'pci-id' and (not isinstance(identity, str) or not re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{4}', identity)):
+        raise ValueError('PCI identity must be canonical vvvv:dddd hexadecimal')
+    if not isinstance(identity, str) or not identity or len(identity.encode()) > 512 or any(ord(c) <= 32 or ord(c) == 127 for c in identity):
+        raise ValueError('invalid firmware identity')
+    if identities[0] == 'path' and (not identity.startswith('/') or any(part in ('', '.', '..') for part in identity.split('/')[1:])):
+        raise ValueError('firmware path must be canonical and absolute')
+
+
+def io_networks(value):
+    if ('network-device' in value) != ('networks' in value):
+        raise ValueError('network-device and networks must be configured together')
+    if 'network-device' not in value:
+        return
+    device_selector(value['network-device'], ('virtio-mmio-net', 'pci-function'))
+    networks = value['networks']
+    if not isinstance(networks, list) or len(networks) != 1:
+        raise ValueError('network deployment requires exactly one uplink and bridge')
+    network = networks[0]
+    keys(network, ('name', 'bridge', 'uplink'))
+    name(network['name'])
+    for field in ('bridge', 'uplink'):
+        if not isinstance(network[field], str) or not _INTERFACE.fullmatch(network[field]):
+            raise ValueError('invalid Linux network interface name')
+    if network['bridge'] == network['uplink']:
+        raise ValueError('network bridge and uplink must be different interfaces')
+
+
+def vm_network(value, networks):
+    keys(value, ('network', 'mac'))
+    if name(value['network']) not in networks:
+        raise ValueError('VM network must name a configured I/O VM network')
+    mac = value['mac']
+    if not isinstance(mac, str) or not _MAC.fullmatch(mac) or int(mac[:2], 16) & 3 != 2:
+        raise ValueError('VM MAC must be a canonical locally administered unicast address')
+    return mac
+
+
 def io_vm(value):
-    keys(value, ('runtime', 'name', 'image', 'configuration', 'io-device'))
+    keys(value, ('runtime', 'name', 'image', 'configuration', 'io-device'),
+         ('network-device', 'networks'))
     if value['runtime'] != 'io-runtime':
         raise ValueError('resident I/O VM requires io-runtime')
     if not isinstance(value['name'], str) or not _VM_NAME.fullmatch(value['name']):
@@ -100,18 +150,8 @@ def io_vm(value):
     config = vm_configuration(value['configuration'])
     if config['memory-bytes'] != 128 * MIB or config['vcpus'] != 1:
         raise ValueError('resident I/O VM requires 128 MiB and one vCPU')
-    selector = value['io-device']
-    keys(selector, ('profile',), ('compatible', 'path'))
-    if selector['profile'] not in ('virtio-mmio-scsi', 'bcm2712-sdhci'):
-        raise ValueError('unsupported assignment profile')
-    identities = [key for key in ('compatible', 'path') if key in selector]
-    if len(identities) != 1:
-        raise ValueError('device requires exactly one firmware identity')
-    identity = selector[identities[0]]
-    if not isinstance(identity, str) or not identity or len(identity.encode()) > 512 or any(ord(c) <= 32 or ord(c) == 127 for c in identity):
-        raise ValueError('invalid firmware identity')
-    if identities[0] == 'path' and (not identity.startswith('/') or any(part in ('', '.', '..') for part in identity.split('/')[1:])):
-        raise ValueError('firmware path must be canonical and absolute')
+    device_selector(value['io-device'], ('virtio-mmio-scsi', 'bcm2712-sdhci'))
+    io_networks(value)
     return value
 
 
@@ -168,6 +208,11 @@ class Board:
         resident = io_vm(data['io-vm'])
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
+        if 'network-device' in resident:
+            expected = {'qemu-direct': 'virtio-mmio-net',
+                        'rpi5-firmware': 'pci-function'}[data['boot']]
+            if resident['network-device']['profile'] != expected:
+                raise ValueError('network controller does not match the board boot profile')
         keys(data['disk'], ('uuid', 'config-mib'))
         disk_id = uuid.UUID(data['disk']['uuid'])
         if disk_id.int == 0:
@@ -202,8 +247,11 @@ class Board:
         if not isinstance(vms, list) or len(vms) > 8:
             raise ValueError('too many VMs or invalid VM list')
         seen = {'config', resident['name']}
+        networks = {network['name'] for network in resident.get('networks', [])}
+        macs = set()
         for vm in vms:
-            keys(vm, ('name', 'image', 'autostart', 'disk-mib', 'configuration'), ('disk-image',))
+            keys(vm, ('name', 'image', 'autostart', 'configuration'),
+                 ('disk-mib', 'disk-image', 'network'))
             vm_configuration(vm['configuration'])
             vm_name = name(vm['name'])
             if vm_name in seen:
@@ -214,6 +262,15 @@ class Board:
                 raise ValueError('VM image must name an explicitly packaged ITB')
             if type(vm['autostart']) is not bool:
                 raise ValueError('autostart must be boolean')
+            if 'network' in vm:
+                mac = vm_network(vm['network'], networks)
+                if mac in macs:
+                    raise ValueError('VM MAC addresses must be unique')
+                macs.add(mac)
+            if 'disk-mib' not in vm:
+                if 'disk-image' in vm:
+                    raise ValueError('disk-image requires disk-mib')
+                continue
             size = integer(vm['disk-mib'], 8, 16 * 1024 * 1024) * MIB // SECTOR
             source = name(vm['disk-image']) if 'disk-image' in vm else None
             start = partitions[-1].end + 1
@@ -228,11 +285,16 @@ class Board:
                 'volumes': [part.manifest() for part in self.partitions]}
 
     def vms(self):
-        return {'format': 'hyper.vm-config', 'virtual-machines': [
-            {'name': vm['name'], 'image': '/data/' + vm['image'],
-             'autostart': vm['autostart'], 'configuration': vm['configuration'],
-             'disk': {'client': index, 'volume': vm['name']}}
-            for index, vm in enumerate(self.source['virtual-machines'], start=1)]}
+        definitions = []
+        for client, vm in enumerate(self.source['virtual-machines'], start=1):
+            definition = {'name': vm['name'], 'image': '/data/' + vm['image'],
+                          'autostart': vm['autostart'], 'configuration': vm['configuration']}
+            if 'disk-mib' in vm:
+                definition['disk'] = {'client': client, 'volume': vm['name']}
+            if 'network' in vm:
+                definition['network'] = {'client': client, **vm['network']}
+            definitions.append(definition)
+        return {'format': 'hyper.vm-config', 'virtual-machines': definitions}
 
     def bootstrap_volumes(self):
         """Strict token projection for the small Linux init helper; JSON owns policy."""
@@ -241,5 +303,17 @@ class Board:
             for part in self.partitions)
 
     def bootstrap_clients(self):
-        return 'hyper.clients.v1\n' + ''.join(
-            f'{index} {part.name}\n' for index, part in enumerate(self.partitions))
+        rows = ['hyper.clients.v2', '0 config - -']
+        for client, vm in enumerate(self.source['virtual-machines'], start=1):
+            volume = vm['name'] if 'disk-mib' in vm else '-'
+            network = vm.get('network')
+            if volume == '-' and network is None:
+                continue
+            rows.append(f"{client} {volume} {network['network'] if network else '-'} "
+                        f"{network['mac'] if network else '-'}")
+        return '\n'.join(rows) + '\n'
+
+    def bootstrap_networks(self):
+        return 'hyper.networks.v1\n' + ''.join(
+            f"{network['name']} {network['bridge']} {network['uplink']}\n"
+            for network in self.source['io-vm'].get('networks', []))

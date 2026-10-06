@@ -66,14 +66,14 @@ rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
 		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
 
-# Physical SD backend with the same minimal Alpine root disk as QEMU.
+# Complete Pi 5 deployment with SD storage and the RP1 Ethernet uplink.
 .PHONY: rpi5-sd
 rpi5-sd: image
 	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
-	$(MAKE) board-initramfs board-guest-images BOARD=rpi5 BOARD_CONFIG="$(CURDIR)/boards/rpi5-sd.json" \
+	$(MAKE) board-initramfs board-guest-images BOARD=rpi5 BOARD_CONFIG="$(CURDIR)/boards/rpi5.json" \
 		BOARD_OUTPUT="$(RPI5_BRINGUP_OUTPUT)" NATIVE_IMAGE_PROFILE=system
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
-		--board "$(CURDIR)/boards/rpi5-sd.json" --kernel "$(KERNEL_IMAGE)" \
+		--board "$(CURDIR)/boards/rpi5.json" --kernel "$(KERNEL_IMAGE)" \
 		--initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE) \
 		--artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
@@ -168,6 +168,21 @@ test-board-business: app image fit-pack
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-business.py run \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept.log"
+
+# Each invocation owns a fresh disk; networking never uses the deployment disk.
+.PHONY: test-board-network
+test-board-network: app image
+	@test "$(ARCH)" = aarch64 || { echo "board network acceptance requires aarch64" >&2; exit 2; }
+	mkdir -p "$(BOARD_TEST_OUTPUT)"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/network.XXXXXX") && \
+	python3 -B tests/qemu/verify-network.py prepare \
+		--board "$(CURDIR)/boards/qemu.json" --output "$$fixture/config.json" && \
+	$(MAKE) -o image -o app board-image BOARD=qemu \
+		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_IMAGE="$$fixture/disk.img" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-network.py run \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/network.log"
 
 # Fault injection is compiled into a separate output tree; normal app artifacts
 # and subsequent make run images never inherit the test features.

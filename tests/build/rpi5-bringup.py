@@ -119,6 +119,9 @@ class BringupTests(unittest.TestCase):
                     else:
                         self.assertNotIn('hyper.volumes=', config['bootargs'])
                         self.assertIn(f'hyper.mode={mode}', config['bootargs'])
+                        self.assertNotIn('network-device', snapshot['io-vm'])
+                        self.assertNotIn('networks', snapshot['io-vm'])
+                        self.assertTrue(all('network' not in vm for vm in snapshot['virtual-machines']))
                     if mode == 'bringup':
                         vm = json.loads((output.parent / 'bringup/vms.json').read_text())['virtual-machines'][0]
                         self.assertEqual(vm['configuration'], config)
@@ -150,9 +153,9 @@ class BringupTests(unittest.TestCase):
                 {'name': resident['name'], 'image': resident['image'], 'autostart': False,
                  'configuration': resident['configuration']}])
 
-    def test_sd_profile_exports_configuration_and_qemu_equivalent_alpine(self):
+    def test_pi_deployment_exports_configuration_and_qemu_equivalent_alpine(self):
         from board_bootstrap import services
-        board = bringup.Board.load(ROOT / 'boards/rpi5-sd.json')
+        board = bringup.Board.load(ROOT / 'boards/rpi5.json')
         self.assertEqual(board.source['io-vm']['io-device'], {
             'profile': 'bcm2712-sdhci', 'path': '/soc@107c000000/mmc@fff000'})
         self.assertEqual(board.source['disk']['config-mib'], 1024)
@@ -206,7 +209,14 @@ class BringupTests(unittest.TestCase):
             self.assertFalse((payload / 'bl31.bin').exists())
             self.assertIn('kernel=hyper.img\n', config)
             self.assertIn('initramfs bootstrap.cpio followkernel\n', config)
+            self.assertNotIn('pciex4_reset=', config)
             self.assertEqual((payload / 'boot-notices.txt').read_bytes(), b'upstream notices')
+            network = bringup.Board.load(ROOT / 'boards/rpi5.json').source['io-vm']
+            source = board.source
+            for field in ('network-device', 'networks'):
+                source['io-vm'][field] = network[field]
+            bringup.packer.prepare_payload(bringup.Board.parse(source), artifacts, payload)
+            self.assertIn('pciex4_reset=0\n', (payload / 'config.txt').read_text())
 
     def test_modified_dependency_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

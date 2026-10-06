@@ -79,8 +79,12 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 # Cross-VM fixture consumes the external appliance without patching its rootfs.
 test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "I/O VM acceptance requires aarch64" >&2; exit 2; }
-	@test -n "$(IO_VM_PACKAGE)" || { echo "set IO_VM_PACKAGE to a complete external boot generation or imported OCI package directory" >&2; exit 2; }
-	python3 -B tests/qemu/verify-io-vm.py prepare --package "$(IO_VM_PACKAGE)" \
+	@package="$(IO_VM_PACKAGE)"; \
+	if test -z "$$package"; then \
+		package=$$(python3 -B scripts/fetch-io-vm.py --platform qemu \
+			--reference "$(IO_VM_REFERENCE)" --oras "$(IO_VM_ORAS)") || exit $$?; \
+	fi; \
+	python3 -B tests/qemu/verify-io-vm.py prepare --package "$$package" \
 		--fit-pack "$(FIT_PACK)" --output "$(APP_OUTPUT)/io-vm" --test "$(IO_VM_TEST)"
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
 		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
@@ -122,6 +126,19 @@ test-runtime-crash: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-runtime-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(APP_OUTPUT)/runtime-crash-reordered.cpio" "$(APP_OUTPUT)/runtime-crash-reordered.log" \
 		--isolation-only
+
+.PHONY: test-storage-failure
+test-storage-failure: image app $(NEWC_PACK)
+	@test "$(ARCH)" = aarch64 || { echo "storage recovery acceptance requires aarch64" >&2; exit 2; }
+	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		python3 -B tests/qemu/verify-storage-failure.py prepare \
+		--apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--output "$(APP_OUTPUT)/storage-failure"
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-storage-failure.py run \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--output "$(APP_OUTPUT)/storage-failure"
 
 # Definition admission is a bootstrap result, independent of autostart outcomes.
 .PHONY: test-fleet-config

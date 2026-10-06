@@ -353,6 +353,7 @@ name = "hyper-vm-policy"
 version = "0.0.0"
 dependencies = [
  "hyper-os",
+ "hyper-service",
  "hyper-vm-image",
  "serde",
  "serde_json",

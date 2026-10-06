@@ -28,6 +28,15 @@ def validate_board_disk(path, configuration):
             stream.seek(sector * SECTOR)
             if stream.read(len(expected)) != expected:
                 raise ValueError('board configuration does not match the existing disk GPT')
+    return board
+
+
+def network_arguments(board):
+    """Expose only an explicitly assigned QEMU uplink; Linux owns guest TAPs."""
+    if board is None or 'network-device' not in board.source['io-vm']:
+        return []
+    return ['-netdev', 'user,id=physicalnet', '-device',
+            'virtio-net-device,id=physicalnet,netdev=physicalnet,iommu_platform=on']
 
 
 def prepare_disk(path, size):
@@ -53,8 +62,9 @@ def main():
     for path in (args.image, args.initramfs, args.disk):
         if not path.is_file():
             parser.error(f'missing artifact {path}; run make first')
+    board = None
     if args.board:
-        validate_board_disk(args.disk, args.board)
+        board = validate_board_disk(args.disk, args.board)
     else:
         if args.disk.stat().st_size < 8 * 1024 * 1024:
             parser.error('I/O VM disk must be at least 8 MiB')
@@ -69,6 +79,7 @@ def main():
                + str(args.disk.resolve()).replace(',', ',,') + ',cache=writeback',
                '-device', 'virtio-scsi-device,id=physicalscsi,iommu_platform=on',
                '-device', 'scsi-hd,drive=physicaldisk,bus=physicalscsi.0,scsi-id=0,lun=0']
+    command.extend(network_arguments(board))
     # The monitor's escape processing belongs to interactive terminals. Keep
     # piped automation on the dedicated serial backend for lossless bursts.
     if sys.stdin.isatty():

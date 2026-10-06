@@ -22,6 +22,35 @@ spec.loader.exec_module(runner)
 
 
 class DiskTests(unittest.TestCase):
+    def test_network_uplink_requires_explicit_board_policy(self):
+        from board_config import Board
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(runner.network_arguments(None), [])
+        source = json.loads((root / 'boards/qemu.json').read_text())
+        del source['io-vm']['network-device']
+        del source['io-vm']['networks']
+        del source['virtual-machines'][0]['network']
+        self.assertEqual(runner.network_arguments(Board.parse(source)), [])
+        self.assertEqual(runner.network_arguments(Board.load(root / 'boards/qemu.json')),
+                         ['-netdev', 'user,id=physicalnet', '-device',
+                          'virtio-net-device,id=physicalnet,netdev=physicalnet,iommu_platform=on'])
+
+    def test_board_network_is_included_in_the_executed_command(self):
+        from board_config import Board
+        board = Board.load(Path(__file__).resolve().parents[2] / 'boards/qemu.json')
+        with patch.object(sys, 'argv', ['run-io-vm.py', '--qemu', 'qemu',
+                          '--image', 'kernel.img', '--initramfs', 'init.cpio',
+                          '--disk', 'disk.img', '--board', 'board.json']), \
+                patch.object(sys.stdin, 'isatty', return_value=False), \
+                patch.object(Path, 'is_file', return_value=True), \
+                patch.object(runner, 'validate_board_disk', return_value=board), \
+                patch.object(runner.os, 'execvp') as execute:
+            runner.main()
+        command = execute.call_args.args[1]
+        self.assertEqual(command[command.index('-netdev') + 1], 'user,id=physicalnet')
+        self.assertIn('virtio-net-device,id=physicalnet,netdev=physicalnet,iommu_platform=on', command)
+        self.assertIn('virtio-scsi-device,id=physicalscsi,iommu_platform=on', command)
+
     def test_monitor_is_only_enabled_for_terminal_input(self):
         for interactive in (False, True):
             with self.subTest(interactive=interactive), \

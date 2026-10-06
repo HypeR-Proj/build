@@ -110,6 +110,12 @@ def deployment_board(board, mode):
     source = copy.deepcopy(board.source)
     config = source['io-vm']['configuration']
     if mode != 'storage':
+        # Standby and diskless bring-up have no physical network transport.
+        # Their reduced snapshot must not inherit a production uplink claim.
+        source['io-vm'].pop('network-device', None)
+        source['io-vm'].pop('networks', None)
+        for vm in source['virtual-machines']:
+            vm.pop('network', None)
         arguments = re.sub(r'(?<!\S)hyper\.(?:mode|volumes)=\S+\s*', '', config['bootargs'])
         config['bootargs'] = (arguments.rstrip() + f' hyper.mode={mode}').lstrip()
     return Board.parse(source)
