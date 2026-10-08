@@ -12,6 +12,7 @@
 /tools/fit-pack/target/
 /kernel/tests/host/target/
 /kernel/tests/host/Cargo.lock
+/kernel/tests/concurrency/target/
 /kernel/tools/kconfig/target/
 /kernel/tools/kconfig/Cargo.lock
 /kernel/tools/kallsyms/target/

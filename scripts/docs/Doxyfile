@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+PROJECT_NAME           = "HypeR C SDK"
+PROJECT_NUMBER         = $(HYPER_DOC_REVISION)
+OUTPUT_DIRECTORY       = $(HYPER_DOC_C_OUTPUT)
+INPUT                  = sdk/abi/include sdk/lib/include sdk/lib/src sdk/loader/src
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.c
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = .
+SOURCE_BROWSER         = YES
+STRIP_FROM_PATH        = .
+FULL_PATH_NAMES        = YES
+HAVE_DOT               = NO
+QUIET                  = YES

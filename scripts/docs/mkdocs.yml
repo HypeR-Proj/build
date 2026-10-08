@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+site_name: HypeR documentation
+site_url: https://roolrz.github.io/HypeR/
+repo_url: https://github.com/roolrz/HypeR
+repo_name: roolrz/HypeR
+edit_uri: edit/main/
+docs_dir: ../../target/documentation/source
+site_dir: ../../target/documentation/site
+strict: true
+theme:
+  name: readthedocs
+  highlightjs: true
+  hljs_languages: [rust, c, bash, json]
+plugins:
+  - search
+hooks:
+  - site.py
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js
+  - assets/mermaid.js
