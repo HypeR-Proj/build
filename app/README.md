@@ -231,8 +231,8 @@ lifecycle state, and active/pending Thread counts. `ps --threads` (or `ps -T`)
 also places every visible Thread directly below its owning Process and lists
 kernel Threads with `kernel` as the owner; thread rows include their process
 name and per-CPU idle threads use `idle/CPU`. `handle <process-koid>` decodes the
-selected Process's handle kinds, rights, and object purposes; `handle
---objects` reports the visible kernel-object graph. Both commands require
+selected Process's handle kinds, rights, and object purposes;
+`handle --objects` reports the visible kernel-object graph. Both commands require
 explicit inspector capabilities, and every displayed KOID remains diagnostic
 metadata rather than authority.
 

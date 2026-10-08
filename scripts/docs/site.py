@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from markdown.extensions import Extension
 from markdown.treeprocessors import Treeprocessor
+from markdown.util import AtomicString
 from mkdocs.exceptions import PluginError
 from mkdocs.structure.files import File
 
@@ -51,11 +52,21 @@ class RepositoryLinks(Treeprocessor):
                     Path(CURRENT_PAGE.file.src_dir)))
 
 
-class RepositoryLinkExtension(Extension):
+class InlineCodeWhitespace(Treeprocessor):
+    def run(self, element):
+        # Source line wrapping is a space in a Markdown code span. Preserve
+        # indentation/newlines in code blocks and existing spaces in spans.
+        block_code = {code for pre in element.iter('pre') for code in pre.iter('code')}
+        for code in element.iter('code'):
+            if code not in block_code and code.text:
+                code.text = AtomicString(code.text.replace('\n', ' '))
+
+
+class DocumentationExtension(Extension):
     def extendMarkdown(self, md):
-        # After Markdown has parsed inline/reference links, before MkDocs
-        # resolves page URLs. Code samples and ordinary prose are untouched.
+        # Run after inline parsing and before MkDocs resolves page URLs.
         md.treeprocessors.register(RepositoryLinks(md), 'repository-links', 15)
+        md.treeprocessors.register(InlineCodeWhitespace(md), 'inline-code-whitespace', 15)
 
 
 class ApiAsset(File):
@@ -77,7 +88,7 @@ def on_files(files, config):
 def on_config(config):
     global SETTINGS
     SETTINGS = json.loads((Path(config.docs_dir).parent / 'manifest.json').read_text())
-    config.markdown_extensions.append(RepositoryLinkExtension())
+    config.markdown_extensions.append(DocumentationExtension())
     config.nav = SETTINGS['nav']
     config.copyright = f"Source revision: {SETTINGS['revision'][:12]}"
     return config

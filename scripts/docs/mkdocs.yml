@@ -19,6 +19,7 @@ hooks:
   - site.py
 markdown_extensions:
   - tables
+  - pymdownx.tasklist
   - toc:
       permalink: true
   - pymdownx.superfences:

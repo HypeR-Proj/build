@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 from check_links import check_site
+from rustdoc import fix_rustdoc_links
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'target/documentation'
@@ -143,6 +144,11 @@ def program_doc_flags(library_view):
 
 def copy_rustdoc(source, destination):
     shutil.copytree(source, destination)
+    for page in destination.rglob('*.html'):
+        original = page.read_text()
+        updated = fix_rustdoc_links(original, page, destination)
+        if updated != original:
+            page.write_text(updated)
     # Cargo doc does not create a workspace landing page by default, but the
     # generated help/settings pages link back to one.
     crates = sorted(path.name for path in destination.iterdir()
@@ -253,9 +259,8 @@ def main():
         api_documentation(revision)
     prepare_site(revision)
     run([sys.executable, '-m', 'mkdocs', 'build', '--strict', '-f', str(TOOLS / 'mkdocs.yml')])
-    # Rustdoc checks source-level intra-doc links itself. Its generated HTML
-    # includes JavaScript anchors, optional trait scripts and upstream std/book
-    # links that cannot be treated as ordinary static guide links.
+    # Rustdoc checks source-level intra-doc links. Validate generated link
+    # targets too, allowing its dynamic anchors and optional trait scripts.
     check_site(OUTPUT / 'site', rustdoc_roots=('api/kernel', 'api/native'))
     print(f'Documentation artifact: {OUTPUT / "site"}')
 
