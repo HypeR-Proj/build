@@ -5,7 +5,7 @@
 /app/target/
 /kernel/target/
 /sdk/abi/target/
-/sdk/rust/target/
+/lib/rust/target/
 /sdk/toolchain/target/
 /sdk/toolchain/tests/rust-smoke/target/
 /sdk/toolchain/tests/std-smoke/target/

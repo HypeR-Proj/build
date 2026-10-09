@@ -79,6 +79,18 @@ class IncrementalTests(unittest.TestCase):
         self.assertNotEqual((new / "share/hyper/link-fingerprint").read_bytes(), identity)
         state.preserve_times(old, new)
         self.assertNotEqual((new / "lib/a").stat().st_mtime_ns, timestamp)
+        # Interpreter changes must still invalidate links after moving out of
+        # the SDK's ordinary link-library directory.
+        identity = (new / "share/hyper/link-fingerprint").read_bytes()
+        (new / "lib64").mkdir()
+        loader = new / "lib64/ld-hyper-aarch64.so"
+        loader.write_bytes(b"interpreter")
+        self.assertEqual(self.run_state("link-id", new, requested), 0)
+        self.assertNotEqual((new / "share/hyper/link-fingerprint").read_bytes(), identity)
+        identity = (new / "share/hyper/link-fingerprint").read_bytes()
+        loader.write_bytes(b"changed interpreter")
+        self.assertEqual(self.run_state("link-id", new, requested), 0)
+        self.assertNotEqual((new / "share/hyper/link-fingerprint").read_bytes(), identity)
 
     def test_std_source_identity_ignores_timestamps_but_tracks_content(self):
         output = self.root / "sdk"

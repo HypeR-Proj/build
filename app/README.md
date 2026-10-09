@@ -167,7 +167,7 @@ Run all host tests with `make app-test`, or select a package with
 uses the workspace's SDK source patches and does not require SDK assembly. `make app-check` and `make app` cover
 all workspace members. Target executable names and installed paths are unchanged.
 
-Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
+Reusable OS interaction belongs to `lib/rust/hyper-os`; application-local
 service and command policy remains under `app`. Shared application implementations
 live in [`lib/`](../lib/README.md), and their Native DSOs are installed in
 `/lib64/<arch>-hyper-hyper/`, accessible through `/lib -> lib64`.
@@ -283,7 +283,8 @@ See the [inspection reference](../docs/applications.md#object-and-capability-ins
 interpreter and complete `DT_NEEDED` dependency graph. It does not execute the
 input, load it into executable memory, or call constructors. The default flat
 listing includes each dependency name once; paths resolve symbolic links, so
-the normal `/lib` alias is displayed as `/lib64/<arch>-hyper-hyper/`.
+the normal `/lib` alias is displayed as `/lib64/<arch>-hyper-hyper/`. The
+interpreter is reported separately at `/lib64/ld-hyper-<arch>.so`.
 
 ```text
 ldd /bin/vmm

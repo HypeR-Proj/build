@@ -96,16 +96,22 @@ class LibraryTests(unittest.TestCase):
         self.add('lib64/aarch64-hyper-hyper/libb.so', soname='libb.so', needed=['liba.so'], exports=['b'], imports=['a'])
         validate(self.entries)
 
-    def test_interpreters_and_libraries_resolve_the_archive_alias_per_architecture(self):
+    def test_lib64_interpreters_and_architecture_libraries(self):
         for arch, machine in [('aarch64', 183), ('riscv64', 243)]:
             self.add(f'bin/{arch}', machine=machine, needed=['libruntime.so'],
-                     interpreter=f'/lib/{arch}-hyper-hyper/ld-hyper-{arch}.so')
-            self.add(f'lib64/{arch}-hyper-hyper/ld-hyper-{arch}.so', machine=machine)
+                     interpreter=f'/lib64/ld-hyper-{arch}.so')
+            self.add(f'lib64/ld-hyper-{arch}.so', machine=machine)
             self.add(f'lib64/{arch}-hyper-hyper/libruntime.so',
                      machine=machine, soname='libruntime.so')
         validate(self.entries)
         self.entries = self.entries[3:]
         with self.assertRaisesRegex(ValueError, 'missing packaged ELF dependency lib/'):
+            validate(self.entries)
+
+    def test_interpreter_is_opened_at_its_absolute_path_not_the_library_directory(self):
+        self.add('bin/tool', interpreter='/lib64/ld-hyper-aarch64.so')
+        self.add('lib64/aarch64-hyper-hyper/ld-hyper-aarch64.so')
+        with self.assertRaisesRegex(ValueError, 'missing packaged ELF dependency lib64/ld-hyper-'):
             validate(self.entries)
 
     def test_no_fallback_to_flat_or_other_architecture_directories(self):

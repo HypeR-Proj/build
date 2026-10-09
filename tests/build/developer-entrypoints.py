@@ -82,7 +82,7 @@ class EntrypointTests(unittest.TestCase):
             shutil.copyfile(ROOT / '.vscode/rust-analyzer.toml', shared)
             crates = ('abi', 'os', 'rt', 'service', 'sys', 'vm-image')
             for name in crates:
-                paths = [root / ('sdk/abi' if name == 'abi' else f'sdk/rust/hyper-{name}'),
+                paths = [root / ('sdk/abi' if name == 'abi' else f'lib/rust/hyper-{name}'),
                          root / f'installed/hyper-{name}']
                 for path in paths:
                     path.mkdir(parents=True)
@@ -123,7 +123,7 @@ class EntrypointTests(unittest.TestCase):
                         crate = next(p for p in json.loads(result.stdout)['packages']
                                      if p['name'] == 'hyper-os')
                         expected = root / ('installed/hyper-os' if mode == 'installed'
-                                           else 'sdk/rust/hyper-os') / 'Cargo.toml'
+                                           else 'lib/rust/hyper-os') / 'Cargo.toml'
                         self.assertEqual(Path(crate['manifest_path']), expected)
 
     def test_analyzer_patches_only_native_workspaces(self):

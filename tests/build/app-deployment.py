@@ -29,7 +29,7 @@ class DeploymentTests(unittest.TestCase):
         link = system.index('lib')
         self.assertEqual(system[link - 1:link + 2], ['symlink', 'lib', 'lib64'])
         self.assertTrue({'init', 'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
-                         'lib', 'lib64/riscv64-hyper-hyper/ld-hyper-riscv64.so',
+                         'lib', 'lib64/ld-hyper-riscv64.so',
                          'lib64/riscv64-hyper-hyper/libhyper.so',
                          'lib64/riscv64-hyper-hyper/libhyper_tool_args_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_rust_std.so',
                          'lib64/riscv64-hyper-hyper/libhyper_vm_policy_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_vm_support_shared.so'} <= system_names)

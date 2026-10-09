@@ -69,7 +69,7 @@ def rust_documentation(api):
         copy_rustdoc(cargo_output / target / 'doc', api / 'kernel' / architecture)
 
     applications = workspace_packages(ROOT / 'app/Cargo.toml')
-    sdk_packages = workspace_packages(ROOT / 'sdk/rust/Cargo.toml') + abi_packages
+    sdk_packages = workspace_packages(ROOT / 'lib/rust/Cargo.toml') + abi_packages
     packages = [arg for package in applications + sdk_packages
                 for arg in ('--package', package['name'])]
     environment['RUSTDOCFLAGS'] = reference_doc_flags(
@@ -221,7 +221,7 @@ def prepare_site(revision):
         raise ValueError('API output is missing; run the complete build first')
     shutil.copytree(api, source / 'api')
     files = public_files()
-    groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Applications', 'Tests', 'Project')}
+    groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Libraries', 'Applications', 'Tests', 'Project')}
     for name in files:
         path = Path(name)
         if path.suffix.lower() not in ('.md', '.png', '.svg', '.jpg', '.jpeg', '.gif'):
@@ -237,7 +237,7 @@ def prepare_site(revision):
         if name.startswith(('tests/', 'kernel/tests/')):
             group = 'Tests'
         else:
-            group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK',
+            group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK', 'lib': 'Libraries',
                      'app': 'Applications'}.get(path.parts[0], 'Project')
         groups[group].append({page_title(ROOT / path): name})
     assets = source / 'assets'

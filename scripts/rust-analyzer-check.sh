@@ -9,8 +9,9 @@ script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 PATH="$PATH:$HOME/.cargo/bin"
 
-# Resolve ownership, not directory ancestry: lib/* are members of app/ but
-# do not inherit app/.cargo/config.toml when Cargo starts in their directory.
+# Resolve ownership, not directory ancestry: application libraries under lib/
+# belong to app/, while the Native bindings have their own lib/rust/ workspace.
+# External members do not inherit app/.cargo/config.toml from their directory.
 # A direct invocation from the product root checks its Native workspace.
 if [ "$(pwd -P)" = "$root" ]; then
     cd "$root/app"

@@ -3,12 +3,22 @@ SPDX-FileCopyrightText: 2026 roolrz
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Shared application libraries
+# Native runtime and shared libraries
 
-These libraries hold implementations used by multiple Native applications. They
-are explicit members of `app/Cargo.toml`, with one lockfile, dependency graph,
-profile and SDK boundary. They do not depend on kernel source or source-tree SDK
-paths. Application-specific code remains with its executable.
+This directory owns userspace runtime implementations and reusable application
+code. ABI definitions and SDK construction remain in `sdk/abi` and
+`sdk/toolchain`; the assembled SDK remains the build boundary for applications.
+
+| Source | Responsibility | Build owner |
+| --- | --- | --- |
+| [`hyper/`](hyper/README.md) | Freestanding C runtime, startup, syscall veneers and std adapters; produces `libhyper` | SDK assembly through CMake |
+| [`loader/`](loader/README.md) | Native ELF interpreter, relocation and capability-relative runtime loading | SDK assembly through CMake |
+| [`rust/`](rust/README.md) | Raw and safe Native Rust bindings, Rust entry and service interfaces | Independent Cargo workspace, installed into the SDK |
+
+The application libraries below are explicit members of `app/Cargo.toml`, with
+one lockfile, dependency graph, profile and installed-SDK boundary. They do not
+depend on kernel source or source-tree runtime paths. Application-specific code
+remains with its executable.
 
 | Library | Consumers | Responsibility |
 | --- | --- | --- |
@@ -23,7 +33,8 @@ paths. Application-specific code remains with its executable.
 `libhyper_rust_std.so`. `app/deployment.json` installs them in
 `/lib64/<arch>-hyper-hyper/` in both system and development images, with
 `/lib -> lib64`. AArch64 therefore uses `/lib/aarch64-hyper-hyper/`; RISC-V uses
-`/lib/riscv64-hyper-hyper/`. The interpreter and `libhyper.so` share that directory.
+`/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory; the interpreter
+resides directly at `/lib64/ld-hyper-<arch>.so`.
 Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.

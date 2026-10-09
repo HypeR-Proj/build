@@ -13,19 +13,20 @@ repositories.
 
 ## Source ownership
 
-The SDK is produced from five independently owned source components:
+The SDK is assembled from the ABI and toolchain under `sdk/` and the runtime
+implementations under `lib/`:
 
 | Path | Responsibility |
 | --- | --- |
 | `sdk/abi/` | Machine-visible values, layouts, syscall metadata, and generated interfaces |
-| `sdk/lib/` | Freestanding C runtime, startup code, and architecture syscall veneers |
-| `sdk/loader/` | Capability-relative runtime linker and `dlopen` implementation |
-| `sdk/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
+| `lib/hyper/` | Freestanding C runtime, startup code, and architecture syscall veneers |
+| `lib/loader/` | Capability-relative runtime linker and `dlopen` implementation |
+| `lib/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
 | `sdk/toolchain/` | Clang driver, linker script, ELF branding, and transactional SDK assembly |
 
 The kernel consumes `sdk/abi/` as a dependency-free `no_std` path dependency.
 Native applications consume only the assembled SDK. They must not include
-headers from `sdk/abi/` or `sdk/lib/` directly, link source-tree archives, or
+headers from `sdk/abi/` or `lib/hyper/` directly, link source-tree archives, or
 depend on private kernel modules.
 
 ## Build and installed layout
@@ -52,7 +53,7 @@ lib/crt1.o
 lib/crt.o
 lib/libhyper.a
 lib/libhyper.so
-lib/ld-hyper-aarch64.so
+lib64/ld-hyper-aarch64.so
 lib/hyper/aarch64/hyper-native.ld
 share/hyper/abi/Cargo.toml
 share/hyper/abi/src/
@@ -99,8 +100,8 @@ objects must export their public entry points explicitly because the compiler
 driver uses hidden visibility by default.
 
 Dynamic linking is the default. The generated executable names
-`/lib/aarch64-hyper-hyper/ld-hyper-aarch64.so` or
-`/lib/riscv64-hyper-hyper/ld-hyper-riscv64.so` in `PT_INTERP`
+`/lib64/ld-hyper-aarch64.so` or
+`/lib64/ld-hyper-riscv64.so` in `PT_INTERP`
 and records `libhyper.so` as its
 runtime dependency. The interpreter performs eager `RELA`/`RELR` relocation,
 enforces W^X and RELRO, and opens exact dependency names through the process's
@@ -111,11 +112,13 @@ and logical close. `HYPER_LINK_MODE=static` selects the matching
 or runtime dependency. The dynamic and static libraries are built from the
 same runtime sources and are both supported SDK application link modes.
 
-Product images store the interpreter and shared libraries under
-`/lib64/<arch>-hyper-hyper/` and publish `/lib -> lib64`. The startup library
-Directory is that architecture subdirectory. The SDK itself is assembled for
-one architecture and retains its build artifacts in `lib/`; image composition
-places them in the runtime filesystem layout.
+Product images store the interpreter directly under `/lib64/`, shared libraries
+under `/lib64/<arch>-hyper-hyper/`, and publish `/lib -> lib64`. The startup
+library Directory remains the architecture subdirectory; the kernel opens the
+interpreter through the executable's absolute `PT_INTERP` path. The SDK itself
+is assembled for one architecture and stages link libraries in `lib/` and the
+interpreter in `lib64/`; image composition places libraries in the architecture
+subdirectory.
 
 `make sdk-check` validates generated ABI output, lints the Rust SDK crates,
 builds the SDK transactionally, and compiles and links public-interface-only C
