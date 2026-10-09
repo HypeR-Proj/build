@@ -19,8 +19,9 @@ receives only the control or runtime byte-channel authority needed for one comma
 
 The in-tree executables use the SDK's partial Rust std port. Command-line interfaces
 use clap, shell words use shlex, and formatting, collections, paths, and ordinary
-command output use std. `echo` keeps option-looking text literal, including
-`--help` and `-n`; other public commands provide clap help and reject extra or
+command output use std. `echo` supports `-n`, `-e` and `-E`; unknown options such
+as `--help` are text, and the first operand ends option parsing. Other public
+commands provide clap help and reject extra or
 conflicting arguments. Shell builtins use `try_parse_from` so help and argument
 errors return to the prompt rather than terminating the shell. Shell quoting
 follows POSIX shlex rules, including comments and double-quote escaping.
@@ -95,7 +96,7 @@ streams; other background services receive no stdin.
 
 The manifest's optional `virtual-machines.config` path selects a file of named
 VM definitions. Board packaging generates `/data/vms.json` and gates its use on
-I/O runtime readiness; standalone tests use files under `init/tests/config/`.
+I/O runtime readiness; standalone tests use files under `app/init/tests/config/`.
 Init transfers the configuration File to the VM manager. The manager validates
 and opens guest images, then creates a fresh child resource domain, task group,
 creation lease and isolated runtime for each start. There are up to eight
@@ -109,33 +110,6 @@ bounded output retention. Only one client may attach to a VM's console, while
 other clients can still issue lifecycle requests. Guest output does not bypass
 the runtime to reach the physical Console.
 
-```text
-vmm list
-vmm status alpine
-vmm start alpine
-vmm console alpine
-vmm affinity alpine 0 1,3
-vmm stop alpine
-vmm restart alpine
-vmm create test --config /data/new-vms.json
-vmm delete test
-```
-
-No subcommand means `list`; VM operations require a name. Ctrl-] opens the
-console detach menu. Nonblocking guest input and a bounded pending buffer keep
-detach responsive even when the guest stops reading. Deployment configuration
-is persistent; `create`/`delete` affect only the running manager. There is no
-`save`/`load` command. See [Native applications](../docs/applications.md) for
-console, affinity, read-only I/O VM observation and accounting semantics.
-
-The shell supports bounded editing, quoting, `cd`, `pwd`, `help`, `clear` and
-`exit`, external commands, concurrent pipelines and file redirection. `echo`
-is an external application. It receives explicit process-construction authority
-from the virtual console manager. Child commands inherit attenuated root and
-cwd Directory capabilities, standard streams and authorized process resources;
-path traversal remains bounded by the delegated root. This is not confinement
-to the child's initial cwd. See [shell syntax and limits](../docs/shell.md).
-
 ## Build
 
 From the repository root, run:
@@ -148,15 +122,16 @@ make test-native ARCH=riscv64   # std, processes, threads, and shell acceptance
 
 The generated SDK is placed under `target/sdk/aarch64`, and dynamic PIE
 application images are written to `target/app/aarch64` by default. Applications
-may set `HYPER_LINK_MODE=static` to select the SDK's equivalent `libhyper.a`
-link path; the integration image includes and executes one static Rust command
-as a contract test.
+that have no Rust DSO dependencies may set `HYPER_LINK_MODE=static` to select
+the SDK's equivalent `libhyper.a` link path. The system tools and VM services
+that consume `lib/` use dynamic linking; the integration image still executes
+`echo-static` as the SDK static-link contract test.
 
 `ARCH=riscv64` selects separate SDK and app output directories and runs the same
 service graph, including the userspace VM fleet. The optional
-`init/config/services-console-only.json` profile contains console workers and the
+`app/init/config/services-console-only.json` profile contains console workers and the
 virtual console manager without a VM fleet. The manager starts its shell.
-Acceptance-only manifests live under `init/tests/config/`.
+Acceptance-only manifests live under `app/init/tests/config/`.
 The same init and shell binaries support service graphs with or without a VM
 manager; `vmm --help` does not require a running manager.
 
@@ -165,7 +140,7 @@ manager; `vmm --help` does not require a running manager.
 ```text
 app/
   Cargo.toml          Workspace, dependency versions, and shared lints
-  cat/ chmod/ cp/ echo/ free/ grep/ handle/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
+  cat/ chmod/ cp/ echo/ free/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
     config/           Service manifests for VM-enabled and console-only startup
@@ -174,8 +149,11 @@ app/
   session/
   shell/
   io-runtime/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
-  vm-support/         Shared guest-image, device and protocol mechanisms
-  vm-policy/          Resource policy shared by init and the VM manager
+lib/                  Shared application libraries, in the app Cargo workspace
+  tool-args/          Argument parsing and process selection for system tools
+  vm-policy/          VM fleet configuration, resource policy and image validation
+  vm-support/         Guest loading, virtual devices and I/O backend protocols
+  rust-std/           Common Rust standard-library DSO
 ```
 
 Each executable is its own Cargo package with `src/main.rs`. Its clap types
@@ -190,7 +168,215 @@ uses the workspace's SDK source patches and does not require SDK assembly. `make
 all workspace members. Target executable names and installed paths are unchanged.
 
 Reusable OS interaction belongs to `sdk/rust/hyper-os`; application-local
-service and command policy remains under `app`.
+service and command policy remains under `app`. Shared application implementations
+live in [`lib/`](../lib/README.md), and their Native DSOs are installed in
+`/lib64/<arch>-hyper-hyper/`, accessible through `/lib -> lib64`.
+Applications and Rust DSOs must be built and deployed together with the same
+SDK, compiler, profile and features. Host tests use the rlib variants.
+
+## System services
+
+These executables consume startup capabilities and service channels supplied by
+their supervisor. Their installed paths identify service roles; they are not
+standalone shell commands. The selected deployment profile determines which
+services are present. See [init configuration](init/config/README.md) for the
+manifest and board configuration inputs.
+
+| Installed executable | Source | Responsibility |
+| --- | --- | --- |
+| `/init` | [init](init/) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
+| `/svc/console-input` | [console-input](console-input/) | Read the physical console, normalize input newlines and forward bytes to the session through a channel. Holds only the input direction of the physical console. |
+| `/svc/console-output` | [console-output](console-output/) | Drain the shared output channel to the physical console. Holds only the output direction and applies backpressure through the bounded channel. |
+| `/svc/session` | [session](session/) | Own the virtual console, relay foreground input/output, launch the shell and restart it after exit or failure. The console transport survives each shell instance. |
+| `/svc/io-runtime` | [io-runtime](io-runtime/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, mount the Native configuration volume at `/data` and report storage readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
+| `/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
+| `/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
+
+The resident Linux I/O VM runs physical device drivers. `io-runtime` is the
+Native service that manages that VM; `vm-runtime` manages an individual business
+guest. [vm-smoke](vm-smoke/README.md) is a separate privileged acceptance fixture,
+not an interactive command or production service.
+
+## HypeR commands
+
+The commands below expose Native capabilities, objects and VM services. Their
+names may resemble Unix tools, but the objects and accounting they report are
+HypeR-specific. Use `COMMAND --help` for the complete option list.
+
+### `vmm`: VM lifecycle and console access
+
+[vmm](vmm/) is the shell client for the VM manager. It lists definitions and
+observed VMs, reports state and memory backing, starts/stops/restarts managed
+guests, changes vCPU affinity and attaches to a guest's serial console.
+
+```text
+vmm list
+vmm status alpine
+vmm start alpine --wait
+vmm console alpine
+vmm affinity alpine 0 1,3
+vmm stop alpine --wait
+vmm restart alpine --wait --timeout 60
+vmm create test --config /data/new-vms.json
+vmm delete test
+```
+
+No subcommand means `list`; VM operations require a name. `start`, `stop` and
+`restart` normally report admission; `--wait` polls for `running` or `stopped`
+and returns failure if the VM fails or the deadline expires. `--timeout` sets
+the total wait in seconds (default 30). Timeout does not cancel an admitted
+operation; inspect `vmm status` before retrying. `running` means vCPU execution
+has started, not that guest userspace or networking is ready. Ctrl-] opens the
+console detach menu. Only one client may attach to a VM's console at a time.
+The affinity example allows vCPU 0 to run on host CPUs 1 or 3; CPU numbers are
+zero-based, and the allowed set does not enable automatic load balancing.
+
+`create` reads a definition from a configuration file; `delete` removes a stopped
+definition. Both change only the running manager's inventory, without editing
+deployment configuration or deleting guest images. The resident I/O VM is
+observable through `list` and `status`; its read-only authority does not permit
+lifecycle or console operations through `vmm`, regardless of its configured name.
+See [named VMs](../docs/applications.md#named-virtual-machines) and
+[console and storage visibility](../docs/applications.md#console-and-storage-visibility).
+
+### `handle`: kernel objects and capability inspection
+
+[handle](handle/) answers which objects exist, which process holds a handle to
+an object, and what that handle permits. With no arguments it lists visible
+kernel objects. A process selector shows its handle table; `--all` scans handle
+tables across visible processes. Selectors accept an exact process name or KOID.
+
+```text
+handle
+handle shell
+handle io-runtime --kind physical-device
+handle --all --right write
+handle shell --summary
+handle --list-kinds
+handle --list-rights
+```
+
+Use `handle --object KOID` to inspect one object, `handle PROCESS --handle HANDLE`
+for one process-local handle, and `handle --all --object KOID` to find its visible
+handle holders. Replace `KOID`, `PROCESS` and `HANDLE` with values from the lists.
+IDs are printed in hexadecimal; input accepts decimal or `0x` hexadecimal.
+A KOID identifies the underlying kernel object, while a handle number is local
+to a process. Neither a printed ID nor inspector authority grants control of
+the inspected object.
+
+Single-object and single-handle queries include available type-specific details:
+thread scheduler TID and lifecycle, VMAR ranges and mapping permissions, channel
+peer and queue state, or physical device identity, IRQs and resource ranges.
+For channels, the tool finds visible peer holders by scanning process handle
+tables. `-v` adds purposes, raw rights/flags and reference counts by owner class;
+`--no-headers` emits table rows suitable for pipelines. Scans may race with
+object creation, exit or handle transfer and are not atomic system snapshots.
+`--summary` groups filtered entries by kind: registry scans count objects;
+handle scans report both handle counts and distinct object counts, so duplicated
+handles do not look like additional objects. `--all --summary` aggregates across
+visible processes without implying an atomic snapshot.
+See the [inspection reference](../docs/applications.md#object-and-capability-inspection).
+
+### `ldd`: shared-library dependency inspection
+
+[ldd](ldd/) reads an executable or shared object's ELF metadata and reports its
+interpreter and complete `DT_NEEDED` dependency graph. It does not execute the
+input, load it into executable memory, or call constructors. The default flat
+listing includes each dependency name once; paths resolve symbolic links, so
+the normal `/lib` alias is displayed as `/lib64/<arch>-hyper-hyper/`.
+
+```text
+ldd /bin/vmm
+ldd --tree /svc/vm-runtime
+ldd --direct /bin/ps
+ldd -v /bin/vmm /bin/handle
+ldd --library-dir /data/candidate-libraries /bin/vmm
+```
+
+`--tree` shows which object requires each library, marking cycles and already
+shown subtrees. `--direct` checks only the input's immediate dependencies and
+interpreter. `-v` includes architecture, ELF OS ABI/version and SONAME. Static
+executables are identified explicitly. Missing libraries print `not found`;
+unreadable, malformed or incompatible files have specific diagnostics. Multiple
+operands are processed independently, with a failing exit status if any inspected
+dependency cannot be resolved or validated.
+
+The lookup directory defaults to `/lib/<arch>-hyper-hyper/` for the input ELF
+architecture. `--library-dir` inspects an alternate set of libraries; it does not
+change the target program's runtime policy or its absolute interpreter path.
+No environment search path, RPATH or RUNPATH is applied. The command needs only
+ordinary filesystem read authority, not inspector privileges. This describes
+the standard system deployment; a process supplied a different library Directory
+capability can see different files. Inspection is not atomic across file changes.
+
+Parsing bounds metadata reads and dependency traversal to the Native loader's
+object/name limits. Debug sections and entire library contents are not read.
+The tool does not verify symbols, relocations, future `dlopen` calls or process
+capability grants; a successful listing is not proof that the image can run.
+No runtime load addresses are invented for files that have not been executed.
+
+### `ps`: process and thread inventory
+
+[ps](ps/) lists visible Native processes with their KOIDs, immutable service
+names, lifecycle states and active/pending thread counts. `ps -T` also groups
+threads beneath their process and includes unowned kernel threads; per-CPU idle
+threads are labelled `idle/CPU`. `ps --name vm-runtime` filters by a name
+substring. `ps -p 0x100000001,0x100000002` selects multiple processes; IDs accept
+decimal or hexadecimal and print as full-width hexadecimal, matching `handle`.
+Name and ID filters intersect. `--no-headers` emits rows for pipelines. The IDs are
+kernel-object identities, not Unix PIDs. Use `handle` for a thread's scheduler
+TID and capability details, or `top` for CPU activity over time.
+
+### `free`: physical memory accounting
+
+[free](free/) reports HypeR's total, used, free and reserved physical memory,
+reclaimable cache and buffer usage, and ownership by kernel, heap, page tables,
+Native users and guests. `free -b` prints bytes instead of human-readable sizes;
+`-k`, `-m` and `-g` select whole KiB, MiB and GiB. `free -m -c 5 -s 0.5` collects
+five snapshots half a second apart, starting immediately. Sampling is finite
+and defaults to one snapshot; `-s` alone does not request continuous monitoring.
+This is host physical accounting, not the guest Linux view of free memory.
+
+`cache` includes reclaimable VFS pages and allocator CPU caches and is already
+part of `used`; `buffers` also overlaps those totals. Do not add these columns
+as separate pools. An unavailable cache sample is shown as `—`, not zero.
+See [memory cache reporting](../docs/applications.md#memory-cache-reporting) for
+the accounting definitions.
+
+### `top`: live CPU and process activity
+
+[top](top/) samples CPU runtime counters, physical memory and per-process thread
+runtime. Its CPU summary distinguishes Native user threads, kernel threads,
+guest vCPUs and idle time. Use it to identify where CPU time is going while a
+guest or Native command runs.
+
+`top -d 0.5` refreshes every half second; `q` or Ctrl-C exits interactive mode.
+`top -b -n 3` prints three snapshots without terminal control sequences or
+keyboard input, suitable for capture in a file or pipeline. Process rows default
+to descending CPU usage; `--sort name` or `--sort koid` changes the order.
+`-p KOID[,KOID...]` and `--name TEXT` filter rows, and `--limit 10` bounds the
+number displayed. CPU percentages use the total runtime across all host CPUs;
+the summary remains system-wide even when process rows are filtered.
+
+### `sh`: the foreground Native shell
+
+[shell](shell/) is installed as `/bin/sh`. It provides bounded line editing,
+quoting, the `cd`, `pwd`, `help`, `clear` and `exit` builtins, external command
+launch, concurrent pipelines and file redirection. `echo` is an external
+application. Up/Down recalls up to 32 commands and restores the unfinished
+input when moving past the newest entry. Ctrl-U clears the line; Ctrl-L redraws
+the screen. History is local to the shell instance; commands beginning with
+whitespace and consecutive duplicates are omitted. Exiting the shell causes the session service to start a new shell.
+See [shell syntax and limits](../docs/shell.md) for supported syntax.
+
+The session delegates process-construction authority to the shell. Commands
+inherit attenuated root and cwd Directory capabilities, standard streams and
+authorized process resources; path traversal is bounded by the delegated root,
+not the initial cwd. Inspector delegation depends on the resolved executable
+path: `/bin/ps` receives task inspection, `/bin/free` memory inspection, and
+`/bin/top` task, memory and CPU inspection. `/bin/handle` receives object
+inspection including privileged details, plus task inspection for process
+lookup. Copying or renaming a tool to another path does not acquire those grants.
 
 ## File tools
 
@@ -198,43 +384,36 @@ The Native initramfs includes these independent std/clap applications in `/bin`:
 
 | Command | Supported operations |
 | --- | --- |
-| `cp [-R] SOURCE... DEST` | Copy files or recursively copy trees; multiple sources require a directory. |
-| `mv SOURCE... DEST` | Rename files, links, or directories; multiple sources require a directory. |
-| `ln [-s] [-T] TARGET LINK` | Create hard or symbolic links; `-T` treats LINK as an exact name. |
-| `rm [-rf] PATH...` | Remove files or trees; `-f` ignores missing paths. |
-| `chmod [-R] MODE PATH...` | Octal modes or comma-separated symbolic clauses, such as `u+rw,go-rwx` and `a+X`. |
-| `mkdir [-p] [-m OCTAL] PATH...` | Create directories and optional parents. Explicit modes apply to newly created final directories. |
-| `rmdir PATH...` | Remove empty directories. |
-| `touch [-acm] [-r REFERENCE] PATH...` | Create empty files or update file/directory timestamps without truncation. |
+| `ls [-ad1rtS] [--bytes] PATH...` | List entries or directory operands (`-d`), sort by name/size/modification time, and show permissions and sizes. |
+| `cat [-nbs] FILE...` | Stream files or stdin; number all/nonblank lines and squeeze repeated blank lines. State continues across inputs. |
+| `grep [-ix] [-m NUM] PATTERN FILE...` | Filter text; `-m NUM` limits selected lines per input, `-x` requires a whole-line match, and `--line-buffered` flushes selected lines. See [text filtering](../docs/shell.md#grep). |
+| `echo [-n] [-e\|-E] TEXT...` | Print arguments, optionally omit the newline or interpret backslash escapes. `--` ends option parsing. |
+| `cp [-RnvT] SOURCE... DEST` | Copy files or trees; `-n` skips existing entries using exclusive file creation, `-T` selects an exact destination, and `-v` reports copied files/links. |
+| `mv [-vT] SOURCE... DEST` | Rename files, links, or directories; `-T` selects an exact destination and `-v` reports moves. Multiple sources require a directory. |
+| `ln [-snvT] TARGET LINK` | Create hard or symbolic links; `-n` does not enter a symlinked destination directory, `-T` treats LINK as an exact name, and `-v` reports the link. |
+| `rm [-rdfv] PATH...` | Remove files or trees; `-d` removes only empty directories, `-f` ignores missing paths, and `-v` reports removed operands. |
+| `chmod [-Rv] MODE PATH...` | Octal modes or symbolic clauses such as `u+rw,go-rwx`; `-v` shows each processed path and its old/new mode. |
+| `mkdir [-pv] [-m OCTAL] PATH...` | Create directories and optional parents; `-v` reports newly created operand directories. Explicit modes apply to new final directories. |
+| `rmdir [-pv] PATH...` | Remove empty directories; `-p` then removes empty ancestors, stopping at the first error, and rejects `..` components. `-v` reports each removal. |
+| `touch [-acm] [-r REFERENCE] [-d @SECONDS] PATH...` | Create files or update timestamps without truncation. `-d` accepts nonnegative Unix seconds with up to nine fractional digits; it conflicts with `-r`. |
 
-All tools accept `--help` and `--` before operands beginning with `-`, report
-path-specific errors, and return failure if any requested operation fails.
+Tools accept `--help` (except `echo`, where it is text) and `--` before operands
+beginning with `-`. File operations report path-specific errors and return
+failure if any requested operation fails. `grep` returns 1 for no matches and
+2 for errors; its `-q` mode can return success after finding a match despite an
+earlier input error.
 `chmod` treats an omitted user/group/other selector as `a`; Native mode bits do
 not imply a Unix credential or umask implementation. Recursive chmod skips
 nested symbolic links; an explicitly named symbolic link changes its target.
 
 Recursive `cp` preserves symbolic links, including dangling links. It refuses
 existing destination symlinks, same-file copies (including hard links), and
-copying a directory into itself. Regular destination files are overwritten.
+copying a directory into itself. Regular destination files are overwritten unless `-n` is selected.
 `ln` refuses existing link names. `mv` uses filesystem rename and reports
 cross-filesystem moves as unsupported by that operation; it does not silently
 fall back to a non-atomic copy/delete sequence. Recursive `rm` does not follow
 symbolic links and refuses the root and final `.`/`..` operands. These are basic
 file tools, not full GNU coreutils option compatibility.
-
-## Diagnostic commands
-
-`ls` uses std filesystem APIs for supplied absolute or relative paths within
-its delegated root and cwd capabilities. `ps` lists Processes by default,
-including their immutable service label,
-lifecycle state, and active/pending Thread counts. `ps --threads` (or `ps -T`)
-also places every visible Thread directly below its owning Process and lists
-kernel Threads with `kernel` as the owner; thread rows include their process
-name and per-CPU idle threads use `idle/CPU`. `handle <process-koid>` decodes the
-selected Process's handle kinds, rights, and object purposes;
-`handle --objects` reports the visible kernel-object graph. Both commands require
-explicit inspector capabilities, and every displayed KOID remains diagnostic
-metadata rather than authority.
 
 ## Standard library and Native services
 

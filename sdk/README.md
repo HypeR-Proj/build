@@ -99,7 +99,8 @@ objects must export their public entry points explicitly because the compiler
 driver uses hidden visibility by default.
 
 Dynamic linking is the default. The generated executable names
-`/lib/ld-hyper-aarch64.so` or `/lib/ld-hyper-riscv64.so` in `PT_INTERP`
+`/lib/aarch64-hyper-hyper/ld-hyper-aarch64.so` or
+`/lib/riscv64-hyper-hyper/ld-hyper-riscv64.so` in `PT_INTERP`
 and records `libhyper.so` as its
 runtime dependency. The interpreter performs eager `RELA`/`RELR` relocation,
 enforces W^X and RELRO, and opens exact dependency names through the process's
@@ -109,6 +110,12 @@ and logical close. `HYPER_LINK_MODE=static` selects the matching
 `libhyper.a` runtime and produces a freestanding static PIE with no interpreter
 or runtime dependency. The dynamic and static libraries are built from the
 same runtime sources and are both supported SDK application link modes.
+
+Product images store the interpreter and shared libraries under
+`/lib64/<arch>-hyper-hyper/` and publish `/lib -> lib64`. The startup library
+Directory is that architecture subdirectory. The SDK itself is assembled for
+one architecture and retains its build artifacts in `lib/`; image composition
+places them in the runtime filesystem layout.
 
 `make sdk-check` validates generated ABI output, lints the Rust SDK crates,
 builds the SDK transactionally, and compiles and links public-interface-only C

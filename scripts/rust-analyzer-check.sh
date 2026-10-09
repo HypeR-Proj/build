@@ -7,9 +7,18 @@
 set -eu
 script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
-workspace=$(pwd -P)
-config=$workspace/.cargo/config.toml
 PATH="$PATH:$HOME/.cargo/bin"
+
+# Resolve ownership, not directory ancestry: lib/* are members of app/ but
+# do not inherit app/.cargo/config.toml when Cargo starts in their directory.
+# A direct invocation from the product root checks its Native workspace.
+if [ "$(pwd -P)" = "$root" ]; then
+    cd "$root/app"
+fi
+manifest=$(cargo locate-project --workspace --message-format plain)
+workspace=$(CDPATH='' cd -- "$(dirname "$manifest")" && pwd -P)
+cd "$workspace"
+config=$workspace/.cargo/config.toml
 
 case "$workspace" in
     "$root/app" | "$root/sdk/toolchain/tests/std-smoke" | "$root/sdk/toolchain/tests/rust-smoke")
@@ -24,7 +33,7 @@ case "$workspace" in
         fi
         # Keep navigation on repository SDK sources, not the installed copies.
         # Native executables have no host test harness.
-        exec "$sdk/bin/hyper-cargo" check --workspace --message-format=json \
+        exec "$sdk/bin/hyper-cargo" check --workspace --locked --message-format=json \
             --config "$config" --target-dir "$root/target/rust-analyzer/native"
         ;;
     *)
@@ -32,7 +41,7 @@ case "$workspace" in
         # workspaces they create unused-patch warnings and alter resolution.
         # Preserve the board configuration needed by the kernel build script.
         export HYPER_CONFIG="${HYPER_CONFIG:-$root/kernel/configs/qemu_aarch64_defconfig}"
-        exec cargo check --workspace --all-targets --message-format=json \
+        exec cargo check --workspace --all-targets --locked --message-format=json \
             --target-dir "$root/target/rust-analyzer/host"
         ;;
 esac

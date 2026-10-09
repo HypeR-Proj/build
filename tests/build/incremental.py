@@ -7,7 +7,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,6 +18,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
 STATE = ROOT / "sdk/toolchain/scripts/sysroot-state.py"
 PACK = ROOT / "scripts/pack-native-initramfs.py"
 spec = importlib.util.spec_from_file_location("state", STATE)
@@ -110,7 +114,12 @@ class IncrementalTests(unittest.TestCase):
         strip.write_text('#!/bin/sh\nexit 0\n')
         strip.chmod(0o755)
         source = self.root / "app"
-        source.write_bytes(b"\x7fELFpayload")
+        # Minimal static ELF metadata; the stand-in strip tool leaves it intact.
+        header = bytearray(64)
+        header[:6] = b'\x7fELF\x02\x01'
+        struct.pack_into('<H', header, 18, 183)
+        struct.pack_into('<H', header, 54, 56)
+        source.write_bytes(header + b"payload")
         original = source.read_bytes()
         output = self.root / "archive"
         command = [sys.executable, str(PACK), "--packer", str(packer), "--strip", str(strip), "--output", str(output), "0755", "bin/app", str(source)]
@@ -125,7 +134,7 @@ class IncrementalTests(unittest.TestCase):
         self.assertIn("up to date", run())
         self.assertEqual(output.stat().st_mtime_ns, timestamp)
         old_source_time = source.stat().st_mtime_ns
-        source.write_bytes(b"\x7fELFchanged")
+        source.write_bytes(header + b"changed")
         os.utime(source, ns=(old_source_time, old_source_time))
         self.assertNotIn("up to date", run())
         self.assertIn(b"changed", output.read_bytes())
@@ -137,7 +146,7 @@ class IncrementalTests(unittest.TestCase):
         strip.write_text('#!/bin/sh\nexit 1\n')
         run(success=False)
         self.assertEqual(output.read_bytes(), previous)
-        self.assertEqual(source.read_bytes(), b"\x7fELFchanged")
+        self.assertEqual(source.read_bytes(), header + b"changed")
         strip.write_text('#!/bin/sh\nexit 0\n')
         command[-3] = "0644"
         self.assertNotIn("up to date", run())
@@ -214,11 +223,56 @@ class IncrementalTests(unittest.TestCase):
                         ['0644', 'vm//io.itb', '/host/io.itb'],
                         ['0644', 'vm/./io.itb', '/host/io.itb'],
                         ['0644', 'vm/../io.itb', '/host/io.itb'],
+                        ['symlink', 'lib', '/host/lib'],
+                        ['symlink', 'lib', '../outside'],
+                        ['symlink', 'lib', 'lib64//native'],
+                        ['symlink', 'lib', 'lib64', '0755', 'lib/tool', '/host/tool'],
                         ['0644', 'vm/io.itb', 'bad\0source'],
                         ['0644', 'vm/io.itb', '/one', '0755', 'vm/io.itb', '/two'],
                         ['0644', 'vm/io.itb', '/one', '0644', 'vm', '/two']):
             with self.subTest(entries=entries), self.assertRaises(ValueError):
                 native_pack.validate_entries(entries)
+
+    def test_real_archive_preserves_symlink_type_target_and_cache_identity(self):
+        packer = self.root / 'newc-pack'
+        subprocess.run([shutil.which('clang') or 'cc', '-std=c17', '-Wall', '-Wextra',
+                        '-Werror', str(ROOT / 'tools/newc-pack.c'), '-o', str(packer)], check=True)
+        source = self.root / 'note'
+        source.write_bytes(b'archive payload')
+        output = self.root / 'archive.cpio'
+        command = [sys.executable, str(PACK), '--packer', str(packer), '--strip', '/usr/bin/true',
+                   '--output', str(output), 'symlink', 'lib', 'lib64',
+                   '0644', 'lib64/aarch64-hyper-hyper/note', str(source)]
+        subprocess.run(command, check=True, capture_output=True)
+        data = output.read_bytes()
+        entries = {}
+        offset = 0
+        while True:
+            header = data[offset:offset + 110]
+            self.assertEqual(header[:6], b'070701')
+            mode = int(header[14:22], 16)
+            size, namesize = int(header[54:62], 16), int(header[94:102], 16)
+            name = data[offset + 110:offset + 110 + namesize - 1].decode()
+            start = (offset + 110 + namesize + 3) & ~3
+            if name == 'TRAILER!!!':
+                break
+            entries[name] = (mode, data[start:start + size])
+            offset = (start + size + 3) & ~3
+        self.assertEqual(entries['lib'], (stat.S_IFLNK | 0o777, b'lib64'))
+        self.assertEqual(entries['lib64/aarch64-hyper-hyper/note'],
+                         (stat.S_IFREG | 0o644, b'archive payload'))
+        timestamp = output.stat().st_mtime_ns
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        self.assertIn('up to date', result.stdout)
+        self.assertEqual(output.stat().st_mtime_ns, timestamp)
+        # Link data is hashed without opening a same-named build-host path.
+        command[command.index('lib64')] = 'alternate'
+        subprocess.run(command, check=True, capture_output=True)
+        self.assertNotEqual(output.read_bytes(), data)
+        previous = output.read_bytes()
+        command[command.index('alternate')] = '../escape'
+        self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+        self.assertEqual(output.read_bytes(), previous)
 
 
 if __name__ == "__main__":

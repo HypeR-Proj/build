@@ -17,6 +17,7 @@ enum {
 	COPY_BUFFER_SIZE = 16 * 1024,
 	DIRECTORY_MODE = 0040000,
 	REGULAR_MODE = 0100000,
+	SYMLINK_MODE = 0120000,
 };
 
 static uint64_t output_offset;
@@ -168,10 +169,25 @@ static int parse_permissions(const char *text, uint32_t *permissions)
 	return EXIT_SUCCESS;
 }
 
+/* A link target is archive data, never a path to follow on the build host. */
+static int write_symlink(uint32_t inode, const char *path, const char *target)
+{
+	if (!path_is_canonical(path) || !path_is_canonical(target) || strlen(target) > UINT32_MAX) {
+		return fail_message("symlink paths must be canonical and relative");
+	}
+	if (write_header(inode, SYMLINK_MODE | 0777, 1, (uint32_t)strlen(target), path) !=
+		    EXIT_SUCCESS ||
+	    write_bytes(target, strlen(target)) != EXIT_SUCCESS) {
+		return EXIT_FAILURE;
+	}
+	return align_output();
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 4 || (argc - 1) % 3 != 0) {
-		fputs("usage: newc-pack MODE ARCHIVE_PATH SOURCE [MODE ARCHIVE_PATH SOURCE ...]\n",
+		fputs("usage: newc-pack MODE ARCHIVE_PATH SOURCE [MODE ARCHIVE_PATH SOURCE ...]\n"
+		      "       use 'symlink ARCHIVE_PATH RELATIVE_TARGET' for symbolic links\n",
 		      stderr);
 		return EXIT_FAILURE;
 	}
@@ -180,6 +196,12 @@ int main(int argc, char **argv)
 	}
 	uint32_t inode = 2;
 	for (int index = 1; index < argc; index += 3) {
+		if (strcmp(argv[index], "symlink") == 0) {
+			if (write_symlink(inode++, argv[index + 1], argv[index + 2]) != EXIT_SUCCESS) {
+				return EXIT_FAILURE;
+			}
+			continue;
+		}
 		uint32_t permissions;
 		if (parse_permissions(argv[index], &permissions) != EXIT_SUCCESS) {
 			return fail(argv[index]);

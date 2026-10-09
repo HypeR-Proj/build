@@ -271,6 +271,13 @@ class DocumentationLinks(unittest.TestCase):
         external_links = References((documentation / 'local_sdk/fn.value.html').read_text()).links
         self.assertIn('https://example.org/vendor/hyper_vendor/struct.Value.html', external_links)
 
+    def test_shared_library_targets_have_local_reference_roots(self):
+        manifest = self.write('shared/Cargo.toml', '[package]\nname = "doc-shared"\n'
+                              'version = "0.0.0"\nedition = "2024"\n'
+                              '[lib]\ncrate-type = ["dylib"]\n')
+        self.write('shared/src/lib.rs', '/// Shared entry.\npub fn entry() {}\n')
+        self.assertEqual(documented_crates(workspace_packages(manifest)), ['doc_shared'])
+
     def test_portable_atomics_link_to_upstream_standard_library_docs(self):
         atomic = Path(__file__).resolve().parents[2] / 'kernel/src/sync/atomic.rs'
         manifest = self.write('fixture/Cargo.toml', '[package]\nname = "atomic-doc-probe"\n'

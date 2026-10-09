@@ -7,6 +7,7 @@ ARCH ?= aarch64
 CARGO ?= cargo
 NATIVE_ARCH := $(ARCH)
 NATIVE_RUST_TARGET := $(NATIVE_ARCH)-unknown-hyper
+NATIVE_LIBRARY_DIRECTORY := lib64/$(NATIVE_ARCH)-hyper-hyper
 NATIVE_FREESTANDING_TARGET_aarch64 := aarch64-unknown-none
 NATIVE_FREESTANDING_TARGET_riscv64 := riscv64gc-unknown-none-elf
 NATIVE_FREESTANDING_TARGET := $(NATIVE_FREESTANDING_TARGET_$(NATIVE_ARCH))
@@ -35,6 +36,8 @@ SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/sdk-lib-tests
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
 APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
 APP_DEPLOYMENT := $(CURDIR)/app/deployment.json
+APP_FEATURES ?=
+APP_EXTRA_BINS ?=
 NATIVE_IMAGE_PROFILE ?= development
 ifeq ($(filter $(NATIVE_IMAGE_PROFILE),development system),)
 $(error NATIVE_IMAGE_PROFILE must be development or system)

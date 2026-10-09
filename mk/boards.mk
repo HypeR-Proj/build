@@ -98,7 +98,7 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 		NATIVE_SERVICE_MANIFEST="$(BOARD_OUTPUT)/board/services.json" \
 		NATIVE_VM_CONFIG="$(BOARD_OUTPUT)/board/vms.json" \
 		NATIVE_ENTRY_MANIFEST="$(BOARD_OUTPUT)/io.entries.json" \
-		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
+		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_OUTPUT)/io-runtime" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
 
 # QEMU loads kernel/bootstrap directly from the host. Refresh these on every
 # build, but populate persistent volumes only when creating the first disk.
@@ -134,14 +134,12 @@ board-run:
 .PHONY: test-board-storage
 test-board-storage: app image
 	@test "$(ARCH)" = aarch64 || { echo "board storage acceptance requires aarch64" >&2; exit 2; }
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_RUST_STD=1 \
-		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
-		--release -p hyper-io-runtime --features storage-probe --bin hyper-storage-probe
+	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
+		APP_FEATURES=hyper-io-runtime/storage-probe APP_EXTRA_BINS=hyper-storage-probe
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
+		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
 		BOARD_CONFIG="$(BOARD_CONFIG)" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-storage-probe"' && \
@@ -189,12 +187,9 @@ test-board-network: app image
 .PHONY: test-board-broker
 test-board-broker: app image fit-pack
 	@test "$(ARCH)" = aarch64 || { echo "broker acceptance requires aarch64" >&2; exit 2; }
-	CARGO_TARGET_DIR="$(CURDIR)/target/app-broker-tests/$(NATIVE_ARCH)" \
-		HYPER_RUST_STD=1 HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml --release --locked \
-		-p hyper-io-runtime -p hyper-vm-manager -p hyper-vm-runtime \
-		--features hyper-io-runtime/broker-test,hyper-vm-manager/broker-test,hyper-vm-runtime/broker-test
+	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/broker-apps" \
+		APP_CARGO_OUTPUT="$(CURDIR)/target/app-broker-tests/$(NATIVE_ARCH)" \
+		APP_FEATURES=hyper-io-runtime/broker-test,hyper-vm-manager/broker-test,hyper-vm-runtime/broker-test
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@package="$(IO_VM_PACKAGE)"; \
 	if test -z "$$package"; then \
@@ -206,9 +201,7 @@ test-board-broker: app image fit-pack
 		--fit-pack "$(FIT_PACK)" --output "$$fixture" && \
 	python3 -B tests/qemu/verify-board-broker.py prepare --board "$$fixture/config.json" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu IO_VM_PACKAGE="$$package" \
-		APP_CARGO_OUTPUT="$(CURDIR)/target/app-broker-tests/$(NATIVE_ARCH)" \
-		NATIVE_VM_MANAGER="$(CURDIR)/target/app-broker-tests/$(NATIVE_ARCH)/$(NATIVE_RUST_TARGET)/release/hyper-vm-manager" \
-		NATIVE_VM_RUNTIME="$(CURDIR)/target/app-broker-tests/$(NATIVE_ARCH)/$(NATIVE_RUST_TARGET)/release/hyper-vm-runtime" \
+		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/broker-apps" \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" BOARD_ARTIFACTS="--artifact business=$$fixture/business.itb" && \
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-broker.py run \
@@ -220,17 +213,16 @@ test-board-broker: app image fit-pack
 .PHONY: test-userspace-device
 test-userspace-device: app image
 	@test "$(ARCH)" = aarch64 || { echo "userspace physical devices require aarch64" >&2; exit 2; }
-	CARGO_TARGET_DIR="$(CURDIR)/target/app-device-tests/$(NATIVE_ARCH)" \
-		HYPER_RUST_STD=1 HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml --release --locked \
-		-p hyper-io-runtime --features storage-probe,userspace-device-test
+	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/device-apps" \
+		APP_CARGO_OUTPUT="$(CURDIR)/target/app-device-tests/$(NATIVE_ARCH)" \
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-io-runtime/userspace-device-test \
+		APP_EXTRA_BINS=hyper-storage-probe
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/userspace-device.XXXXXX") && \
 	python3 -B tests/qemu/prepare-userspace-device.py --qemu "$(QEMU)" \
 		--board "$(CURDIR)/boards/qemu.json" --output "$$fixture" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
-		APP_CARGO_OUTPUT="$(CURDIR)/target/app-device-tests/$(NATIVE_ARCH)" \
+		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/device-apps" \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(CURDIR)/target/app-device-tests/$(NATIVE_ARCH)/$(NATIVE_RUST_TARGET)/release/hyper-storage-probe"' && \

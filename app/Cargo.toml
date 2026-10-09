@@ -4,6 +4,13 @@
 [workspace]
 resolver = "3"
 members = [
+    "../lib/tool-args",
+    "../lib/tool-args/shared",
+    "../lib/rust-std",
+    "../lib/vm-policy",
+    "../lib/vm-policy/shared",
+    "../lib/vm-support",
+    "../lib/vm-support/shared",
     "init",
     "session",
     "console-input",
@@ -23,15 +30,14 @@ members = [
     "ps",
     "handle",
     "ls",
+    "ldd",
     "free",
     "top",
     "vm-manager",
     "vm-runtime",
-    "vm-support",
     "io-runtime",
     "vm-smoke",
     "vmm",
-    "vm-policy",
 ]
 
 [workspace.package]
@@ -42,12 +48,17 @@ repository = "https://github.com/roolrz/HypeR"
 publish = false
 
 [workspace.dependencies]
+hyper-rust-std = { path = "../lib/rust-std" }
+hyper-tool-args = { path = "../lib/tool-args" }
+hyper-tool-args-shared = { path = "../lib/tool-args/shared" }
 hyper-os = "=0.0.0"
 hyper-rt = { version = "=0.0.0", features = ["std"] }
 hyper-service = "=0.0.0"
 hyper-vm-image = "=0.0.0"
-hyper-vm-policy = { path = "vm-policy" }
-hyper-vm-support = { path = "vm-support" }
+hyper-vm-policy = { path = "../lib/vm-policy" }
+hyper-vm-policy-shared = { path = "../lib/vm-policy/shared" }
+hyper-vm-support = { path = "../lib/vm-support" }
+hyper-vm-support-shared = { path = "../lib/vm-support/shared" }
 clap = { version = "=4.6.6", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

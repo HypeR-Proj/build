@@ -125,7 +125,8 @@ def documented_crates(packages):
     return sorted({target['name'].replace('-', '_') for package in packages
                    for target in package['targets']
                    if target['doc'] and not target.get('required-features')
-                   and any(kind in ('lib', 'bin', 'proc-macro') for kind in target['kind'])})
+                   and any(kind in ('lib', 'dylib', 'cdylib', 'bin', 'proc-macro')
+                           for kind in target['kind'])})
 
 
 def reference_doc_flags(crates, root_url):

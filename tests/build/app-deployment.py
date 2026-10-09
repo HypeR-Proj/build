@@ -26,8 +26,13 @@ class DeploymentTests(unittest.TestCase):
         system = deployment.compose(MANIFEST, 'system', roots)
         development = deployment.compose(MANIFEST, 'development', roots)
         system_names = set(system[1::3])
-        self.assertTrue({'init', 'bin/sh', 'bin/cp', 'bin/vmm', 'svc/vm-manager',
-                         'lib/ld-hyper-riscv64.so', 'lib/libhyper.so'} <= system_names)
+        link = system.index('lib')
+        self.assertEqual(system[link - 1:link + 2], ['symlink', 'lib', 'lib64'])
+        self.assertTrue({'init', 'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
+                         'lib', 'lib64/riscv64-hyper-hyper/ld-hyper-riscv64.so',
+                         'lib64/riscv64-hyper-hyper/libhyper.so',
+                         'lib64/riscv64-hyper-hyper/libhyper_tool_args_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_rust_std.so',
+                         'lib64/riscv64-hyper-hyper/libhyper_vm_policy_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_vm_support_shared.so'} <= system_names)
         self.assertTrue(system_names < set(development[1::3]))
         for fixture in ('bin/echo-static', 'bin/dynamic-test', 'bin/std-test', 'bin/std-test-static'):
             self.assertNotIn(fixture, system_names)
@@ -64,6 +69,9 @@ class DeploymentTests(unittest.TestCase):
             self.assertNotIn('hyper-io-smoke', [entry['binary'] for entry in programs])
             for entry in programs:
                 (build / entry['binary']).write_text(entry['binary'])
+            for entry in deployment.load(MANIFEST):
+                if 'library' in entry:
+                    (build / entry['library']).write_text(entry['library'])
             command = [sys.executable, str(SCRIPT), 'install', '--manifest', str(MANIFEST),
                        '--build', str(build), '--output', str(output)]
             subprocess.run(command, check=True)
@@ -72,6 +80,38 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(before, {path.name: path.stat().st_mtime_ns for path in output.iterdir()})
             self.assertEqual((output / 'sh').read_text(), 'hyper-shell')
             self.assertEqual((output / 'sh').stat().st_mode & 0o777, 0o755)
+            self.assertEqual((output / 'lib/libhyper_tool_args_shared.so').read_text(),
+                             'libhyper_tool_args_shared.so')
+
+    def test_library_artifacts_require_exact_safe_names_and_unique_sources(self):
+        original = json.loads(MANIFEST.read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'manifest.json'
+            for name in ('../libbad.so', 'libbad.so;command', 'bad.so', 'libbad.a'):
+                data = json.loads(json.dumps(original))
+                library = next(entry for entry in data['entries'] if 'library' in entry)
+                library['library'] = name
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    deployment.load(path)
+            library = next(entry for entry in original['entries'] if 'library' in entry)
+            library['source'] = '/ambiguous'
+            path.write_text(json.dumps(original))
+            with self.assertRaises(ValueError):
+                deployment.load(path)
+
+    def test_symlink_manifest_requires_a_relative_target_and_cannot_be_replaced_as_a_file(self):
+        roots = dict(apps='/apps', sdk='/sdk', std='/std', arch='aarch64')
+        with self.assertRaises(ValueError):
+            deployment.compose(MANIFEST, 'system', roots, ['lib=/host/regular-file'])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'manifest.json'
+            for target in ('.', '../lib64', '/lib64', 'lib64//other', 'bad\0path'):
+                data = json.loads(MANIFEST.read_text())
+                next(entry for entry in data['entries'] if 'symlink' in entry)['symlink'] = target
+                path.write_text(json.dumps(data))
+                with self.subTest(target=target), self.assertRaises(ValueError):
+                    deployment.load(path)
 
 
 if __name__ == '__main__':

@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_libraries import validate as validate_libraries
+
 
 def digest(path):
     with Path(path).open("rb") as source:
@@ -35,7 +37,7 @@ def load_entries(path):
         if (not isinstance(record, list) or len(record) != 3
                 or any(not isinstance(field, str) for field in record)):
             raise ValueError('archive entries must be MODE ARCHIVE_PATH SOURCE triples')
-        if not Path(record[2]).is_absolute():
+        if record[0] != 'symlink' and not Path(record[2]).is_absolute():
             raise ValueError('archive entry manifest sources must be absolute paths')
         entries.extend(record)
     return entries, hashlib.sha256(data).hexdigest()
@@ -45,13 +47,16 @@ def validate_entries(entries):
     destinations = set()
     for index in range(0, len(entries), 3):
         mode, name, source = entries[index:index + 3]
-        if not re.fullmatch(r'0[0-7]{3}', mode):
+        if mode != 'symlink' and not re.fullmatch(r'0[0-7]{3}', mode):
             raise ValueError(f'invalid archive mode: {mode}')
         if (not name or name.startswith('/') or '\0' in name
                 or any(part in ('', '.', '..') for part in name.split('/'))):
             raise ValueError(f'invalid archive path: {name}')
         if not source or '\0' in source:
             raise ValueError(f'invalid archive source: {source}')
+        if mode == 'symlink' and (source.startswith('/') or
+                any(part in ('', '.', '..') for part in source.split('/'))):
+            raise ValueError(f'invalid archive symlink target: {source}')
         if name in destinations:
             raise ValueError(f'duplicate archive path: {name}')
         destinations.add(name)
@@ -63,13 +68,15 @@ def validate_entries(entries):
 def inputs(args):
     return {
         "script": digest(__file__),
+        "libraries": digest(Path(__file__).with_name('native_libraries.py')),
         "packer": digest(shutil.which(args.packer) or args.packer),
         "strip": digest(shutil.which(args.strip) or args.strip),
         "deployment": ([digest(args.deployment), digest(Path(__file__).with_name("app-deployment.py"))]
                        if args.deployment else None),
         "entry_manifests": [[str(path), digest(path)] for path in args.entries_from],
         "entries": args.entries,
-        "contents": [digest(path) for path in args.entries[2::3]],
+        "contents": [None if args.entries[index] == 'symlink' else digest(args.entries[index + 2])
+                     for index in range(0, len(args.entries), 3)],
     }
 
 
@@ -84,8 +91,9 @@ def main():
         parser.add_argument("--" + root)
     parser.add_argument("--replace", action="append", default=[])
     parser.add_argument("--entries-from", type=Path, action="append", default=[],
-                        help="JSON list of MODE ARCHIVE_PATH absolute-SOURCE triples")
-    parser.add_argument("entries", nargs="*")
+                        help="JSON list of MODE ARCHIVE_PATH absolute-SOURCE triples, or symlink triples")
+    parser.add_argument("entries", nargs="*",
+                        help="MODE ARCHIVE_PATH SOURCE or symlink ARCHIVE_PATH RELATIVE_TARGET")
     args = parser.parse_args()
     if len(args.entries) % 3:
         parser.error("entries must be MODE ARCHIVE_PATH SOURCE triples")
@@ -109,6 +117,7 @@ def main():
     if not args.entries:
         parser.error("no initramfs entries selected")
     validate_entries(args.entries)
+    validate_libraries(args.entries)
     # Validate the actual selected/generated manifest before cache hits or any
     # output mutation. The host tool shares init's parser and admission policy.
     manifests = [args.entries[index + 2] for index in range(0, len(args.entries), 3)
@@ -140,6 +149,9 @@ def main():
         entries = []
         for index in range(0, len(args.entries), 3):
             mode, name, source = args.entries[index : index + 3]
+            if mode == 'symlink':
+                entries.extend([mode, name, source])
+                continue
             destination = staging / str(index)
             shutil.copyfile(source, destination)
             with destination.open("rb") as payload:

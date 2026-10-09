@@ -170,6 +170,8 @@ dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+ "hyper-tool-args",
+ "hyper-tool-args-shared",
 ]
 
 [[package]]
@@ -187,6 +189,8 @@ dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+ "hyper-tool-args",
+ "hyper-tool-args-shared",
 ]
 
 [[package]]
@@ -197,6 +201,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-policy",
+ "hyper-vm-policy-shared",
 ]
 
 [[package]]
@@ -208,9 +213,18 @@ dependencies = [
  "hyper-service",
  "hyper-vm-image",
  "hyper-vm-policy",
+ "hyper-vm-policy-shared",
  "hyper-vm-support",
+ "hyper-vm-support-shared",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hyper-ldd"
+version = "0.0.0"
+dependencies = [
+ "clap",
 ]
 
 [[package]]
@@ -256,6 +270,8 @@ dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+ "hyper-tool-args",
+ "hyper-tool-args-shared",
 ]
 
 [[package]]
@@ -280,6 +296,10 @@ dependencies = [
  "hyper-os",
  "hyper-sys",
 ]
+
+[[package]]
+name = "hyper-rust-std"
+version = "0.0.0"
 
 [[package]]
 name = "hyper-service"
@@ -316,12 +336,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-tool-args"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "hyper-tool-args-shared"
+version = "0.0.0"
+dependencies = [
+ "hyper-rust-std",
+ "hyper-tool-args",
+]
+
+[[package]]
 name = "hyper-top"
 version = "0.0.0"
 dependencies = [
  "clap",
  "hyper-os",
  "hyper-rt",
+ "hyper-tool-args",
+ "hyper-tool-args-shared",
 ]
 
 [[package]]
@@ -346,6 +383,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-policy",
+ "hyper-vm-policy-shared",
 ]
 
 [[package]]
@@ -360,6 +398,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-vm-policy-shared"
+version = "0.0.0"
+dependencies = [
+ "hyper-rust-std",
+ "hyper-vm-policy",
+]
+
+[[package]]
 name = "hyper-vm-runtime"
 version = "0.0.0"
 dependencies = [
@@ -368,7 +414,9 @@ dependencies = [
  "hyper-service",
  "hyper-vm-image",
  "hyper-vm-policy",
+ "hyper-vm-policy-shared",
  "hyper-vm-support",
+ "hyper-vm-support-shared",
 ]
 
 [[package]]
@@ -390,6 +438,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-vm-support-shared"
+version = "0.0.0"
+dependencies = [
+ "hyper-rust-std",
+ "hyper-vm-policy-shared",
+ "hyper-vm-support",
+]
+
+[[package]]
 name = "hyper-vmm"
 version = "0.0.0"
 dependencies = [
@@ -398,6 +455,7 @@ dependencies = [
  "hyper-rt",
  "hyper-service",
  "hyper-vm-policy",
+ "hyper-vm-policy-shared",
 ]
 
 [[package]]

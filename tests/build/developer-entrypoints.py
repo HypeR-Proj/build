@@ -129,15 +129,19 @@ class EntrypointTests(unittest.TestCase):
     def test_analyzer_patches_only_native_workspaces(self):
         with tempfile.TemporaryDirectory(prefix='hyper editor ') as directory:
             root = Path(directory).resolve()
+            shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
             (root / 'scripts').mkdir()
             script = root / 'scripts/rust-analyzer-check.sh'
             shutil.copyfile(ROOT / 'scripts/rust-analyzer-check.sh', script)
             fake = root / 'bin'
             fake.mkdir()
             recorder = ('#!' + sys.executable + '\nimport os,json,sys\n'
+                        'if sys.argv[1:2] == ["locate-project"]:\n'
+                        f' os.execv({shutil.which("cargo")!r}, '
+                        f'[{shutil.which("cargo")!r}, *sys.argv[1:]])\n'
                         'with open(os.environ["PROBE"],"w") as f: '
                         'json.dump({"argv":sys.argv[1:],"config":os.getenv("HYPER_CONFIG"),'
-                        '"std":os.getenv("HYPER_RUST_STD")},f)\n')
+                        '"std":os.getenv("HYPER_RUST_STD"),"cwd":os.getcwd()},f)\n')
             (fake / 'cargo').write_text(recorder)
             (fake / 'cargo').chmod(0o755)
             native = root / 'target/sdk/aarch64/bin'
@@ -147,18 +151,38 @@ class EntrypointTests(unittest.TestCase):
             output = root / 'probe.json'
             env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH'], PROBE=str(output))
             env.pop('HYPER_CONFIG', None)
-            for workspace in ('kernel', 'tools/fit-pack', 'app',
-                              'sdk/toolchain/tests/std-smoke', 'sdk/toolchain/tests/rust-smoke'):
+            workspaces = ('kernel', 'tools/fit-pack', 'app',
+                          'sdk/toolchain/tests/std-smoke', 'sdk/toolchain/tests/rust-smoke')
+            for workspace in workspaces:
                 cwd = root / workspace
                 cwd.mkdir(parents=True)
+                (cwd / 'Cargo.toml').write_text('[workspace]\n[package]\n'
+                                               'name="probe"\nversion="0.0.0"\n')
+                (cwd / 'src').mkdir()
+                (cwd / 'src/lib.rs').write_text('')
+            (root / 'app/Cargo.toml').write_text(
+                '[workspace]\nmembers=["cmd", "../lib/args", "../lib/args/shared"]\n')
+            for member, owner in [('app/cmd', '..'), ('lib/args', '../../app'),
+                                  ('lib/args/shared', '../../../app')]:
+                cwd = root / member
+                (cwd / 'src').mkdir(parents=True)
+                (cwd / 'src/lib.rs').write_text('')
+                (cwd / 'Cargo.toml').write_text(
+                    f'[package]\nname="{member.replace("/", "-")}"\nversion="0.0.0"\n'
+                    f'workspace="{owner}"\n')
+            for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src'):
+                cwd = root / workspace
                 subprocess.run(['sh', str(script)], cwd=cwd, env=env, check=True)
                 result = json.loads(output.read_text())
+                owner = cwd if workspace in workspaces else root / 'app'
+                self.assertEqual(Path(result['cwd']), owner)
+                self.assertIn('--locked', result['argv'])
                 if workspace in ('kernel', 'tools/fit-pack'):
                     self.assertNotIn('--config', result['argv'])
                     self.assertEqual(result['config'], str(root / 'kernel/configs/qemu_aarch64_defconfig'))
                 else:
                     index = result['argv'].index('--config')
-                    self.assertEqual(result['argv'][index + 1], str(cwd / '.cargo/config.toml'))
+                    self.assertEqual(result['argv'][index + 1], str(owner / '.cargo/config.toml'))
                     self.assertEqual(result['std'], '0' if workspace.endswith('rust-smoke') else '1')
             env['HYPER_CONFIG'] = '/chosen/board.config'
             subprocess.run(['sh', str(script)], cwd=root / 'kernel', env=env, check=True)
