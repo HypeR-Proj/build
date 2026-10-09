@@ -12,7 +12,8 @@ code. ABI definitions and SDK construction remain in `sdk/abi` and
 | Source | Responsibility | Build owner |
 | --- | --- | --- |
 | [`hyper/`](hyper/README.md) | Freestanding C runtime, startup, syscall veneers and std adapters; produces `libhyper` | SDK assembly through CMake |
-| [`loader/`](loader/README.md) | Native ELF interpreter, relocation and capability-relative runtime loading | SDK assembly through CMake |
+| [`userspace-loader/`](userspace-loader/README.md) | Native executable mapping and initial stack construction | SDK assembly through CMake |
+| [`dynamic-loader/`](dynamic-loader/README.md) | Native ELF interpreter, relocation and capability-relative runtime loading | SDK assembly through CMake |
 | [`rust/`](rust/README.md) | Raw and safe Native Rust bindings, Rust entry and service interfaces | Independent Cargo workspace, installed into the SDK |
 
 The application libraries below are explicit members of `app/Cargo.toml`, with

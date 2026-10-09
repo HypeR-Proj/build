@@ -25,7 +25,8 @@ KERNEL_IMAGE := $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/lib/hyper
-SDK_LOADER_SOURCE := $(CURDIR)/lib/loader
+SDK_USERSPACE_LOADER_SOURCE := $(CURDIR)/lib/userspace-loader
+SDK_DYNAMIC_LOADER_SOURCE := $(CURDIR)/lib/dynamic-loader
 SDK_RUST_SOURCE := $(CURDIR)/lib/rust
 SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
 SDK_OUTPUT ?= $(CURDIR)/target/sdk/$(NATIVE_ARCH)
@@ -55,6 +56,7 @@ NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check/$(NATIVE_ARCH)
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/tests/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
+NATIVE_USERSPACE_LOADER := $(SDK_OUTPUT)/lib64/userspace-loader-hyper-$(NATIVE_ARCH)
 NATIVE_LOADER := $(SDK_OUTPUT)/lib64/ld-hyper-$(NATIVE_ARCH).so
 NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack

@@ -4,7 +4,7 @@
 PROJECT_NAME           = "HypeR C SDK"
 PROJECT_NUMBER         = $(HYPER_DOC_REVISION)
 OUTPUT_DIRECTORY       = $(HYPER_DOC_C_OUTPUT)
-INPUT                  = sdk/abi/include lib/hyper/include lib/hyper/src lib/loader/src
+INPUT                  = sdk/abi/include lib/hyper/include lib/hyper/src lib/dynamic-loader/src lib/userspace-loader/src
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.c
 EXTRACT_ALL            = NO

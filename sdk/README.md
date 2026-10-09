@@ -20,7 +20,8 @@ implementations under `lib/`:
 | --- | --- |
 | `sdk/abi/` | Machine-visible values, layouts, syscall metadata, and generated interfaces |
 | `lib/hyper/` | Freestanding C runtime, startup code, and architecture syscall veneers |
-| `lib/loader/` | Capability-relative runtime linker and `dlopen` implementation |
+| `lib/userspace-loader/` | Small executable mapper and SDK startup stack builder |
+| `lib/dynamic-loader/` | Capability-relative runtime linker and `dlopen` implementation |
 | `lib/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
 | `sdk/toolchain/` | Clang driver, linker script, ELF branding, and transactional SDK assembly |
 
@@ -46,6 +47,7 @@ bin/hyper-cargo
 bin/hyper-brand-elf
 include/hyper/native.h
 include/hyper/dlfcn.h
+include/hyper/launch.h
 include/hyper/startup.h
 include/hyper/syscall.h
 include/string.h
@@ -54,6 +56,7 @@ lib/crt.o
 lib/libhyper.a
 lib/libhyper.so
 lib64/ld-hyper-aarch64.so
+lib64/userspace-loader-hyper-aarch64
 lib/hyper/aarch64/hyper-native.ld
 share/hyper/abi/Cargo.toml
 share/hyper/abi/src/
@@ -112,13 +115,14 @@ and logical close. `HYPER_LINK_MODE=static` selects the matching
 or runtime dependency. The dynamic and static libraries are built from the
 same runtime sources and are both supported SDK application link modes.
 
-Product images store the interpreter directly under `/lib64/`, shared libraries
-under `/lib64/<arch>-hyper-hyper/`, and publish `/lib -> lib64`. The startup
-library Directory remains the architecture subdirectory; the kernel opens the
-interpreter through the executable's absolute `PT_INTERP` path. The SDK itself
-is assembled for one architecture and stages link libraries in `lib/` and the
-interpreter in `lib64/`; image composition places libraries in the architecture
-subdirectory.
+Product images store both loaders directly under `/lib64/`, shared libraries
+under `/lib64/<arch>-hyper-hyper/`, and publish `/lib -> lib64`. The kernel enters
+`userspace-loader-hyper-<arch>` for every process, including init. That loader opens
+`PT_INTERP` through a bootstrap-only Directory scoped to `/lib64`, then closes
+it before handing off. The dynamic loader's delegated library Directory remains
+the architecture subdirectory. The SDK itself is assembled for one architecture
+and stages link libraries in `lib/` and both loaders in `lib64/`; image composition
+places libraries in the architecture subdirectory.
 
 `make sdk-check` validates generated ABI output, lints the Rust SDK crates,
 builds the SDK transactionally, and compiles and links public-interface-only C
@@ -134,8 +138,15 @@ reserves a profile-specific region for system-managed user mappings, such as a
 future vDSO. Current application limits are 128 TiB on AArch64 VA48 and 128 GiB
 on RISC-V Sv39. These values may change; the common ABI does not require equal
 halves or identical addresses across architectures. Applications, allocators,
-and loaders must obey their granted VMAR range. The loader grants ROOT_VMAR from one page to the selected application limit;
-the SDK places final stacks near that limit after retiring the kernel bootstrap stack.
+and loaders must obey their granted VMAR range. The kernel grants ROOT_VMAR
+from one page to the selected application limit. The SDK creates the final
+stack near that limit, copies startup data and switches SP before retiring the
+kernel bootstrap stack and the userspace-loader mapping.
+
+Executable, interpreter and library windows, heap address hints and final-stack
+placement are [userspace layout policy](../lib/userspace-loader/README.md#address-layout).
+They are currently deterministic; userspace ASLR is not implemented. VMAR
+reservations consume virtual address space, not their capacity in physical RAM.
 
 ## Application integration
 

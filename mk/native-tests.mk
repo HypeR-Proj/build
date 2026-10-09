@@ -72,6 +72,7 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-smoke" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
+		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
 		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)"
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-vm-smoke.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(APP_OUTPUT)/vm-smoke.cpio" \
@@ -98,6 +99,7 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-smoke" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
+		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
 		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper_rust_std.so "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps/libhyper_rust_std.so" \
 		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper_vm_policy_shared.so "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps/libhyper_vm_policy_shared.so" \
