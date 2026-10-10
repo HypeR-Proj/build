@@ -14,13 +14,28 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/app-deployment.py'
-MANIFEST = ROOT / 'app/deployment.json'
+MANIFEST = ROOT / 'mk/components.mk'
 spec = importlib.util.spec_from_file_location('deployment', SCRIPT)
 deployment = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deployment)
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_registry_checks_cargo_targets_and_derives_host_exclusions(self):
+        entries = deployment.load(MANIFEST)
+        result = subprocess.check_output([sys.executable, str(SCRIPT), 'host-excludes',
+                                          '--manifest', str(MANIFEST)], text=True)
+        self.assertEqual(result.split(), [value for entry in entries if 'library' in entry
+                                         for value in ('--exclude', entry['package'])])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'invalid.mk'
+            for record in ('binary|app/echo|missing-binary|echo|bin/echo|system',
+                           'library|app/echo|libhyper_echo.so|lib/libhyper_echo.so|lib/libhyper_echo.so|system',
+                           'binary|../outside|escape|escape|bin/escape|system'):
+                path.write_text("component-records:\n\t@printf '%s\\n' '" + record + "'\n")
+                with self.subTest(record=record), self.assertRaises(ValueError):
+                    deployment.load(path)
+
     def test_system_retains_apps_without_acceptance_programs(self):
         roots = dict(apps='/apps', sdk='/sdk', std='/std', arch='riscv64')
         system = deployment.compose(MANIFEST, 'system', roots)
@@ -30,9 +45,11 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(system[link - 1:link + 2], ['symlink', 'lib', 'lib64'])
         self.assertTrue({'init', 'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
                          'lib', 'lib64/ld-hyper-riscv64.so',
-                         'lib64/riscv64-hyper-hyper/libhyper.so',
-                         'lib64/riscv64-hyper-hyper/libhyper_tool_args_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_rust_std.so',
-                         'lib64/riscv64-hyper-hyper/libhyper_vm_policy_shared.so', 'lib64/riscv64-hyper-hyper/libhyper_vm_support_shared.so'} <= system_names)
+                         'lib64/riscv64-hyper-hyper/libhyper.so'} <= system_names)
+        # Rust libraries are selected from DT_NEEDED after executable overrides.
+        self.assertNotIn('lib64/riscv64-hyper-hyper/libhyper_clap_shared.so', system_names)
+        libraries = [entry for entry in deployment.load(MANIFEST) if 'library' in entry]
+        self.assertIn('libhyper_clap_shared.so', [entry['library'] for entry in libraries])
         self.assertTrue(system_names < set(development[1::3]))
         for fixture in ('bin/echo-static', 'bin/dynamic-test', 'bin/std-test', 'bin/std-test-static'):
             self.assertNotIn(fixture, system_names)
@@ -43,7 +60,7 @@ class DeploymentTests(unittest.TestCase):
             deployment.compose(MANIFEST, 'system', roots, ['bin/typo=/probe'])
 
     def test_invalid_manifest_fails_before_installation(self):
-        original = json.loads(MANIFEST.read_text())
+        original = {'version': 1, 'entries': deployment.load(MANIFEST)}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'manifest.json'
             for field, value in [('destination', '../escape'), ('mode', '0999'),
@@ -84,7 +101,7 @@ class DeploymentTests(unittest.TestCase):
                              'libhyper_tool_args_shared.so')
 
     def test_library_artifacts_require_exact_safe_names_and_unique_sources(self):
-        original = json.loads(MANIFEST.read_text())
+        original = {'version': 1, 'entries': deployment.load(MANIFEST)}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'manifest.json'
             for name in ('../libbad.so', 'libbad.so;command', 'bad.so', 'libbad.a'):
@@ -107,7 +124,7 @@ class DeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'manifest.json'
             for target in ('.', '../lib64', '/lib64', 'lib64//other', 'bad\0path'):
-                data = json.loads(MANIFEST.read_text())
+                data = {'version': 1, 'entries': deployment.load(MANIFEST)}
                 next(entry for entry in data['entries'] if 'symlink' in entry)['symlink'] = target
                 path.write_text(json.dumps(data))
                 with self.subTest(target=target), self.assertRaises(ValueError):

@@ -94,23 +94,70 @@ def read_image(path):
                  string(strings, tags[14]) if 14 in tags else None, exports, imports)
 
 
+def resolve(name, links):
+    """Resolve links within the archive namespace, never on the build host."""
+    for _ in range(41):
+        parts = name.split('/')
+        for index in range(1, len(parts) + 1):
+            prefix = '/'.join(parts[:index])
+            if prefix in links:
+                name = '/'.join(parts[:index - 1] + [links[prefix]] + parts[index:])
+                break
+        else:
+            return name
+    raise ValueError(f'archive symlink loop while resolving {name}')
+
+
+def library_path(image, needed):
+    arch = {183: 'aarch64', 243: 'riscv64', 62: 'x86_64'}.get(image.machine)
+    if arch is None:
+        raise ValueError(f'unsupported Native ELF machine {image.machine}')
+    if not needed or '/' in needed or needed in ('.', '..'):
+        raise ValueError(f'invalid Native library name {needed!r}')
+    return f'lib/{arch}-hyper-hyper/{needed}'
+
+
+def add_dependencies(entries, directories):
+    """Add the transitive ELF closure from explicit, same-build library roots.
+
+    No host loader search paths are consulted. Libraries opened with dlopen
+    remain explicit image entries because ELF dependencies cannot describe them.
+    Final validation still checks SONAMEs, architecture and symbol resolution.
+    """
+    result = list(entries)
+    links = {entries[i + 1]: entries[i + 2] for i in range(0, len(entries), 3)
+             if entries[i] == 'symlink'}
+    present = set(entries[1::3])
+    pending = [Path(entries[i + 2]) for i in range(0, len(entries), 3)
+               if entries[i] != 'symlink']
+    directories = list(dict.fromkeys(Path(directory).resolve() for directory in directories))
+    while pending:
+        image = read_image(pending.pop())
+        if image is None:
+            continue
+        names = [library_path(image, name) for name in image.needed]
+        if image.interpreter:
+            names.append(image.interpreter.lstrip('/'))
+        for name in names:
+            destination = resolve(name, links)
+            if destination in present:
+                continue
+            filename = destination.rsplit('/', 1)[-1]
+            candidates = [root / filename for root in directories if (root / filename).is_file()]
+            if len(candidates) != 1:
+                raise ValueError(f'{name}: expected one same-build library provider, found {len(candidates)}')
+            source = candidates[0]
+            if read_image(source) is None:
+                raise ValueError(f'{source}: library provider is not ELF')
+            result.extend(['0755', destination, str(source)])
+            present.add(destination)
+            pending.append(source)
+    return result
+
+
 def validate(entries):
     links = {entries[index + 1]: entries[index + 2] for index in range(0, len(entries), 3)
              if entries[index] == 'symlink'}
-
-    def resolve(name):
-        # Resolve in the archive namespace, never against the build host.
-        # Targets have already been restricted to canonical relative paths.
-        for _ in range(41):
-            parts = name.split('/')
-            for index in range(1, len(parts) + 1):
-                prefix = '/'.join(parts[:index])
-                if prefix in links:
-                    name = '/'.join(parts[:index - 1] + [links[prefix]] + parts[index:])
-                    break
-            else:
-                return name
-        raise ValueError(f'archive symlink loop while resolving {name}')
 
     images = {entries[index + 1]: image for index in range(0, len(entries), 3)
               if entries[index] != 'symlink' and
@@ -119,12 +166,11 @@ def validate(entries):
         arch = {183: 'aarch64', 243: 'riscv64', 62: 'x86_64'}.get(image.machine)
         if arch is None:
             raise ValueError(f'{root}: unsupported Native ELF machine {image.machine}')
-        library_directory = f'lib/{arch}-hyper-hyper/'
         visited, pending = set(), [root]
         if image.interpreter:
             pending.append(image.interpreter.lstrip('/'))
         while pending:
-            name = resolve(pending.pop())
+            name = resolve(pending.pop(), links)
             if name in visited:
                 continue
             dependency = images.get(name)
@@ -134,9 +180,7 @@ def validate(entries):
                 raise ValueError(f'{root}: dependency architecture mismatch: {name}')
             visited.add(name)
             for needed in dependency.needed:
-                if not needed or '/' in needed or needed in ('.', '..'):
-                    raise ValueError(f'{name}: invalid Native library name {needed!r}')
-                destination = resolve(library_directory + needed)
+                destination = resolve(library_path(dependency, needed), links)
                 if destination in images and images[destination].soname != needed:
                     raise ValueError(f'{name}: library SONAME mismatch: {destination}')
                 pending.append(destination)

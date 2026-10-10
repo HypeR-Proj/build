@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
-from native_libraries import read_image, validate
+from native_libraries import add_dependencies, read_image, validate
 
 
 def elf(*, needed=(), soname=None, exports=(), imports=(), weak=(), machine=183, interpreter=None):
@@ -70,6 +70,44 @@ class LibraryTests(unittest.TestCase):
         self.add('lib64/aarch64-hyper-hyper/libpolicy.so', soname='libpolicy.so', needed=['libstd.so'], exports=['policy'])
         self.add('lib64/aarch64-hyper-hyper/libstd.so', soname='libstd.so', exports=['allocate'])
         validate(self.entries)
+
+    def test_collects_only_transitive_dependencies_and_interpreter(self):
+        self.add('bin/tool', needed=['libargs.so'], imports=['parse'],
+                 interpreter='/lib64/ld-hyper-aarch64.so')
+        providers = self.root / 'providers'
+        providers.mkdir()
+        for name, data in {
+            'ld-hyper-aarch64.so': elf(),
+            'libargs.so': elf(soname='libargs.so', exports=['parse'], needed=['libstd.so']),
+            'libstd.so': elf(soname='libstd.so'),
+            'unused.so': elf(soname='unused.so'),
+        }.items():
+            (providers / name).write_bytes(data)
+        result = add_dependencies(self.entries, [providers])
+        validate(result)
+        self.assertEqual(set(result[1::3]), {'lib', 'bin/tool', 'lib64/ld-hyper-aarch64.so',
+                         'lib64/aarch64-hyper-hyper/libargs.so',
+                         'lib64/aarch64-hyper-hyper/libstd.so'})
+        self.assertEqual(add_dependencies(result, [providers]), result)
+
+    def test_collect_rejects_missing_and_ambiguous_providers(self):
+        self.add('bin/tool', needed=['libargs.so'])
+        with self.assertRaisesRegex(ValueError, 'found 0'):
+            add_dependencies(self.entries, [])
+        providers = [self.root / 'a', self.root / 'b']
+        for path in providers:
+            path.mkdir()
+            (path / 'libargs.so').write_bytes(elf(soname='libargs.so'))
+        with self.assertRaisesRegex(ValueError, 'found 2'):
+            add_dependencies(self.entries, providers)
+
+    def test_collected_providers_still_require_matching_abi(self):
+        self.add('bin/tool', needed=['libargs.so'], imports=['new_symbol'])
+        providers = self.root / 'providers'
+        providers.mkdir()
+        (providers / 'libargs.so').write_bytes(elf(soname='libargs.so', exports=['old_symbol']))
+        with self.assertRaisesRegex(ValueError, 'new_symbol'):
+            validate(add_dependencies(self.entries, [providers]))
 
     def test_missing_library_is_rejected(self):
         self.add('bin/tool', needed=['libargs.so'])

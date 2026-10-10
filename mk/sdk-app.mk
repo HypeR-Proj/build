@@ -4,8 +4,12 @@
 # SDK assembly and application build/check contracts.
 # Native-only Rust DSO targets export SDK calls that have no host implementation.
 # Test their implementation crates on the host; exercise delivery through QEMU.
-APP_HOST_EXCLUDES := --exclude hyper-tool-args-shared --exclude hyper-vm-policy-shared \
-	--exclude hyper-vm-support-shared --exclude hyper-rust-std
+APP_HOST_EXCLUDES = $(shell python3 -B scripts/app-deployment.py host-excludes --manifest "$(APP_DEPLOYMENT)")
+
+.PHONY: app-manifest
+app-manifest:
+	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)"
+
 sdk:
 	cd "$(SDK_ABI_SOURCE)" && \
 		CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) run \
@@ -88,19 +92,16 @@ app: app-fetch
 		--lib $$app_bins $(addprefix --bin ,$(APP_EXTRA_BINS)) \
 		$(if $(strip $(APP_FEATURES)),--features "$(APP_FEATURES)")
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
-		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)"
+		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)" \
+		--sdk "$(SDK_OUTPUT)" --features "$(APP_FEATURES)" \
+		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))
 
 .PHONY: app-fixtures app-sdk-test
 app-fixtures: app
-	CARGO_TARGET_DIR="$(APP_STATIC_CARGO_OUTPUT)" HYPER_LINK_MODE=static \
-		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+	HYPER_LINK_MODE=static HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" rustc \
-		--manifest-path "app/Cargo.toml" -p hyper-echo --bin hyper-echo --release --locked --offline \
-		-- -C link-arg=-Wl,-z,stack-size=65536
-	sh scripts/install-if-changed.sh 0755 \
-		"$(APP_STATIC_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-echo" \
-		"$(NATIVE_STATIC_ECHO)"
+		"$(SDK_OUTPUT)/bin/hyper-clang" -std=c17 -Wall -Wextra -Werror \
+		-Wl,-z,stack-size=65536 tests/native/static-echo.c -o "$(NATIVE_STATIC_ECHO)"
 	"$(SDK_OUTPUT)/bin/hyper-brand-elf" --check-static "$(NATIVE_STATIC_ECHO)"
 	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-clang" \

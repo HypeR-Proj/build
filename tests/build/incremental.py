@@ -38,6 +38,65 @@ class IncrementalTests(unittest.TestCase):
     def run_state(self, *arguments):
         return subprocess.run([sys.executable, str(STATE), *map(str, arguments)], check=False).returncode
 
+    def test_native_component_cache_reuses_and_verifies_installed_outputs(self):
+        source = self.root / 'component'
+        source.mkdir()
+        (source / 'value').write_text('first')
+        tools = self.root / 'tools'
+        tools.mkdir()
+        log = self.root / 'cmake.log'
+        # A process-level stand-in records compilation and installs a source
+        # payload. No host C compiler is needed in the script-only CI shard.
+        cmake = tools / 'cmake'
+        cmake.write_text('#!' + sys.executable + '\n' + '''
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ['CMAKE_TEST_LOG'], 'a') as log:
+    log.write(args[0] + '\\n')
+if args[0] == '-S':
+    directory = Path(args[args.index('-B') + 1])
+    directory.mkdir(parents=True)
+    (directory / 'source').write_text(args[1])
+elif args[0] == '--install':
+    source = Path((Path(args[1]) / 'source').read_text())
+    destination = Path(args[args.index('--prefix') + 1]) / 'lib'
+    destination.mkdir(parents=True)
+    (destination / 'component.a').write_bytes((source / 'value').read_bytes())
+''')
+        cmake.chmod(0o755)
+        inputs = self.root / 'inputs.json'
+        configuration = {'tools': {}, 'platform': 'test',
+                         'environment': {'HYPER_SDK_SOURCE_REVISION': 'first', 'CFLAGS': ''}}
+        cache = self.root / 'components'
+        builder = ROOT / 'sdk/toolchain/scripts/build-cmake-component.py'
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                   CMAKE_TEST_LOG=str(log))
+
+        def build(name):
+            output = self.root / name
+            inputs.write_text(json.dumps(configuration))
+            subprocess.run([sys.executable, '-B', str(builder), '--source', str(source),
+                            '--cache', str(cache), '--output', str(output),
+                            '--inputs', str(inputs), '--', f'-DHYPER_SYSROOT={output}'],
+                           env=env, check=True, capture_output=True)
+            return (output / 'lib/component.a').read_text()
+
+        self.assertEqual(build('sdk-1'), 'first')
+        self.assertEqual(len(log.read_text().splitlines()), 3)
+        configuration['environment']['HYPER_SDK_SOURCE_REVISION'] = 'different-revision'
+        self.assertEqual(build('sdk-2'), 'first')
+        self.assertEqual(len(log.read_text().splitlines()), 3)
+        next(cache.glob('*/install/lib/component.a')).write_text('corrupt')
+        self.assertEqual(build('sdk-3'), 'first')
+        self.assertEqual(len(log.read_text().splitlines()), 6)
+        (source / 'value').write_text('second')
+        self.assertEqual(build('sdk-4'), 'second')
+        self.assertEqual(len(log.read_text().splitlines()), 9)
+        configuration['environment']['CFLAGS'] = '-DCHANGED'
+        self.assertEqual(build('sdk-5'), 'second')
+        self.assertEqual(len(log.read_text().splitlines()), 12)
+
     def test_sdk_integrity_and_inputs(self):
         output = self.root / "sdk"
         output.mkdir()

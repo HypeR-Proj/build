@@ -122,6 +122,7 @@ name = "hyper-cat"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -129,6 +130,15 @@ name = "hyper-chmod"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
+]
+
+[[package]]
+name = "hyper-clap-shared"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "hyper-rust-std",
 ]
 
 [[package]]
@@ -154,6 +164,7 @@ name = "hyper-cp"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -161,6 +172,7 @@ name = "hyper-echo"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -168,6 +180,7 @@ name = "hyper-free"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-tool-args",
@@ -179,6 +192,7 @@ name = "hyper-grep"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "regex",
 ]
 
@@ -187,6 +201,7 @@ name = "hyper-handle"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-tool-args",
@@ -225,6 +240,7 @@ name = "hyper-ldd"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -232,6 +248,7 @@ name = "hyper-ln"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -239,6 +256,7 @@ name = "hyper-ls"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -246,6 +264,7 @@ name = "hyper-mkdir"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -253,6 +272,7 @@ name = "hyper-mv"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -268,6 +288,7 @@ name = "hyper-ps"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-tool-args",
@@ -279,6 +300,7 @@ name = "hyper-rm"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -286,6 +308,7 @@ name = "hyper-rmdir"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -322,6 +345,7 @@ name = "hyper-shell"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-service",
@@ -340,6 +364,7 @@ name = "hyper-tool-args"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -355,6 +380,7 @@ name = "hyper-top"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-tool-args",
@@ -366,6 +392,7 @@ name = "hyper-touch"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
 ]
 
 [[package]]
@@ -451,6 +478,7 @@ name = "hyper-vmm"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
  "hyper-service",

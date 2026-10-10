@@ -96,14 +96,13 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/io-vm.cpio" \
+		--library-dir "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps" \
+		--library-dir "$(SDK_OUTPUT)/lib" --library-dir "$(SDK_OUTPUT)/lib64" \
 		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-smoke" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
 		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper_rust_std.so "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps/libhyper_rust_std.so" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper_vm_policy_shared.so "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps/libhyper_vm_policy_shared.so" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper_vm_support_shared.so "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps/libhyper_vm_support_shared.so" \
 		0644 vm/io.itb "$(APP_OUTPUT)/io-vm/io.itb" \
 		0644 etc/hyper/io-vms.json "$(APP_OUTPUT)/io-vm/io-vms.json" \
 		0644 vm/business.itb "$(APP_OUTPUT)/io-vm/business.itb"

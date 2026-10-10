@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-from native_libraries import validate as validate_libraries
+from native_libraries import add_dependencies, validate as validate_libraries
 
 
 def digest(path):
@@ -90,6 +90,8 @@ def main():
     for root in ("apps", "sdk", "std", "arch"):
         parser.add_argument("--" + root)
     parser.add_argument("--replace", action="append", default=[])
+    parser.add_argument("--library-dir", type=Path, action="append", default=[],
+                        help="same-build ELF providers; dependencies are added transitively")
     parser.add_argument("--entries-from", type=Path, action="append", default=[],
                         help="JSON list of MODE ARCHIVE_PATH absolute-SOURCE triples, or symlink triples")
     parser.add_argument("entries", nargs="*",
@@ -112,11 +114,16 @@ def main():
         deployment = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(deployment)
         args.entries = deployment.compose(args.deployment, args.profile, roots, args.replace) + args.entries
+        args.library_dir.extend([Path(args.apps) / 'lib', Path(args.sdk) / 'lib',
+                                 Path(args.sdk) / 'lib64'])
     elif args.replace:
         parser.error("--replace requires --deployment")
     if not args.entries:
         parser.error("no initramfs entries selected")
     validate_entries(args.entries)
+    if args.library_dir:
+        args.entries = add_dependencies(args.entries, args.library_dir)
+        validate_entries(args.entries)
     validate_libraries(args.entries)
     # Validate the actual selected/generated manifest before cache hits or any
     # output mutation. The host tool shares init's parser and admission policy.

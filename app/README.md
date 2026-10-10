@@ -125,7 +125,13 @@ application images are written to `target/app/aarch64` by default. Applications
 that have no Rust DSO dependencies may set `HYPER_LINK_MODE=static` to select
 the SDK's equivalent `libhyper.a` link path. The system tools and VM services
 that consume `lib/` use dynamic linking; the integration image still executes
-`echo-static` as the SDK static-link contract test.
+`echo-static`, a standalone C fixture, as the SDK static-link contract test.
+Rust static linking remains covered by `std-test-static`.
+
+Clap-based tools select `libhyper_clap_shared.so` for Native builds; the same
+upstream parser is used directly for host tests. Command-specific argument
+structures stay in each tool. Component declarations and shared build templates
+are described in [Native component builds](../mk/README.md).
 
 `ARCH=riscv64` selects separate SDK and app output directories and runs the same
 service graph, including the userspace VM fleet. The optional
@@ -139,7 +145,8 @@ manager; `vmm --help` does not require a running manager.
 
 ```text
 app/
-  Cargo.toml          Workspace, dependency versions, and shared lints
+  Cargo.toml          App discovery, shared dependency versions, lints and profiles
+  Cargo.lock          Locked dependencies for the application and Rust DSO set
   cat/ chmod/ cp/ echo/ free/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   console-input/ console-output/
   init/
@@ -150,14 +157,22 @@ app/
   shell/
   io-runtime/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
 lib/                  Shared application libraries, in the app Cargo workspace
+  clap/               Common command-line parser DSO
   tool-args/          Argument parsing and process selection for system tools
   vm-policy/          VM fleet configuration, resource policy and image validation
   vm-support/         Guest loading, virtual devices and I/O backend protocols
   rust-std/           Common Rust standard-library DSO
 ```
 
-Each executable is its own Cargo package with `src/main.rs`. Its clap types
-and reusable implementation modules live in its own `src/`; unit-test bodies
+Each executable is its own Cargo package with `Cargo.toml` and `src/main.rs`.
+The workspace discovers app directories automatically, excluding `.cargo/` and
+`target/`. A new app declares its build inputs in its own manifest and its
+installed name/profile in `component.mk`. App-specific dependencies stay in that
+app's manifest; shared dependencies and build policy stay in the workspace.
+Source-only edits do not change `Cargo.lock`.
+
+Command-specific clap types and reusable implementation modules live in the
+app's own `src/`; unit-test bodies
 live in its own `tests/` and are included by that package's library. Packages
 set `autotests = false` so Cargo does not also treat these unit-test files as
 standalone integration targets. No command tests are loaded by init.

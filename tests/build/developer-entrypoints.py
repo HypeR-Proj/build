@@ -14,9 +14,69 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from cargo_workspace import member_directories
 
 
 class EntrypointTests(unittest.TestCase):
+    def test_workspace_discovery_agrees_with_cargo_when_an_app_is_added(self):
+        with tempfile.TemporaryDirectory(prefix='hyper workspace discovery ') as directory:
+            root = Path(directory)
+            shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+            app = root / 'app'
+            app.mkdir()
+            manifest = app / 'Cargo.toml'
+            manifest.write_text('[workspace]\nresolver="3"\n'
+                                'members=["*", "../lib/args", "../lib/*/shared"]\n'
+                                'exclude=[".cargo", "target"]\n')
+            original = manifest.read_bytes()
+            (app / 'README.md').write_text('not a package')
+            (app / '.cargo').mkdir()
+            (app / 'target/debug').mkdir(parents=True)
+
+            def package(relative, owner):
+                path = root / relative
+                (path / 'src').mkdir(parents=True)
+                (path / 'src/lib.rs').write_text('')
+                (path / 'Cargo.toml').write_text(
+                    f'[package]\nname="{relative.replace("/", "-")}"\n'
+                    f'version="0.0.0"\nworkspace="{owner}"\n')
+
+            for relative, owner in [('app/tool', '..'), ('lib/args', '../../app'),
+                                    ('lib/args/shared', '../../../app')]:
+                package(relative, owner)
+            expected = {root / path for path in ('app/tool', 'lib/args', 'lib/args/shared')}
+            for added in (False, True):
+                if added:
+                    package('app/new-tool', '..')
+                    expected.add(root / 'app/new-tool')
+                metadata = json.loads(subprocess.check_output(
+                    ['cargo', 'metadata', '--offline', '--no-deps', '--format-version=1',
+                     '--manifest-path', str(manifest)], cwd=root))
+                cargo_members = {Path(item['manifest_path']).parent.resolve()
+                                 for item in metadata['packages']
+                                 if item['id'] in metadata['workspace_members']}
+                self.assertEqual(cargo_members, {path.resolve() for path in expected})
+                self.assertEqual(member_directories(manifest), cargo_members)
+                self.assertEqual(manifest.read_bytes(), original)
+
+    def test_application_feature_variants_do_not_share_default_outputs(self):
+        def outputs(*arguments):
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.mk') as probe:
+                probe.write('__variant:\n\t@printf "%s\\n" "$(APP_OUTPUT)" "$(APP_CARGO_OUTPUT)"\n')
+                probe.flush()
+                return subprocess.check_output(['make', '--no-print-directory', '-s', '-f',
+                                                'Makefile', '-f', probe.name, '__variant',
+                                                *arguments], cwd=ROOT, text=True).splitlines()
+        ordinary = outputs()
+        first = outputs('APP_FEATURES=hyper-io-runtime/storage-probe,hyper-vm-runtime/broker-test')
+        reordered = outputs('APP_FEATURES=hyper-vm-runtime/broker-test hyper-io-runtime/storage-probe')
+        other = outputs('APP_FEATURES=hyper-io-runtime/storage-probe')
+        probe = outputs('APP_EXTRA_BINS=hyper-storage-probe')
+        self.assertEqual(first, reordered)
+        for column in (0, 1):
+            self.assertEqual(len({ordinary[column], first[column], other[column], probe[column]}), 4)
+
     def test_make_composition_preserves_disk_policy(self):
         for arch in ('aarch64', 'riscv64', 'x86_64'):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.mk') as probe:

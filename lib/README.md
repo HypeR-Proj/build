@@ -23,15 +23,17 @@ remains with its executable.
 
 | Library | Consumers | Responsibility |
 | --- | --- | --- |
+| `hyper-clap-shared` | All clap-based Native tools | Own the common clap parser, validation and help code; applications retain their argument types and derive expansions. |
 | `hyper-tool-args` | `handle`, `ps`, `top`, `free` | Parse complete generation-bearing IDs and sampling intervals; combine process-ID and name selectors. Shared argument types live here; command-specific clap declarations remain in each tool. |
 | `hyper-vm-policy` | `init`, `vmm`, VM manager and runtimes | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
 | `hyper-vm-support` | VM and I/O runtimes | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
 | `hyper-rust-std` | The other Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. It uses the installed SDK's std port. |
 
 `make app` builds the libraries and installs their `.so` artifacts under
-`target/app/<arch>/lib/`. The delivered files are `libhyper_tool_args_shared.so`,
+`target/app/<arch>/lib/`. The delivered files are `libhyper_clap_shared.so`, `libhyper_tool_args_shared.so`,
 `libhyper_vm_policy_shared.so`, `libhyper_vm_support_shared.so` and
-`libhyper_rust_std.so`. `app/deployment.json` installs them in
+`libhyper_rust_std.so`. Per-library `component.mk` declarations register them as
+providers. Image composition follows ELF dependencies and installs needed libraries in
 `/lib64/<arch>-hyper-hyper/` in both system and development images, with
 `/lib -> lib64`. AArch64 therefore uses `/lib/aarch64-hyper-hyper/`; RISC-V uses
 `/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory; the interpreter
@@ -40,7 +42,9 @@ Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
-Each implementation crate remains an rlib. Its small `shared/` package re-exports
+The clap delivery crate re-exports the unmodified upstream API and shares the
+same std owner. Each policy/support implementation crate remains an rlib.
+Its small `shared/` package re-exports
 the same API as a Rust dylib. Native consumers select that package through target
 dependencies; host tests select the implementation directly. This keeps Native
 SDK calls out of host shared-library links without introducing FFI wrappers or
@@ -74,3 +78,6 @@ this check. The fixture targets therefore use `make app` with `APP_FEATURES` and
 an isolated `APP_OUTPUT` to stage the whole application/library set; extra probe
 binaries are selected with `APP_EXTRA_BINS`. Board images take the I/O runtime
 from this staged set, just like the other services.
+
+See [Native component builds](../mk/README.md) for the shared Make templates,
+feature variants, library collection and SDK component cache.

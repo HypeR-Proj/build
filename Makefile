@@ -34,16 +34,16 @@ SDK_VERSION ?= source
 SDK_SOURCE_REVISION ?= $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/libhyper-tests
-APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)
-APP_CARGO_OUTPUT := $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)
-APP_DEPLOYMENT := $(CURDIR)/app/deployment.json
 APP_FEATURES ?=
 APP_EXTRA_BINS ?=
+APP_VARIANT := $(if $(strip $(APP_FEATURES) $(APP_EXTRA_BINS)),/$(shell python3 -B scripts/app-variant.py --features '$(APP_FEATURES)' --bins '$(APP_EXTRA_BINS)'))
+APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)$(APP_VARIANT)
+APP_CARGO_OUTPUT ?= $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)$(APP_VARIANT)
+APP_DEPLOYMENT := $(CURDIR)/mk/components.mk
 NATIVE_IMAGE_PROFILE ?= development
 ifeq ($(filter $(NATIVE_IMAGE_PROFILE),development system),)
 $(error NATIVE_IMAGE_PROFILE must be development or system)
 endif
-APP_STATIC_CARGO_OUTPUT := $(CURDIR)/target/app-cargo-static/$(NATIVE_ARCH)
 NATIVE_INIT := $(APP_OUTPUT)/init
 NATIVE_STATIC_ECHO := $(APP_OUTPUT)/echo-static
 # Test fixtures may substitute the packaged program without overwriting the
