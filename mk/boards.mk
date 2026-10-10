@@ -180,7 +180,8 @@ test-board-network: app image
 		BOARD_IMAGE="$$fixture/disk.img" && \
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-network.py run \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
-		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/network.log"
+		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/network.log" \
+		$(if $(NETWORK_TX_OFFLOAD),--expect-tx-offload "$(NETWORK_TX_OFFLOAD)")
 
 # Fault injection is compiled into a separate output tree; normal app artifacts
 # and subsequent make run images never inherit the test features.
