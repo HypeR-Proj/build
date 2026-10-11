@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Register delivery metadata; Cargo remains the owner of crate dependencies.
-# Arguments: source directory, Cargo binary, staged name, install path, profiles.
+# Arguments: source directory, Cargo binary, staged name, install path, profiles,
+# optional Rust runtime (std by default; core for no_std binaries).
 define native-rust-app
-NATIVE_COMPONENT_RECORDS += 'binary|$(1)|$(2)|$(3)|$(4)|$(5)'
+NATIVE_COMPONENT_RECORDS += 'binary|$(1)|$(2)|$(3)|$(4)|$(5)|$(if $(6),$(6),std)'
 endef
 
 # Arguments: source directory, shared-library artifact. All consumers use one

@@ -91,13 +91,13 @@ def write_json(path, value):
 def bringup_config(output, board):
     """Boot the appliance as a supervised VM without physical-device authority."""
     root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((root / 'app/init/config/services-with-vms.json').read_text())
+    manifest = json.loads((root / 'bootstrap/stage1/init/config/services-with-vms.json').read_text())
     manifest['services'] = [service for service in manifest['services']
                             if service['name'] != 'io-runtime']
-    manifest['virtual-machines'] = {'config': '/etc/hyper/vms.json'}
+    manifest['virtual-machines'] = {'config': '/boot/etc/hyper/vms.json'}
     resident = board.source['io-vm']
     vms = {'format': 'hyper.vm-config', 'virtual-machines': [
-        {'name': resident['name'], 'image': resident['image'], 'autostart': False,
+        {'name': resident['name'], 'image': '/boot' + resident['image'], 'autostart': False,
          'configuration': resident['configuration']}]}
     output.mkdir(parents=True, exist_ok=True)
     for name, value in [('services.json', manifest), ('vms.json', vms)]:
@@ -150,10 +150,17 @@ def main():
     snapshot = args.output.with_suffix('.board.json')
     write_json(snapshot, board.source)
     # Guest paths remain data all the way into the packer, never shell fragments.
-    write_json(args.output.with_suffix('.entries.json'), [
+    entries = [
         ['0644', board.source['io-vm']['image'][1:], str(args.output.resolve())],
         ['0644', 'etc/hyper/board.json', str(snapshot.resolve())],
-    ])
+    ]
+    if args.mode == 'storage':
+        for name in ('storage.json', 'filesystem.json'):
+            entries.append(['0644', 'etc/hyper/' + name,
+                            str((args.output.parent / 'board' / name).resolve())])
+        entries.append(['0644', 'etc/fstab',
+                        str((args.output.parent / 'board/fstab').resolve())])
+    write_json(args.output.with_suffix('.entries.json'), entries)
 
 
 if __name__ == '__main__':

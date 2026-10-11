@@ -27,7 +27,8 @@ class GuestDiskTests(unittest.TestCase):
         except ValueError as error:
             self.skipTest(str(error))
         board = json.loads((ROOT / 'boards/qemu.json').read_text())
-        board['virtual-machines'][0]['disk-mib'] = 32
+        next(part for part in board['disk']['partitions']
+             if part.get('image') == 'alpine-rootfs')['size-mib'] = 32
         with tempfile.TemporaryDirectory() as temporary:
             temporary = Path(temporary)
             archive = temporary / 'rootfs.tar'

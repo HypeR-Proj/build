@@ -14,7 +14,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from native_components import load_registry
+from native_components import cargo_targets, extra_binary, link_entries, load_registry
+from native_libraries import read_image
 
 
 def archive_path(name):
@@ -47,6 +48,10 @@ def load(path):
             if entry['mode'] != '0777':
                 raise ValueError(f'symlink mode must be 0777: {name}')
         if 'binary' in entry or 'library' in entry:
+            if entry.get('link_mode', 'dynamic') not in ('static', 'dynamic'):
+                raise ValueError(f'invalid component link mode: {name}')
+            if entry.get('rust_runtime', 'std') not in ('std', 'core'):
+                raise ValueError(f'invalid component Rust runtime: {name}')
             artifact = entry.get('binary', entry.get('library'))
             location = archive_path(entry['staged'])
             pattern = r'[a-zA-Z0-9_-]+' if 'binary' in entry else r'lib[a-zA-Z0-9_-]+\.so'
@@ -83,17 +88,51 @@ def compose(manifest, profile, roots, replacements=()):
     return entries
 
 
+def select_components(entries, components):
+    """Select executable components by their declared staged names."""
+    if not components:
+        return entries
+    selected = set(components)
+    available = {entry['staged'] for entry in entries if 'binary' in entry}
+    missing = selected - available
+    if missing:
+        raise ValueError(f'unknown application components: {sorted(missing)}')
+    return [entry for entry in entries
+            if 'binary' in entry and entry['staged'] in selected]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['binaries', 'install', 'manifest', 'host-excludes'])
+    parser.add_argument('action', choices=['binaries', 'cargo-targets', 'install', 'manifest', 'host-excludes'])
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--build', type=Path)
+    parser.add_argument('--static-build', type=Path,
+                        help='bootstrap build tree when installing a mixed application set')
+    parser.add_argument('--core-build', type=Path,
+                        help='no_std target output when installing a mixed runtime set')
+    parser.add_argument('--static-core-build', type=Path,
+                        help='static no_std target output when installing a mixed runtime set')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--extra-bin', action='append', default=[])
     parser.add_argument('--sdk', type=Path)
     parser.add_argument('--features', default='')
+    parser.add_argument('--component', action='append', default=[],
+                        help='select an executable by its staged component name')
+    parser.add_argument('--link-mode', choices=['dynamic', 'static'],
+                        help='select only components belonging to this link graph')
+    parser.add_argument('--rust-runtime', choices=['std', 'core'],
+                        help='select a Cargo runtime graph without std feature unification')
     args = parser.parse_args()
-    entries = load(args.manifest)
+    all_entries = load(args.manifest)
+    entries = select_components(all_entries, args.component)
+    if args.link_mode:
+        filtered = link_entries(entries, args.link_mode)
+        if args.component and len(filtered) != len(entries):
+            parser.error('component selection conflicts with its required link mode')
+        entries = filtered
+    if args.rust_runtime:
+        entries = [entry for entry in entries
+                   if entry.get('rust_runtime', 'std') == args.rust_runtime]
     if args.action == 'manifest':
         print(json.dumps({'version': 1, 'entries': entries}, indent=2))
         return
@@ -103,25 +142,47 @@ def main():
     if args.action == 'binaries':
         print(' '.join('--bin ' + entry['binary'] for entry in entries if 'binary' in entry))
         return
+    if args.action == 'cargo-targets':
+        print(' '.join(cargo_targets(all_entries, entries, args.link_mode,
+                                     args.features, args.extra_bin, args.rust_runtime)))
+        return
     if args.build is None or args.output is None:
         parser.error('install requires --build and --output')
-    installer = Path(__file__).with_name('install-if-changed.sh')
-    installed = []
+    artifacts = []
     for entry in entries:
-        if 'binary' not in entry and 'library' not in entry:
-            continue
-        destination = args.output / entry['staged']
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(['sh', str(installer), entry['mode'],
-                        str(args.build / entry.get('binary', entry.get('library'))),
-                        str(destination)], check=True)
-        installed.append(destination)
+        if 'binary' in entry or 'library' in entry:
+            artifacts.append((entry, entry.get('binary', entry.get('library')), entry['staged']))
     for binary in args.extra_bin:
         if not re.fullmatch(r'hyper-[a-zA-Z0-9_-]+', binary):
             parser.error('extra binaries must have a hyper- prefixed Cargo target name')
-        subprocess.run(['sh', str(installer), '0755', str(args.build / binary),
-                        str(args.output / binary.removeprefix('hyper-'))], check=True)
-        installed.append(args.output / binary.removeprefix('hyper-'))
+        entry = extra_binary(all_entries, binary)
+        if ((args.link_mode is None or entry.get('link_mode', 'dynamic') == args.link_mode)
+                and (args.rust_runtime is None or entry.get('rust_runtime', 'std') == args.rust_runtime)):
+            artifacts.append((entry, binary, binary.removeprefix('hyper-')))
+    sources = []
+    # Check every bootstrap artifact before replacing any staged image. The
+    # restriction follows source ownership in disk-backed and all-RAM deployments.
+    for entry, binary, staged in artifacts:
+        static = entry.get('link_mode', 'dynamic') == 'static'
+        build = (args.static_build or args.build) if static else args.build
+        if entry.get('rust_runtime', 'std') == 'core':
+            build = (args.static_core_build or args.core_build or build) if static else (args.core_build or build)
+        source = build / binary
+        if static:
+            image = read_image(source)
+            if image is None or image.interpreter or image.needed or image.soname:
+                parser.error(f'{source}: bootstrap/stage1 requires a static ELF')
+            if args.sdk:
+                subprocess.run([str(args.sdk / 'bin/hyper-brand-elf'), '--check-static',
+                                str(source)], check=True)
+        sources.append((source, staged, entry['mode']))
+    installer = Path(__file__).with_name('install-if-changed.sh')
+    installed = []
+    for source, staged, mode in sources:
+        destination = args.output / staged
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(['sh', str(installer), mode, str(source), str(destination)], check=True)
+        installed.append(destination)
     if args.sdk:
         # Record the installed set only after every copy succeeds. This is
         # provenance for the exact staged files, not a separate dependency graph.
@@ -131,6 +192,8 @@ def main():
                 text=True).strip(),
             'rustc': subprocess.check_output(['rustc', '-vV'], text=True),
             'features': sorted(set(args.features.replace(',', ' ').split())),
+            'link_mode': args.link_mode or 'mixed',
+            'components': sorted(set(args.component)),
             'extra_binaries': sorted(set(args.extra_bin)),
             'sdk': {name: (args.sdk / 'share/hyper' / name).read_text().strip()
                     for name in ('manifest', 'link-fingerprint', 'std-fingerprint')},

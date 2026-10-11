@@ -104,18 +104,24 @@ class BringupTests(unittest.TestCase):
                     self.assertEqual(snapshot['io-vm']['name'], source['io-vm']['name'])
                     self.assertEqual(snapshot['io-vm']['image'], source['io-vm']['image'])
                     entries = json.loads(output.with_suffix('.entries.json').read_text())
-                    self.assertEqual(entries, [
+                    self.assertEqual(entries[:2], [
                         ['0644', 'vm/custom image.itb', str(output.resolve())],
                         ['0644', 'etc/hyper/board.json',
                          str(output.with_suffix('.board.json').resolve())],
                     ])
+                    if mode == 'storage':
+                        self.assertEqual([entry[1] for entry in entries[2:]], [
+                            'etc/hyper/storage.json', 'etc/hyper/filesystem.json',
+                            'etc/fstab'])
+                    else:
+                        self.assertEqual(len(entries), 2)
                     self.assertFalse(output.with_suffix('.json').exists())
                     self.assertEqual(config['vcpus'], 1)
                     self.assertEqual(config['affinity'], source['io-vm']['configuration']['affinity'])
                     self.assertEqual(config['memory-bytes'], source['io-vm']['configuration']['memory-bytes'])
                     self.assertIn('custom.option=board-value', config['bootargs'])
                     if mode == 'storage':
-                        self.assertEqual(snapshot, source)
+                        self.assertEqual(snapshot, bringup.Board.parse(source).source)
                     else:
                         self.assertNotIn('hyper.volumes=', config['bootargs'])
                         self.assertIn(f'hyper.mode={mode}', config['bootargs'])
@@ -126,7 +132,7 @@ class BringupTests(unittest.TestCase):
                         vm = json.loads((output.parent / 'bringup/vms.json').read_text())['virtual-machines'][0]
                         self.assertEqual(vm['configuration'], config)
                         self.assertEqual(vm['name'], source['io-vm']['name'])
-                        self.assertEqual(vm['image'], source['io-vm']['image'])
+                        self.assertEqual(vm['image'], '/boot' + source['io-vm']['image'])
             self.assertEqual(json.loads(policy.read_text()), source)
 
     def test_diskless_io_config_has_supervision_without_device_assignment(self):
@@ -144,13 +150,13 @@ class BringupTests(unittest.TestCase):
             self.assertIn('vm-manager', names)
             self.assertIn('session', names)
             self.assertNotIn('io-runtime', names)
-            self.assertEqual(manifest['virtual-machines']['config'], '/etc/hyper/vms.json')
+            self.assertEqual(manifest['virtual-machines']['config'], '/boot/etc/hyper/vms.json')
             for service in manifest['services']:
                 for cap in service['capabilities']:
                     self.assertNotEqual(cap['source'], 'bootstrap.device-assignment-authority')
             vms = json.loads((output / 'vms.json').read_text())
             self.assertEqual(vms['virtual-machines'], [
-                {'name': resident['name'], 'image': resident['image'], 'autostart': False,
+                {'name': resident['name'], 'image': '/boot' + resident['image'], 'autostart': False,
                  'configuration': resident['configuration']}])
 
     def test_pi_deployment_exports_configuration_and_qemu_equivalent_alpine(self):
@@ -158,8 +164,8 @@ class BringupTests(unittest.TestCase):
         board = bringup.Board.load(ROOT / 'boards/rpi5.json')
         self.assertEqual(board.source['io-vm']['io-device'], {
             'profile': 'bcm2712-sdhci', 'path': '/soc@107c000000/mmc@fff000'})
-        self.assertEqual(board.source['disk']['config-mib'], 1024)
-        self.assertEqual(len(board.partitions), 2)
+        self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 1024)
+        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
         qemu = bringup.Board.load(ROOT / 'boards/qemu.json')
         self.assertEqual(board.source['virtual-machines'], qemu.source['virtual-machines'])
         self.assertEqual(board.source['files']['vm/alpine.itb'], 'alpine')
@@ -167,16 +173,26 @@ class BringupTests(unittest.TestCase):
         self.assertEqual(manifest['virtual-machines']['config'], '/data/vms.json')
         runtime = next(item for item in manifest['services'] if item['name'] == 'io-runtime')
         self.assertIn('io.ready', [cap['purpose'] for cap in runtime['capabilities']])
-        self.assertIn('hyper-config', board.bootstrap_volumes())
-        self.assertIn('alpine', board.bootstrap_volumes())
+        for name in ('session', 'io-runtime', 'fs-backend'):
+            service = next(item for item in manifest['services'] if item['name'] == name)
+            environment = [cap for cap in service['capabilities']
+                           if cap['purpose'] == 'process.environment-directory']
+            self.assertEqual(len(environment), 1, name)
+            self.assertEqual(environment[0]['source'], 'bootstrap.environment-directory')
+            self.assertEqual(environment[0]['operation'], 'duplicate')
+            self.assertEqual(set(environment[0]['rights']),
+                             {'read', 'inspect', 'execute', 'protect', 'duplicate', 'transfer'})
+        self.assertEqual([volume['source'] for volume in board.native_volumes()],
+                         ['PARTLABEL=hyper-data', 'PARTLABEL=hyper-system'])
+        self.assertEqual(board.storage_policy()['guests'][0]['source'], 'PARTLABEL=alpine')
 
     def test_native_profile_has_no_guest_disk_or_io_payload(self):
         board = bringup.Board.load(ROOT / 'boards/rpi5-native.json')
-        self.assertEqual(len(board.partitions), 1)
+        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system'])
         self.assertEqual(board.source['virtual-machines'], [])
-        self.assertEqual(board.source['disk']['config-mib'], 64)
+        self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 64)
         self.assertNotIn('io-vm', board.source['files'].values())
-        services = json.loads((ROOT / 'app/init/config/services-console-only.json').read_text())
+        services = json.loads((ROOT / 'bootstrap/stage1/init/config/services-console-only.json').read_text())
         self.assertNotIn('io-runtime', [item['name'] for item in services['services']])
 
     def test_payload_has_firmware_boot_config_and_notices(self):

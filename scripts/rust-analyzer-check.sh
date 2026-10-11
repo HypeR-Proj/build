@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # rust-analyzer runs this from each linked Cargo workspace. Use the same Native
-# driver as production, while checking kernel/host projects on the host target.
+# driver as production, while preserving kernel/tool workspace target settings.
 set -eu
 script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 PATH="$PATH:$HOME/.cargo/bin"
 
-# Resolve ownership, not directory ancestry: application libraries under lib/
-# belong to app/, while the Native bindings have their own lib/rust/ workspace.
+# Resolve ownership, not directory ancestry: bootstrap/stage1 programs and
+# libraries under lib/ belong to app/, while Native bindings own lib/rust/.
 # External members do not inherit app/.cargo/config.toml from their directory.
 # A direct invocation from the product root checks its Native workspace.
 if [ "$(pwd -P)" = "$root" ]; then

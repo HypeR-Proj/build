@@ -25,7 +25,7 @@ KERNEL_IMAGE := $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/lib/hyper
-SDK_USERSPACE_LOADER_SOURCE := $(CURDIR)/lib/userspace-loader
+SDK_USERSPACE_LOADER_SOURCE := $(CURDIR)/bootstrap/stage1/userspace-loader
 SDK_DYNAMIC_LOADER_SOURCE := $(CURDIR)/lib/dynamic-loader
 SDK_RUST_SOURCE := $(CURDIR)/lib/rust
 SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
@@ -54,7 +54,7 @@ NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check/$(NATIVE_ARCH)
-NATIVE_SERVICE_MANIFEST := $(CURDIR)/app/init/tests/config/services.json
+NATIVE_SERVICE_MANIFEST := $(CURDIR)/bootstrap/stage1/init/tests/config/services.json
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_USERSPACE_LOADER := $(SDK_OUTPUT)/lib64/userspace-loader-hyper-$(NATIVE_ARCH)
 NATIVE_LOADER := $(SDK_OUTPUT)/lib64/ld-hyper-$(NATIVE_ARCH).so
@@ -64,7 +64,7 @@ FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
 NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
 # AArch64 Alpine exercises SMP by default; RISC-V guests remain single-vCPU.
-NATIVE_SMP_VM_CONFIG ?= $(CURDIR)/app/init/tests/config/vms-smp-4.json
+NATIVE_SMP_VM_CONFIG ?= $(CURDIR)/bootstrap/stage1/init/tests/config/vms-smp-4.json
 NATIVE_SMP_INITRAMFS := $(APP_OUTPUT)/initramfs-smp.cpio
 STACK_OUTPUT := $(CURDIR)/target/stack-audit/$(ARCH)
 STACK_AUDIT ?= 0
@@ -83,15 +83,24 @@ IO_VM_DISK ?= $(APP_OUTPUT)/io-disk.img
 IO_VM_ORAS ?=
 IO_VM_PACKAGE ?=
 BOARD ?= qemu
+BOARD_SYSTEM_LAYOUT ?= split
+ifeq ($(filter $(BOARD_SYSTEM_LAYOUT),split ramfs),)
+$(error BOARD_SYSTEM_LAYOUT must be split or ramfs)
+endif
 BOARD_CONFIG ?= $(CURDIR)/boards/$(BOARD).json
-BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)
+BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)$(if $(filter ramfs,$(BOARD_SYSTEM_LAYOUT)),-ramfs)
+BOARD_DEPLOYMENT = $(BOARD_OUTPUT)/deployment.json
+EROFS_MKFS ?= $(if $(wildcard $(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs),$(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs,mkfs.erofs)
 BOARD_IMAGE ?= $(BOARD_OUTPUT)/disk.img
 # Additional named inputs such as --artifact host-dtb=/path/to/bcm2712-rpi-5-b.dtb. These are
 # deployment inputs, never compile-time board selections.
 BOARD_ARTIFACTS ?=
 BOARD_EXTRA_ENTRIES ?=
 RPI5_BOOT_PACKAGE ?=
-RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native
+# Honor explicitly selected board policy, while the bare Pi target still uses
+# the Pi firmware profile instead of the general QEMU default.
+RPI5_BOARD_CONFIG ?= $(if $(filter undefined default file,$(origin BOARD_CONFIG)),$(CURDIR)/boards/rpi5.json,$(BOARD_CONFIG))
+RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native$(if $(filter ramfs,$(BOARD_SYSTEM_LAYOUT)),-ramfs)
 
 BOARD_TEST_OUTPUT ?= $(CURDIR)/target/board-tests
 
@@ -127,7 +136,7 @@ NATIVE_TEST_VM := 1
 NATIVE_GUEST_ARCH := arm64
 NATIVE_GUEST_LOAD := 0x40200000
 endif
-NATIVE_VM_CONFIG := $(CURDIR)/app/init/tests/config/$(if $(filter riscv64,$(ARCH)),vms-riscv64.json,vms.json)
+NATIVE_VM_CONFIG := $(CURDIR)/bootstrap/stage1/init/tests/config/$(if $(filter riscv64,$(ARCH)),vms-riscv64.json,vms.json)
 NATIVE_GUEST_PREREQUISITES := guest-itb
 NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
 QEMU_CPUS ?= 4

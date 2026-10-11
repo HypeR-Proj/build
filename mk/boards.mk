@@ -21,10 +21,10 @@ io-initramfs: app fit-pack $(NEWC_PACK)
 		--fit-pack "$(FIT_PACK)" --output "$(APP_OUTPUT)/io-standby.itb"
 	$(MAKE) -o app native-initramfs \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/initramfs-io.cpio" \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-with-vms.json" \
-		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-io.json" \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/bootstrap/stage1/init/config/services-with-vms.json" \
+		NATIVE_VM_CONFIG="$(CURDIR)/bootstrap/stage1/init/tests/config/vms-io.json" \
 		NATIVE_ENTRY_MANIFEST="$(APP_OUTPUT)/io-standby.entries.json" \
-		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-runtime"'
+		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_OUTPUT)/io-runtime"'
 
 .PHONY: test-io-standby
 test-io-standby: image io-initramfs
@@ -34,21 +34,26 @@ test-io-standby: image io-initramfs
 		--log "$(APP_OUTPUT)/io-standby-$(QEMU_CPUS).log"
 
 # Native-only hardware qualification does not download or start Linux guests.
-.PHONY: rpi5-bringup
-rpi5-bringup: image
+.PHONY: rpi5-bringup rpi5-bringup-deployment
+rpi5-bringup-deployment:
+	python3 -B scripts/prepare-native-layout.py --board "$(CURDIR)/boards/rpi5-native.json" \
+		--layout ramfs --output "$(RPI5_BRINGUP_OUTPUT)/bringup-board.json"
+
+rpi5-bringup: image rpi5-bringup-deployment
 	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
 	$(MAKE) native-initramfs NATIVE_IMAGE_PROFILE=system NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
-		NATIVE_SERVICE_MANIFEST="$(CURDIR)/app/init/config/services-console-only.json" \
+		NATIVE_SERVICE_MANIFEST="$(CURDIR)/bootstrap/stage1/init/config/services-console-only.json" \
 		NATIVE_VM_CONFIG= \
 		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
+		--board "$(RPI5_BRINGUP_OUTPUT)/bringup-board.json" \
 		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
 
 # Diskless Linux appliance qualification; no /data or device assignment.
 .PHONY: rpi5-io-bringup
 rpi5-io-bringup: BOARD = rpi5
-rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
+rpi5-io-bringup: image app fit-pack $(NEWC_PACK) rpi5-bringup-deployment
 	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
 	@package="$(IO_VM_PACKAGE)"; \
 	if test -z "$$package"; then \
@@ -63,6 +68,7 @@ rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
 		NATIVE_ENTRY_MANIFEST="$(RPI5_BRINGUP_OUTPUT)/io.entries.json" \
 		NATIVE_INITRAMFS="$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio"
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
+		--board "$(RPI5_BRINGUP_OUTPUT)/bringup-board.json" \
 		--kernel "$(KERNEL_IMAGE)" --initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE)
 
@@ -70,20 +76,26 @@ rpi5-io-bringup: image app fit-pack $(NEWC_PACK)
 .PHONY: rpi5-sd
 rpi5-sd: image
 	@test "$(ARCH)" = aarch64 || { echo "Pi 5 requires ARCH=aarch64" >&2; exit 2; }
-	$(MAKE) board-initramfs board-guest-images BOARD=rpi5 BOARD_CONFIG="$(CURDIR)/boards/rpi5.json" \
+	$(MAKE) board-initramfs board-guest-images BOARD=rpi5 BOARD_CONFIG="$(RPI5_BOARD_CONFIG)" \
 		BOARD_OUTPUT="$(RPI5_BRINGUP_OUTPUT)" NATIVE_IMAGE_PROFILE=system
 	python3 -B scripts/rpi5-bringup.py $(if $(RPI5_BOOT_PACKAGE),--package "$(RPI5_BOOT_PACKAGE)",) \
-		--board "$(CURDIR)/boards/rpi5.json" --kernel "$(KERNEL_IMAGE)" \
+		--board "$(RPI5_BRINGUP_OUTPUT)/deployment.json" --kernel "$(KERNEL_IMAGE)" \
 		--initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE) \
+		$(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),--system-root "$(RPI5_BRINGUP_OUTPUT)/system-root" --mkfs-erofs "$(EROFS_MKFS)") \
 		--artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
-		--artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4"
+		--artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
+
+.PHONY: board-deployment
+board-deployment:
+	python3 -B scripts/prepare-native-layout.py --board "$(BOARD_CONFIG)" \
+		--layout "$(BOARD_SYSTEM_LAYOUT)" --output "$(BOARD_DEPLOYMENT)"
 
 .PHONY: board-plan board-initramfs board-image board-build board-rebuild board-run board-guest-images
-board-plan:
-	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --plan
+board-plan: board-deployment
+	python3 -B scripts/pack-board-image.py --board "$(BOARD_DEPLOYMENT)" --plan
 
-board-initramfs: app fit-pack $(NEWC_PACK)
+board-initramfs: board-deployment app app-boot fit-pack $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "board deployment requires aarch64" >&2; exit 2; }
 	@package="$(IO_VM_PACKAGE)"; \
 	if test -z "$$package"; then \
@@ -91,14 +103,15 @@ board-initramfs: app fit-pack $(NEWC_PACK)
 			--reference "$(IO_VM_REFERENCE)" --oras "$(IO_VM_ORAS)") || exit $$?; \
 	fi; \
 	python3 -B scripts/io-vm-images.py --package "$$package" \
-		--fit-pack "$(FIT_PACK)" --board "$(BOARD_CONFIG)" --output "$(BOARD_OUTPUT)/io.itb"
-	$(MAKE) -o app native-initramfs \
-		NATIVE_INITRAMFS="$(BOARD_OUTPUT)/bootstrap.cpio" \
-		NATIVE_GUEST_PREREQUISITES= NATIVE_GUEST_ENTRY= \
-		NATIVE_SERVICE_MANIFEST="$(BOARD_OUTPUT)/board/services.json" \
-		NATIVE_VM_CONFIG="$(BOARD_OUTPUT)/board/vms.json" \
-		NATIVE_ENTRY_MANIFEST="$(BOARD_OUTPUT)/io.entries.json" \
-		NATIVE_EXTRA_ENTRIES='0755 svc/io-runtime "$(APP_OUTPUT)/io-runtime" 0644 etc/hyper/io-clients.conf "$(BOARD_OUTPUT)/board/io-clients.conf" $(BOARD_EXTRA_ENTRIES)'
+		--fit-pack "$(FIT_PACK)" --board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_OUTPUT)/io.itb"
+	python3 -B scripts/pack-native-system.py \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--deployment "$(APP_DEPLOYMENT)" --arch "$(NATIVE_ARCH)" \
+		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" \
+		--sdk "$(SDK_OUTPUT)" --std "$(NATIVE_STD_TEST_OUTPUT)" \
+		--boot-components $(APP_BOOT_COMPONENTS) \
+		--board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_OUTPUT)" --board-output "$(BOARD_OUTPUT)/board" \
+		$(BOARD_EXTRA_ENTRIES)
 
 # QEMU loads kernel/bootstrap directly from the host. Refresh these on every
 # build, but populate persistent volumes only when creating the first disk.
@@ -106,30 +119,40 @@ board-build: image board-initramfs
 	@if test ! -e "$(BOARD_IMAGE)" && test ! -L "$(BOARD_IMAGE)"; then \
 		$(MAKE) -o image -o board-initramfs board-image; \
 	fi
+	$(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),$(MAKE) board-check-system,@:)
 
 # Explicit full repacking resets persistent volumes only after successful packing.
 board-rebuild: image board-initramfs board-guest-images
 	@echo "Rebuilding $(BOARD_IMAGE): disk data will be reset after successful packing."
 	$(MAKE) -o image -o board-initramfs -o board-guest-images board-image BOARD_IMAGE_REPLACE=--replace
 
-board-guest-images: guest-itb
-	python3 -B scripts/pack-guest-disk.py --board "$(BOARD_CONFIG)" \
+board-guest-images: board-deployment guest-itb
+	python3 -B scripts/pack-guest-disk.py --board "$(BOARD_DEPLOYMENT)" \
 		--rootfs "$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/rootfs.tar" --output "$(BOARD_OUTPUT)/alpine.ext4"
 	"$(FIT_PACK)" "$(BOARD_OUTPUT)/alpine.itb" "$(NATIVE_GUEST_ARCH)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" "$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz"
 
 board-image: image board-initramfs board-guest-images
-	python3 -B scripts/pack-board-image.py --board "$(BOARD_CONFIG)" --output "$(BOARD_IMAGE)" $(BOARD_IMAGE_REPLACE) \
+	python3 -B scripts/pack-board-image.py --board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_IMAGE)" $(BOARD_IMAGE_REPLACE) \
+		$(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),--system-root "$(BOARD_OUTPUT)/system-root" --mkfs-erofs "$(EROFS_MKFS)") \
 		--default-artifact "hyper=$(KERNEL_IMAGE)" --default-artifact "bootstrap=$(BOARD_OUTPUT)/bootstrap.cpio" \
 		--default-artifact "alpine=$(BOARD_OUTPUT)/alpine.itb" \
 		--default-artifact "alpine-rootfs=$(BOARD_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
 
-board-run:
+.PHONY: board-check-system
+board-check-system:
+	@test -f "$(BOARD_DEPLOYMENT)" -a -f "$(BOARD_IMAGE)" -a -d "$(BOARD_OUTPUT)/system-root" || { \
+		echo "Deployment artifacts are missing; run make first." >&2; exit 2; \
+	}
+	python3 -B scripts/pack-board-image.py --board "$(BOARD_DEPLOYMENT)" \
+		--output "$(BOARD_IMAGE)" --system-root "$(BOARD_OUTPUT)/system-root" --check-system-payload
+
+board-run: $(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),board-check-system)
 	@test "$(BOARD)" = qemu || { echo "board-run requires the QEMU deployment profile" >&2; exit 2; }
 	$(NATIVE_QEMU_ENV) python3 -B scripts/run-io-vm.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(BOARD_OUTPUT)/bootstrap.cpio" \
-		--disk "$(BOARD_IMAGE)" --board "$(BOARD_CONFIG)"
+		--disk "$(BOARD_IMAGE)" --board "$(BOARD_DEPLOYMENT)"
 
 .PHONY: test-board-storage
 test-board-storage: app image
@@ -140,6 +163,7 @@ test-board-storage: app image
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
 		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
+		APP_FEATURES=hyper-io-runtime/storage-probe \
 		BOARD_CONFIG="$(BOARD_CONFIG)" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe"' && \
@@ -147,6 +171,31 @@ test-board-storage: app image
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$(BOARD_CONFIG)" --log "$$fixture/accept" \
 		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
+
+# Formal-root and recovery acceptance own a disposable disk and reuse only
+# their bootstrap archive for the controller-free boot.
+.PHONY: test-boot-system
+test-boot-system: app image
+	@test "$(ARCH)" = aarch64 || { echo "boot/system acceptance requires aarch64" >&2; exit 2; }
+	mkdir -p "$(BOARD_TEST_OUTPUT)"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/boot-system.XXXXXX") && \
+	$(MAKE) -o image -o app board-image BOARD=qemu BOARD_SYSTEM_LAYOUT=split \
+		BOARD_CONFIG="$(CURDIR)/boards/qemu.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_IMAGE="$$fixture/disk.img" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-boot-system.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/deployment.json" \
+		--log "$$fixture/deployment.log" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-boot-system.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
+		--recovery --log "$$fixture/recovery.log" && \
+	python3 -B tests/qemu/verify-boot-system.py prepare-handoff \
+		--entries "$$fixture/native-system/boot.entries.json" \
+		--output "$$fixture/handoff/bootstrap.cpio" --packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-boot-system.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/handoff/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/deployment.json" \
+		--failed-handoff --log "$$fixture/handoff.log"
 
 .PHONY: test-board-business
 test-board-business: app image fit-pack
@@ -202,6 +251,7 @@ test-board-broker: app image fit-pack
 	python3 -B tests/qemu/verify-board-broker.py prepare --board "$$fixture/config.json" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu IO_VM_PACKAGE="$$package" \
 		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/broker-apps" \
+		APP_FEATURES=hyper-io-runtime/broker-test,hyper-vm-manager/broker-test,hyper-vm-runtime/broker-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" BOARD_ARTIFACTS="--artifact business=$$fixture/business.itb" && \
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-broker.py run \
@@ -222,6 +272,7 @@ test-userspace-device: app image
 		--board "$(CURDIR)/boards/qemu.json" --output "$$fixture" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
 		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/device-apps" \
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-io-runtime/userspace-device-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/device-apps/storage-probe"' && \

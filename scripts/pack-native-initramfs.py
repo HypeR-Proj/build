@@ -54,8 +54,8 @@ def validate_entries(entries):
             raise ValueError(f'invalid archive path: {name}')
         if not source or '\0' in source:
             raise ValueError(f'invalid archive source: {source}')
-        if mode == 'symlink' and (source.startswith('/') or
-                any(part in ('', '.', '..') for part in source.split('/'))):
+        if mode == 'symlink' and any(
+                part in ('', '.', '..') for part in source.removeprefix('/').split('/')):
             raise ValueError(f'invalid archive symlink target: {source}')
         if name in destinations:
             raise ValueError(f'duplicate archive path: {name}')
@@ -75,6 +75,7 @@ def inputs(args):
                        if args.deployment else None),
         "entry_manifests": [[str(path), digest(path)] for path in args.entries_from],
         "entries": args.entries,
+        "library_namespaces": args.library_namespace,
         "contents": [None if args.entries[index] == 'symlink' else digest(args.entries[index + 2])
                      for index in range(0, len(args.entries), 3)],
     }
@@ -92,10 +93,12 @@ def main():
     parser.add_argument("--replace", action="append", default=[])
     parser.add_argument("--library-dir", type=Path, action="append", default=[],
                         help="same-build ELF providers; dependencies are added transitively")
+    parser.add_argument("--library-namespace", action="append", default=[],
+                        help="archive subtree with its own delegated loader and lib/ directory")
     parser.add_argument("--entries-from", type=Path, action="append", default=[],
                         help="JSON list of MODE ARCHIVE_PATH absolute-SOURCE triples, or symlink triples")
     parser.add_argument("entries", nargs="*",
-                        help="MODE ARCHIVE_PATH SOURCE or symlink ARCHIVE_PATH RELATIVE_TARGET")
+                        help="MODE ARCHIVE_PATH SOURCE or symlink ARCHIVE_PATH NAMESPACE_TARGET")
     args = parser.parse_args()
     if len(args.entries) % 3:
         parser.error("entries must be MODE ARCHIVE_PATH SOURCE triples")
@@ -120,11 +123,13 @@ def main():
         parser.error("--replace requires --deployment")
     if not args.entries:
         parser.error("no initramfs entries selected")
+    if args.library_namespace and args.library_dir:
+        parser.error("scoped library namespaces require an already composed dependency closure")
     validate_entries(args.entries)
     if args.library_dir:
         args.entries = add_dependencies(args.entries, args.library_dir)
         validate_entries(args.entries)
-    validate_libraries(args.entries)
+    validate_libraries(args.entries, args.library_namespace)
     # Validate the actual selected/generated manifest before cache hits or any
     # output mutation. The host tool shares init's parser and admission policy.
     manifests = [args.entries[index + 2] for index in range(0, len(args.entries), 3)

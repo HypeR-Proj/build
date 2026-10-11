@@ -204,6 +204,22 @@ elif args[0] == '--install':
         timestamp = output.stat().st_mtime_ns
         self.assertIn("up to date", run())
         self.assertEqual(output.stat().st_mtime_ns, timestamp)
+        # The namespace policy must invalidate the cache even if all current
+        # images happen to be static and the resulting archive bytes match.
+        command[2:2] = ['--library-namespace', 'system']
+        self.assertNotIn("up to date", run())
+        self.assertIn("up to date", run())
+        previous = output.read_bytes()
+        command[3] = '../system'
+        run(success=False)
+        self.assertEqual(output.read_bytes(), previous)
+        command[3] = 'system'
+        # Discovery runs in the global namespace, so scoped payloads must
+        # already contain their complete same-build dependency closure.
+        command[2:2] = ['--library-dir', str(self.root)]
+        run(success=False)
+        self.assertEqual(output.read_bytes(), previous)
+        del command[2:4]
         old_source_time = source.stat().st_mtime_ns
         source.write_bytes(header + b"changed")
         os.utime(source, ns=(old_source_time, old_source_time))
@@ -217,6 +233,7 @@ elif args[0] == '--install':
         strip.write_text('#!/bin/sh\nexit 1\n')
         run(success=False)
         self.assertEqual(output.read_bytes(), previous)
+
         self.assertEqual(source.read_bytes(), header + b"changed")
         strip.write_text('#!/bin/sh\nexit 0\n')
         command[-3] = "0644"
@@ -294,7 +311,7 @@ elif args[0] == '--install':
                         ['0644', 'vm//io.itb', '/host/io.itb'],
                         ['0644', 'vm/./io.itb', '/host/io.itb'],
                         ['0644', 'vm/../io.itb', '/host/io.itb'],
-                        ['symlink', 'lib', '/host/lib'],
+                        ['symlink', 'lib', '/host/../lib'],
                         ['symlink', 'lib', '../outside'],
                         ['symlink', 'lib', 'lib64//native'],
                         ['symlink', 'lib', 'lib64', '0755', 'lib/tool', '/host/tool'],
@@ -344,6 +361,10 @@ elif args[0] == '--install':
         command[command.index('alternate')] = '../escape'
         self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
         self.assertEqual(output.read_bytes(), previous)
+        # Absolute targets belong to the archive namespace, never the host.
+        command[command.index('../escape')] = '/system/lib64'
+        subprocess.run(command, check=True, capture_output=True)
+        self.assertIn(b'/system/lib64', output.read_bytes())
 
 
 if __name__ == "__main__":

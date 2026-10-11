@@ -16,12 +16,18 @@ def main():
     version = subprocess.check_output(['rustc', '-vV'], text=True)
     host = next(line.removeprefix('host: ') for line in version.splitlines()
                 if line.startswith('host: '))
+    arguments = sys.argv[2:]
+    if '--core' in arguments:
+        index = arguments.index('--core') + 1
+        if index >= len(arguments):
+            raise SystemExit('--core requires a manifest path')
+        arguments[index] = str(Path(arguments[index]).resolve())
     environment = dict(os.environ, CARGO_TARGET_DIR=str(root / 'target/app-host-tests'))
     # Running in app/ uses its source patches, not an installed target SDK.
     result = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--target', host,
-        '-p', 'hyper-init', '--example', 'check-services', '--',
-        str(Path(sys.argv[1]).resolve()), *sys.argv[2:],
+        '-p', 'hyper-service-manager', '--example', 'check-services', '--',
+        str(Path(sys.argv[1]).resolve()), *arguments,
     ], cwd=root / 'app', env=environment)
     raise SystemExit(result.returncode)
 

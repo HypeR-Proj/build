@@ -14,14 +14,17 @@ guest-itb: fit-pack
 		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz"
 
-# Development keeps the acceptance programs; system contains all ordinary apps.
+# Diskless deployments use the same core/system handoff, with /system in RAM.
+# Development additionally includes acceptance programs in the system payload.
 native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fixtures) $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
-	python3 -B scripts/pack-native-initramfs.py \
+	python3 -B scripts/pack-native-system.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
-		--output "$(NATIVE_INITRAMFS)" \
+		--output "$(NATIVE_INITRAMFS).deployment" --initramfs "$(NATIVE_INITRAMFS)" \
 		--deployment "$(APP_DEPLOYMENT)" --profile "$(NATIVE_IMAGE_PROFILE)" \
-		--apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
 		--std "$(NATIVE_STD_TEST_OUTPUT)" --arch "$(NATIVE_ARCH)" \
+		--boot-components $(APP_BOOT_COMPONENTS) \
+		--services "$(NATIVE_SERVICE_MANIFEST)" \
 		--replace "init=$(NATIVE_INIT)" \
 		--replace "bin/ps=$(NATIVE_PS_IMAGE)" \
 		--replace "svc/vm-manager=$(NATIVE_VM_MANAGER)" \
@@ -29,7 +32,7 @@ native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fix
 		$(if $(strip $(NATIVE_ENTRY_MANIFEST)),--entries-from "$(NATIVE_ENTRY_MANIFEST)") \
 		$(NATIVE_GUEST_ENTRY) \
 		$(if $(strip $(NATIVE_VM_CONFIG)),0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)") \
-		0644 etc/hyper/services.json "$(NATIVE_SERVICE_MANIFEST)" $(NATIVE_EXTRA_ENTRIES)
+		$(NATIVE_EXTRA_ENTRIES)
 
 NATIVE_QEMU_ENV = QEMU_MACHINE="$(QEMU_MACHINE)" QEMU_CPU="$(QEMU_CPU)" \
 	QEMU_CPUS="$(QEMU_CPUS)" QEMU_MEMORY="$(QEMU_MEMORY)" \
@@ -46,7 +49,7 @@ test-apps: image native-initramfs
 
 .PHONY: test-clock
 # The no-RTC case intentionally tests Native std without starting a guest VM.
-test-clock: NATIVE_SERVICE_MANIFEST = $(CURDIR)/app/init/config/services-console-only.json
+test-clock: NATIVE_SERVICE_MANIFEST = $(CURDIR)/bootstrap/stage1/init/config/services-console-only.json
 test-clock: NATIVE_VM_CONFIG =
 test-clock: image native-initramfs
 	@test "$(ARCH)" = aarch64 || { echo "clock fixture requires aarch64" >&2; exit 2; }
@@ -60,7 +63,7 @@ test-console: image native-initramfs
 # Native authority fixture boots as /init, independently of product services.
 test-vm-smoke: image app-fetch $(NEWC_PACK)
 	@test "$(ARCH)" = riscv64 -o "$(ARCH)" = aarch64 || { echo "VM smoke fixture requires aarch64 or riscv64" >&2; exit 2; }
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" HYPER_LINK_MODE=static HYPER_ARCH="$(NATIVE_ARCH)" \
 		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
@@ -69,7 +72,7 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/vm-smoke.cpio" \
-		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-smoke" \
+		0755 init "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-vm-smoke" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
@@ -77,6 +80,27 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-vm-smoke.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(APP_OUTPUT)/vm-smoke.cpio" \
 		"$(APP_OUTPUT)/vm-smoke-$(QEMU_CPUS).log"
+
+.PHONY: test-filesystem-failure
+# A media-independent real process/VMO/RPC test; no backend fault modes are
+# compiled or installed in the normal system image.
+test-filesystem-failure: image app-fetch $(NEWC_PACK)
+	$(MAKE) -o app-fetch app APP_OUTPUT="$(APP_OUTPUT)/filesystem-failure-apps" \
+		APP_FEATURES=hyper-fs-backend/failure-test APP_EXTRA_BINS=hyper-fs-failure
+	python3 -B scripts/pack-native-initramfs.py \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--output "$(APP_OUTPUT)/filesystem-failure.cpio" \
+		--library-dir "$(APP_OUTPUT)/filesystem-failure-apps/lib" \
+		--library-dir "$(SDK_OUTPUT)/lib" --library-dir "$(SDK_OUTPUT)/lib64" \
+		0755 init "$(APP_OUTPUT)/filesystem-failure-apps/fs-failure" \
+		symlink lib lib64 \
+		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
+		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
+		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)"
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-filesystem-failure.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--initramfs "$(APP_OUTPUT)/filesystem-failure.cpio" \
+		--log "$(APP_OUTPUT)/filesystem-failure.log"
 
 # Cross-VM fixture consumes the external appliance without patching its rootfs.
 test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
@@ -88,17 +112,19 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 	fi; \
 	python3 -B tests/qemu/verify-io-vm.py prepare --package "$$package" \
 		--fit-pack "$(FIT_PACK)" --output "$(APP_OUTPUT)/io-vm" --test "$(IO_VM_TEST)"
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_ARCH="$(NATIVE_ARCH)" \
+	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" fetch --manifest-path tests/native/io-smoke/Cargo.toml --locked
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" HYPER_LINK_MODE=static HYPER_ARCH="$(NATIVE_ARCH)" \
 		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
-		-p hyper-vm-runtime --bin hyper-io-smoke --release --locked --offline
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path tests/native/io-smoke/Cargo.toml \
+		--release --locked --offline
 	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/io-vm.cpio" \
-		--library-dir "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps" \
+		--library-dir "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/deps" \
 		--library-dir "$(SDK_OUTPUT)/lib" --library-dir "$(SDK_OUTPUT)/lib64" \
-		0755 init "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-smoke" \
+		0755 init "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-io-smoke" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
@@ -137,6 +163,7 @@ test-storage-failure: image app $(NEWC_PACK)
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		python3 -B tests/qemu/verify-storage-failure.py prepare \
 		--apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--boot-components $(APP_BOOT_COMPONENTS) \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/storage-failure"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-storage-failure.py run \
@@ -172,7 +199,7 @@ power-crash-case:
 		APP_FEATURES=hyper-vm-runtime/test-power-crash
 	$(MAKE) -o app native-initramfs ARCH=aarch64 \
 		APP_OUTPUT="$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE)-apps" \
-		NATIVE_VM_CONFIG="$(CURDIR)/app/init/tests/config/vms-power-crash.json" \
+		NATIVE_VM_CONFIG="$(CURDIR)/bootstrap/stage1/init/tests/config/vms-power-crash.json" \
 		NATIVE_GUEST_ITB="$(KERNEL_DIRECTORY)/target/guest/aarch64/alpine-smp.itb" \
 		NATIVE_INITRAMFS="$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE).cpio"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-power-crash.py "$(QEMU)" "$(KERNEL_IMAGE)" \

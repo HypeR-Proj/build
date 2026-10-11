@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
-from native_libraries import add_dependencies, read_image, validate
+from native_libraries import add_dependencies, read_image, resolve, validate
 
 
 def elf(*, needed=(), soname=None, exports=(), imports=(), weak=(), machine=183, interpreter=None):
@@ -164,6 +164,61 @@ class LibraryTests(unittest.TestCase):
         self.add('bin/tool', needed=['libargs.so'])
         with self.assertRaisesRegex(ValueError, 'symlink loop'):
             validate(self.entries)
+
+    def test_absolute_links_restart_at_the_archive_root(self):
+        links = {'svc': 'boot/svc', 'boot/svc/vm-manager': '/system/svc/vm-manager',
+                 'lib': 'lib64', 'lib64': 'boot/lib64'}
+        self.assertEqual(resolve('svc/vm-manager', links), 'system/svc/vm-manager')
+        self.assertEqual(resolve('lib/runtime.so', links), 'boot/lib64/runtime.so')
+
+    def test_ramfs_system_libraries_and_explicit_system_loader(self):
+        self.entries.extend(['symlink', 'lib64', 'boot/lib64',
+                             'symlink', 'system/lib', 'lib64'])
+        self.add('boot/init')
+        self.add('system/lib64/ld-hyper-aarch64.so')
+        self.add('system/bin/tool', needed=['libargs.so'], imports=['parse'],
+                 interpreter='/lib64/ld-hyper-aarch64.so')
+        self.add('system/lib64/aarch64-hyper-hyper/libargs.so', soname='libargs.so',
+                 exports=['parse'], needed=['libstd.so'], imports=['allocate'])
+        library = self.add('system/lib64/aarch64-hyper-hyper/libstd.so',
+                           soname='libstd.so', exports=['allocate'])
+        validate(self.entries, ['system'])
+        with self.assertRaisesRegex(ValueError, 'missing packaged ELF dependency boot/lib64/'):
+            validate(self.entries)
+        library.write_bytes(elf(soname='libstd.so', exports=['wrong_build']))
+        with self.assertRaisesRegex(ValueError, 'unresolved dynamic symbol allocate'):
+            validate(self.entries, ['system'])
+
+    def test_system_loader_cannot_fall_back_to_boot_loader(self):
+        self.add('system/bin/tool', interpreter='/lib64/ld-hyper-aarch64.so')
+        self.add('lib64/ld-hyper-aarch64.so')
+        with self.assertRaisesRegex(ValueError, 'missing packaged ELF dependency system/lib64/ld-'):
+            validate(self.entries, ['system'])
+
+    def test_library_namespace_does_not_fallback_to_boot_libraries(self):
+        self.add('system/bin/tool', needed=['libargs.so'])
+        self.add('lib64/aarch64-hyper-hyper/libargs.so', soname='libargs.so')
+        with self.assertRaisesRegex(ValueError, 'missing packaged ELF dependency system/lib/'):
+            validate(self.entries, ['system'])
+        for namespace in ('/system', '../system', 'system/', 'system//lib'):
+            with self.subTest(namespace=namespace), self.assertRaises(ValueError):
+                validate(self.entries, [namespace])
+
+    def test_namespace_boundaries_and_nearest_scope_keep_same_named_libraries_separate(self):
+        self.entries.extend(['symlink', 'system/lib', 'lib64',
+                             'symlink', 'system/vendor/lib', 'lib64'])
+        for namespace, symbol in (('', 'root_api'), ('system/', 'system_api'),
+                                  ('system/vendor/', 'vendor_api')):
+            self.add(namespace + 'bin/tool', needed=['libshared.so'], imports=[symbol])
+            self.add(namespace + 'lib64/aarch64-hyper-hyper/libshared.so',
+                     soname='libshared.so', exports=[symbol])
+        # A matching textual prefix without the path separator is outside the
+        # scope. Its interpreter and dependencies still use the root policy.
+        self.add('system-extra/bin/tool', needed=['libshared.so'], imports=['root_api'])
+        validate(self.entries, ['system/vendor', 'system'])
+        validate(self.entries, ['system', 'system/vendor'])
+        with self.assertRaisesRegex(ValueError, 'unresolved dynamic symbol vendor_api'):
+            validate(self.entries, ['system'])
 
     def test_path_traversal_and_truncated_metadata_are_rejected(self):
         path = self.add('bin/tool', needed=['../libargs.so'])

@@ -172,8 +172,9 @@ static int parse_permissions(const char *text, uint32_t *permissions)
 /* A link target is archive data, never a path to follow on the build host. */
 static int write_symlink(uint32_t inode, const char *path, const char *target)
 {
-	if (!path_is_canonical(path) || !path_is_canonical(target) || strlen(target) > UINT32_MAX) {
-		return fail_message("symlink paths must be canonical and relative");
+	const char *namespace_target = target[0] == '/' ? target + 1 : target;
+	if (!path_is_canonical(path) || !path_is_canonical(namespace_target) || strlen(target) > UINT32_MAX) {
+		return fail_message("symlink name and namespace target must be canonical");
 	}
 	if (write_header(inode, SYMLINK_MODE | 0777, 1, (uint32_t)strlen(target), path) !=
 		    EXIT_SUCCESS ||
@@ -187,7 +188,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 4 || (argc - 1) % 3 != 0) {
 		fputs("usage: newc-pack MODE ARCHIVE_PATH SOURCE [MODE ARCHIVE_PATH SOURCE ...]\n"
-		      "       use 'symlink ARCHIVE_PATH RELATIVE_TARGET' for symbolic links\n",
+		      "       use 'symlink ARCHIVE_PATH NAMESPACE_TARGET' for symbolic links\n",
 		      stderr);
 		return EXIT_FAILURE;
 	}

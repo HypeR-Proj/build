@@ -12,8 +12,8 @@ code. ABI definitions and SDK construction remain in `sdk/abi` and
 | Source | Responsibility | Build owner |
 | --- | --- | --- |
 | [`hyper/`](hyper/README.md) | Freestanding C runtime, startup, syscall veneers and std adapters; produces `libhyper` | SDK assembly through CMake |
-| [`userspace-loader/`](userspace-loader/README.md) | Native executable mapping and initial stack construction | SDK assembly through CMake |
-| [`dynamic-loader/`](dynamic-loader/README.md) | Native ELF interpreter, relocation and capability-relative runtime loading | SDK assembly through CMake |
+| `elf-loader/` | Shared bounded ELF mapping and initial stack construction | Internal C implementation used by both loaders |
+| [`dynamic-loader/`](dynamic-loader/README.md) | Formal static/dynamic executable loading, relocation and capability-relative runtime loading | SDK assembly through CMake |
 | [`rust/`](rust/README.md) | Raw and safe Native Rust bindings, Rust entry and service interfaces | Independent Cargo workspace, installed into the SDK |
 
 The application libraries below are explicit members of `app/Cargo.toml`, with
@@ -21,12 +21,19 @@ one lockfile, dependency graph, profile and installed-SDK boundary. They do not
 depend on kernel source or source-tree runtime paths. Application-specific code
 remains with its executable.
 
+The minimal static bootstrap loader belongs to
+[`bootstrap/stage1/userspace-loader`](../bootstrap/stage1/userspace-loader/README.md).
+The kernel starts `/init` through that loader; later process builders choose
+the bootstrap or formal loader explicitly through an executable capability.
+
 | Library | Consumers | Responsibility |
 | --- | --- | --- |
 | `hyper-clap-shared` | All clap-based Native tools | Own the common clap parser, validation and help code; applications retain their argument types and derive expansions. |
 | `hyper-tool-args` | `handle`, `ps`, `top`, `free` | Parse complete generation-bearing IDs and sampling intervals; combine process-ID and name selectors. Shared argument types live here; command-specific clap declarations remain in each tool. |
 | `hyper-vm-policy` | `init`, `vmm`, VM manager and runtimes | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
 | `hyper-vm-support` | VM and I/O runtimes | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
+| `hyper-fs-service` | Filesystem format workers | Common ordered filesystem request dispatch, shared-buffer lifetime, mount publication and parent-liveness handling; media semantics live in the format adapter. |
+| `hyper-service-manager` | Stage-1 init and system init | Service graph validation, launch authority, supervision transfer and userspace root-switch policy. |
 | `hyper-rust-std` | The other Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. It uses the installed SDK's std port. |
 
 `make app` builds the libraries and installs their `.so` artifacts under
@@ -34,21 +41,28 @@ remains with its executable.
 `libhyper_vm_policy_shared.so`, `libhyper_vm_support_shared.so` and
 `libhyper_rust_std.so`. Per-library `component.mk` declarations register them as
 providers. Image composition follows ELF dependencies and installs needed libraries in
-`/lib64/<arch>-hyper-hyper/` in both system and development images, with
-`/lib -> lib64`. AArch64 therefore uses `/lib/aarch64-hyper-hyper/`; RISC-V uses
-`/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory; the interpreter
-resides directly at `/lib64/ld-hyper-<arch>.so`.
+`/system/lib64/<arch>-hyper-hyper/` in both system and development images, with
+`/system/lib -> lib64`. AArch64 therefore uses `/system/lib/aarch64-hyper-hyper/`;
+RISC-V uses `/system/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory.
+ELF files retain the interpreter identity `/lib64/ld-hyper-<arch>.so`; process
+launchers explicitly supply the formal loader from `/system/lib64/`. This layout
+is the same whether `/system` resides on disk or in ramfs.
 Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
+The filesystem worker and service-manager libraries remain rlibs. They supply
+per-driver dispatch and shared init policy, respectively, without adding another
+installed shared object.
+
 The clap delivery crate re-exports the unmodified upstream API and shares the
 same std owner. Each policy/support implementation crate remains an rlib.
 Its small `shared/` package re-exports
-the same API as a Rust dylib. Native consumers select that package through target
-dependencies; host tests select the implementation directly. This keeps Native
+the same API as a Rust dylib. Dynamic Native consumers enable the shared-delivery
+feature and select that package through target dependencies. Static bootstrap
+programs and host tests use the implementation rlibs directly. This keeps Native
 SDK calls out of host shared-library links without introducing FFI wrappers or
-duplicating implementations. These Native consumers require dynamic linking.
+duplicating implementations. The shared-delivery packages require dynamic linking.
 `make app-check`, `make app-test`, `make app-sdk-test`, and the Native API documentation include
 the implementation crates automatically; the Native-only delivery packages are
 compiled and exercised by the image and QEMU checks. For example:

@@ -198,7 +198,7 @@ class BoardTests(unittest.TestCase):
             board = Board.load(ROOT / f'boards/{profile}.json')
             self.assertEqual(board.source['architecture'], 'aarch64')
             self.assertEqual(board.partitions[0].sectors * SECTOR, 1024**3)
-            self.assertEqual(board.partitions[0].owner, 'hyper')
+            self.assertEqual(board.partitions[0].content, 'data')
             self.assertEqual(board.vms()['virtual-machines'][0]['image'], '/data/vm/alpine.itb')
             self.assertEqual(board.partitions[1].start, board.partitions[0].end + 1)
             self.assertNotEqual(board.partitions[0].identifier, board.partitions[1].identifier)
@@ -229,6 +229,168 @@ class BoardTests(unittest.TestCase):
                 self.assertEqual((payload / 'hyper.img').is_file(), profile == 'rpi5')
                 self.assertEqual((payload / 'bootstrap.cpio').is_file(), profile == 'rpi5')
                 self.assertTrue((payload / 'vm/alpine.itb').is_file())
+
+    def test_system_payload_is_separate_and_vm_paths_remain_data(self):
+        self.source['disk']['partitions'][2].pop('image')
+        board = Board.parse(self.source)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = root / 'alpine.itb'
+            artifact.write_bytes(b'guest')
+            system = root / 'system'
+            (system / 'bin').mkdir(parents=True)
+            (system / 'bin/tool').write_bytes(b'native program')
+            payload = root / 'payload'
+            payload.mkdir()
+            packer.prepare_payload(board, {'alpine': artifact}, payload, system)
+            self.assertFalse((payload / 'bin/tool').exists())
+            vms = json.loads((payload / 'vms.json').read_bytes())
+            self.assertEqual(vms['virtual-machines'][0]['image'], '/data/vm/alpine.itb')
+            # Record a link itself; never hash the link's host target.
+            (system / 'bin/linked').symlink_to(artifact)
+            self.assertEqual(packer.system_files(system)['bin/linked'],
+                             {'symlink': str(artifact)})
+
+    def test_system_payload_does_not_replace_data_configuration(self):
+        self.source['virtual-machines'] = []
+        self.source['disk']['partitions'][2].pop('image')
+        board = Board.parse(self.source)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = root / 'alpine.itb'
+            artifact.write_bytes(b'guest')
+            system = root / 'system'
+            system.mkdir()
+            (system / 'board.json').write_text('{}')
+            payload = root / 'payload'
+            payload.mkdir()
+            packer.prepare_payload(board, {'alpine': artifact}, payload, system)
+            self.assertEqual(json.loads((payload / 'board.json').read_text()), board.source)
+
+    def test_stale_system_payload_requires_explicit_rebuild(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / 'disk.img'
+            output.write_bytes(b'persistent user data')
+            system = root / 'system'
+            system.mkdir()
+            tool = system / 'tool'
+            tool.write_bytes(b'build one')
+            with self.assertRaisesRegex(ValueError, 'no system payload record'):
+                packer.check_system_payload(output, system)
+            packer.system_state_path(output).write_text(json.dumps(packer.system_state(system)))
+            packer.check_system_payload(output, system)
+            tool.write_bytes(b'build two')
+            with self.assertRaisesRegex(ValueError, 'board-rebuild'):
+                packer.check_system_payload(output, system)
+            self.assertEqual(output.read_bytes(), b'persistent user data')
+
+    def test_native_volumes_reserve_disjoint_clients_and_gpt_partitions(self):
+        board = Board.parse(self.source)
+        self.assertEqual([p.name for p in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
+        self.assertEqual(board.native_volumes(), [
+            {'client': 8, 'source': 'PARTLABEL=hyper-data', 'read_only': False},
+            {'client': 7, 'source': 'PARTLABEL=hyper-system', 'read_only': True}])
+        self.assertEqual(board.backend_clients().splitlines()[-2:], ['8 - -', '7 - -'])
+        self.assertIn('1 alpine ', board.bootstrap_clients())
+        self.assertTrue(board.source['native']['fstab'].startswith('PARTLABEL=hyper-system /system'))
+        for first, second in zip(board.partitions, board.partitions[1:]):
+            self.assertLess(first.end, second.start)
+
+    def test_all_ramfs_has_no_system_disk_or_worker_build_requirement(self):
+        board = Board.parse(self.source, layout='ramfs')
+        self.assertEqual([p.name for p in board.partitions], ['hyper-data', 'alpine'])
+        self.assertEqual(len(board.native_volumes()), 1)
+        board.source['native']['fstab'] = 'PARTLABEL=hyper-data /data erofs ro 0 0\n'
+        Board.parse(board.source)  # Runtime magic/worker selection owns mount errors.
+
+    def test_omitted_native_policy_is_canonical_split_without_mutating_source(self):
+        original = copy.deepcopy(self.source)
+        board = Board.parse(self.source)
+        explicit = copy.deepcopy(self.source)
+        explicit['native'] = {
+            'layout': 'split',
+            'volumes': [{'source': 'PARTLABEL=hyper-data', 'read-only': False},
+                        {'source': 'PARTLABEL=hyper-system', 'read-only': True}],
+            'fstab': 'PARTLABEL=hyper-system /system auto ro 0 0\nPARTLABEL=hyper-data /data auto rw 0 0\n',
+        }
+        self.assertEqual(self.source, original)
+        self.assertEqual(board.source, explicit)
+        self.assertEqual(board, Board.parse(explicit))
+        self.assertEqual(board, Board.parse(board.source))
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'board.json'
+            path.write_text(json.dumps(self.source))
+            self.assertEqual(board, Board.load(path))
+            path.write_text(json.dumps(board.source))
+            self.assertEqual(board, Board.load(path))
+
+    def test_layout_selection_changes_only_native_system_medium(self):
+        disk = Board.parse(self.source)
+        ramfs = Board.parse(self.source, layout='ramfs')
+        self.assertEqual(ramfs.source['native'], {
+            'layout': 'ramfs', 'volumes': [{'source': 'PARTLABEL=hyper-data', 'read-only': False}],
+            'fstab': 'PARTLABEL=hyper-data /data auto rw 0 0\n'})
+        self.assertEqual(disk.vms(), ramfs.vms())
+        self.assertEqual(disk.source['files'], ramfs.source['files'])
+        self.assertEqual(disk.source['io-vm'], ramfs.source['io-vm'])
+        self.assertEqual(disk.partitions[0], ramfs.partitions[0])
+        self.assertEqual(Board.parse(ramfs.source), ramfs)
+        for layout, source in [('ramfs', disk.source), ('split', ramfs.source)]:
+            with self.subTest(layout=layout), self.assertRaisesRegex(ValueError, 'conflicts'):
+                Board.parse(source, layout=layout)
+
+    def test_removed_flat_and_null_native_policies_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'split or ramfs'):
+            Board.parse(self.source, layout='flat')
+        for policy in (None, {'layout': 'flat', 'volumes': [], 'fstab': ''}):
+            source = copy.deepcopy(self.source)
+            source['native'] = policy
+            with self.subTest(policy=policy), self.assertRaises(ValueError):
+                Board.parse(source)
+
+    def test_prepare_cli_preserves_one_policy_for_all_consumers(self):
+        from board_bootstrap import stage
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'source.json'
+            source.write_text(json.dumps(self.source))
+            original = source.read_bytes()
+            for layout in (None, 'split', 'ramfs'):
+                with self.subTest(layout=layout):
+                    output = root / f'{layout}.json'
+                    command = [sys.executable, '-B', str(ROOT / 'scripts/prepare-native-layout.py'),
+                               '--board', str(source), '--output', str(output)]
+                    if layout is not None:
+                        command.extend(['--layout', layout])
+                    subprocess.run(command, check=True, capture_output=True)
+                    board = Board.load(output)
+                    self.assertEqual(board, Board.load(source, layout=layout))
+                    staged = root / str(layout)
+                    stage(board, ROOT, staged)
+                    self.assertEqual((staged / 'fstab').read_text(), board.source['native']['fstab'])
+                    self.assertEqual(json.loads((staged / 'storage.json').read_text()),
+                                     board.storage_policy())
+                    self.assertEqual((staged / 'io-clients.conf').read_text(),
+                                     board.bootstrap_clients())
+                    stamp = output.stat().st_mtime_ns
+                    subprocess.run(command, check=True, capture_output=True)
+                    self.assertEqual(output.stat().st_mtime_ns, stamp)
+            self.assertEqual(source.read_bytes(), original)
+
+    def test_system_native_slot_cannot_overlap_guest_clients(self):
+        source = copy.deepcopy(self.source)
+        prototype = source['virtual-machines'][0]
+        prototype.pop('network')
+        source['virtual-machines'] = [dict(prototype, name=f'guest{i}') for i in range(7)]
+        with self.assertRaisesRegex(ValueError, 'eight I/O data slots'):
+            Board.parse(source)
+        ramfs = Board.parse(source, layout='ramfs')
+        self.assertIn('7 guest6 - -\n', ramfs.bootstrap_clients())
+        source['virtual-machines'].pop()
+        split = Board.parse(source)
+        clients = [row.split()[0] for row in split.backend_clients().splitlines()[1:]]
+        self.assertEqual(sorted(map(int, clients)), list(range(9)))
 
     def test_pi_image_reserves_noload_extent_without_modifying_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -270,21 +432,25 @@ class BoardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Board.parse(source)
 
-    def test_bootstrap_projection_uses_same_volume_identity(self):
+    def test_bootstrap_projection_keeps_partition_policy_out_of_linux(self):
         source = copy.deepcopy(self.source)
         for field in ('network-device', 'networks'):
             del source['io-vm'][field]
         del source['virtual-machines'][0]['network']
         board = Board.parse(source)
-        lines = board.bootstrap_volumes().splitlines()
-        self.assertEqual(lines[0], 'hyper.volumes.v1')
-        for line, volume in zip(lines[1:], board.volumes()['volumes'], strict=True):
-            self.assertEqual(line.split(), [volume['name'], volume['partuuid'],
-                             str(volume['sectors']), volume['owner'], volume['mapper']])
-        self.assertEqual(board.bootstrap_clients(), 'hyper.clients.v2\n0 config - -\n1 alpine - -\n')
+        self.assertEqual(board.bootstrap_clients(),
+                         'hyper.clients.v3\n0 - - -\n1 alpine - -\n')
+        self.assertEqual(board.backend_clients(),
+                         'hyper.clients.v3\n0 - -\n1 - -\n8 - -\n7 - -\n')
         self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\n')
         self.assertEqual(board.vms()['virtual-machines'][0]['disk'],
                          {'client': 1, 'volume': 'alpine'})
+        self.assertEqual(board.storage_policy()['guests'],
+                         [{'client': 1, 'source': 'PARTLABEL=alpine', 'read_only': False}])
+        for emitted in (board.backend_clients(), board.bootstrap_networks()):
+            self.assertNotIn('PARTLABEL', emitted)
+            for partition in board.partitions:
+                self.assertNotIn(str(partition.identifier), emitted)
 
     def test_network_projection_shares_client_and_preserves_native_reservation(self):
         self.assertEqual(len(Board.load(ROOT / 'boards/qemu.json').vms()['virtual-machines']), 1)
@@ -295,9 +461,9 @@ class BoardTests(unittest.TestCase):
                          {'client': 1, 'network': 'default', 'mac': '02:48:59:00:00:01'})
         self.assertNotIn('disk', definitions[1])
         self.assertEqual(definitions[1]['network']['client'], 2)
-        self.assertEqual([part.name for part in board.partitions], ['config', 'alpine'])
+        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
         self.assertEqual(board.bootstrap_clients(),
-                         'hyper.clients.v2\n0 config - -\n'
+                         'hyper.clients.v3\n0 - - -\n'
                          '1 alpine default 02:48:59:00:00:01\n'
                          '2 - default 02:48:59:00:00:02\n')
         self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\ndefault hbr0 eth0\n')
@@ -310,11 +476,11 @@ class BoardTests(unittest.TestCase):
         del isolated['network']
         source['virtual-machines'].insert(1, isolated)
         board = Board.parse(source)
-        self.assertEqual([part.name for part in board.partitions], ['config', 'alpine'])
+        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
         self.assertEqual(board.vms()['virtual-machines'][2]['disk']['client'], 3)
         self.assertEqual(board.vms()['virtual-machines'][2]['network']['client'], 3)
         self.assertEqual(board.bootstrap_clients(),
-                         'hyper.clients.v2\n0 config - -\n'
+                         'hyper.clients.v3\n0 - - -\n'
                          '1 - default 02:48:59:00:00:02\n'
                          '3 alpine default 02:48:59:00:00:01\n')
 
@@ -400,11 +566,17 @@ class BoardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'configured I/O VM network'):
             Board.parse(source)
 
-    def test_disk_image_requires_a_disk_size(self):
+    def test_disk_image_requires_an_explicit_partition_size(self):
         source = copy.deepcopy(self.source)
-        del source['virtual-machines'][0]['disk-mib']
-        with self.assertRaisesRegex(ValueError, 'disk-image requires disk-mib'):
+        del source['disk']['partitions'][2]['size-mib']
+        with self.assertRaisesRegex(ValueError, 'invalid partition fields'):
             Board.parse(source)
+        for disk in ({'source': 'alpine'}, {'source': 'PARTLABEL=alpine', 'read-only': 1},
+                     {'source': 'PARTLABEL=alpine', 'client': 1}, None):
+            source = copy.deepcopy(self.source)
+            source['virtual-machines'][0]['disk'] = disk
+            with self.subTest(disk=disk), self.assertRaises(ValueError):
+                Board.parse(source)
 
     def test_linux_overlay_keeps_network_and_client_policy_together(self):
         import board_bootstrap
@@ -414,8 +586,7 @@ class BoardTests(unittest.TestCase):
             overlay = board_bootstrap.linux_overlay(board, original)
         self.assertTrue(overlay.startswith(original))
         self.assertEqual(archive.call_args.args[0], {
-            'etc/hyper-volumes.conf': board.bootstrap_volumes().encode(),
-            'etc/hyper-clients.conf': board.bootstrap_clients().encode(),
+            'etc/hyper-clients.conf': board.backend_clients().encode(),
             'etc/hyper-networks.conf': board.bootstrap_networks().encode(),
         })
 
@@ -451,22 +622,66 @@ class BoardTests(unittest.TestCase):
             cases.append(case)
         for size in (True, 0, -1, 2**64, '1024'):
             case = copy.deepcopy(self.source)
-            case['disk']['config-mib'] = size
+            case['disk']['partitions'][0]['size-mib'] = size
             cases.append(case)
         for path in ('../escape', '/absolute', 'vm/../bad', 'VM/ALPINE.ITB',
-                     'vm', 'volumes.json', 'config.txt', 'x\\y', 'x/./y'):
+                     'vm', 'partitions.json', 'config.txt', 'x\\y', 'x/./y'):
             case = copy.deepcopy(self.source)
             case['files'][path] = 'artifact'
             cases.append(case)
         case = copy.deepcopy(self.source)
         case['virtual-machines'] *= 2
         cases.append(case)
-        case = copy.deepcopy(self.source)
-        case['virtual-machines'][0]['name'] = 'config'
-        cases.append(case)
         for case in cases:
             with self.subTest(case=case), self.assertRaises(ValueError):
                 Board.parse(case)
+
+    def test_data_label_and_guest_name_are_configuration_not_reserved_roles(self):
+        source = copy.deepcopy(self.source)
+        source['disk']['partitions'][0]['label'] = '持久化 data'
+        source['virtual-machines'][0]['name'] = 'config'
+        board = Board.parse(source)
+        self.assertEqual(board.partitions[0].name, '持久化 data')
+        self.assertIn('PARTLABEL=持久化\\040data /data auto rw', board.source['native']['fstab'])
+        self.assertEqual(board.native_volumes()[0]['source'], 'PARTLABEL=持久化 data')
+        self.assertEqual(board.vms()['virtual-machines'][0]['name'], 'config')
+        # Renaming the VM does not choose another backing partition.
+        self.assertEqual(board.storage_policy()['guests'][0]['source'], 'PARTLABEL=alpine')
+
+    def test_explicit_partition_uuid_survives_label_and_order_changes(self):
+        source = copy.deepcopy(self.source)
+        identifier = '72362b66-d96e-4f15-8bd3-c292a2907a94'
+        source['disk']['partitions'][0]['uuid'] = identifier
+        board = Board.parse(source)
+        source['disk']['partitions'][0]['label'] = 'my persistent data'
+        source['disk']['partitions'].reverse()
+        renamed = Board.parse(source)
+        self.assertEqual(str(board.partitions[0].identifier), identifier)
+        self.assertEqual(str(renamed.partitions[-1].identifier), identifier)
+        self.assertEqual(renamed.partitions[-1].content, 'data')
+        self.assertNotEqual(board.partitions[0].start, renamed.partitions[-1].start)
+
+    def test_partition_definitions_reject_duplicate_identity_and_conflicting_content(self):
+        cases = []
+        for field, value in [('label', ''), ('label', 'x' * 37), ('label', 'bad\x00label'),
+                             ('uuid', '00000000-0000-0000-0000-000000000000'),
+                             ('filesystem', 'unsupported'), ('content', 'other'),
+                             ('image', '../escape')]:
+            source = copy.deepcopy(self.source)
+            source['disk']['partitions'][0][field] = value
+            cases.append(source)
+        for duplicate in ('label', 'uuid', 'content'):
+            source = copy.deepcopy(self.source)
+            if duplicate == 'uuid':
+                source['disk']['partitions'][0]['uuid'] = '72362b66-d96e-4f15-8bd3-c292a2907a94'
+            source['disk']['partitions'][1][duplicate] = source['disk']['partitions'][0][duplicate]
+            cases.append(source)
+        source = copy.deepcopy(self.source)
+        source['disk']['partitions'][0]['image'] = 'conflicts-with-generated-content'
+        cases.append(source)
+        for source in cases:
+            with self.subTest(partitions=source['disk']['partitions']), self.assertRaises(ValueError):
+                Board.parse(source)
 
     def test_duplicate_json_keys_rejected(self):
         with self.assertRaises(ValueError):
@@ -499,10 +714,11 @@ class BoardTests(unittest.TestCase):
             mcopy = packer.image_tool('mcopy', 'mcopy', 'mtools')
         except ValueError as error:
             self.skipTest(str(error))
-        self.source['disk']['config-mib'] = 64
-        self.source['virtual-machines'][0]['disk-mib'] = 8
-        self.source['virtual-machines'][0]['disk-image'] = 'guest-disk'
-        board = Board.parse(self.source)
+        self.source['disk']['partitions'][0]['size-mib'] = 64
+        self.source['disk']['partitions'][2]['size-mib'] = 8
+        self.source['disk']['partitions'][2]['image'] = 'guest-disk'
+        # This fixture qualifies FAT and opaque guest disk publication only.
+        board = Board.parse(self.source, layout='ramfs')
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             artifacts = {}
@@ -521,14 +737,39 @@ class BoardTests(unittest.TestCase):
                     packer.build(board, artifacts, output, replace=True)
             self.assertEqual(output.read_bytes(), b'old user disk')
             packer.build(board, artifacts, output, replace=True)
-            config_file = directory / 'volumes.json'
+            config_file = directory / 'partitions.json'
             subprocess.run([mcopy, '-i', f'{output}@@{board.partitions[0].start * SECTOR}',
-                            '::/volumes.json', str(config_file)], check=True)
-            self.assertEqual(json.loads(config_file.read_bytes()), board.volumes())
+                            '::/partitions.json', str(config_file)], check=True)
+            self.assertEqual(json.loads(config_file.read_bytes()), board.partition_manifest())
             with output.open('rb') as stream:
                 stream.seek(board.partitions[1].start * SECTOR)
                 self.assertEqual(stream.read(17), b'guest-sector-zero')
             self.assertEqual(disk.stat().st_size, 8 * 1024**2)
+
+    def test_real_erofs_system_image_is_reproducible(self):
+        # Exercise the installed tool, including CI's erofs-utils 1.7, rather
+        # than mocking its command line and accepting unsupported options.
+        try:
+            mkfs = packer.image_tool('mkfs.erofs', 'mkfs.erofs', 'erofs-utils')
+        except ValueError as error:
+            self.skipTest(str(error))
+        board = Board.parse(self.source)
+        system = next(part for part in board.partitions if part.content == 'system')
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            root = directory / 'root'
+            root.mkdir()
+            (root / 'hello').write_bytes(b'system file\n')
+            (root / 'link').symlink_to('hello')
+            contents = []
+            for name in ('first', 'second'):
+                staging = directory / name
+                staging.mkdir()
+                images = packer.prepare_native_volumes(board, staging, root, None, None, mkfs)
+                self.assertEqual(set(images), {system.name})
+                contents.append(images[system.name].read_bytes())
+            self.assertEqual(struct.unpack_from('<I', contents[0], 1024)[0], 0xe0f5e1e2)
+            self.assertEqual(contents[0], contents[1])
 
 
 if __name__ == '__main__':

@@ -10,9 +10,10 @@ resolution, CMake owns native compilation, and the component registry owns
 delivery metadata. `make app-manifest` prints the expanded registry without
 building an SDK or changing any files.
 
-Each ordinary application and shared library declares delivery in its own
-`component.mk`. `mk/components.mk` discovers `app/*/component.mk` and
-`lib/*/component.mk`, then applies the shared templates under `mk/components/`.
+Each Native program and shared library declares delivery in its own
+`component.mk`. `mk/components.mk` discovers `app/*/component.mk`,
+`bootstrap/stage1/*/component.mk` and `lib/*/component.mk`, then applies the
+shared templates under `mk/components/`.
 Acceptance-only payloads are declared in `tests/native/component.mk`.
 
 ```make
@@ -27,17 +28,19 @@ The registry checks each declaration against its Cargo manifest and workspace
 membership. Cargo package names are read from those manifests. Dependencies,
 features and crate types remain in Cargo; the Make templates do not duplicate
 them. Native-only dylib declarations also supply the host-test exclusion list.
-Applications under `app/*/` are discovered by Cargo's member glob; `.cargo/`
-and `target/` are excluded. Add a new app's `Cargo.toml` and `component.mk` in
-its directory without editing a central member list. Libraries outside `app/`
-remain explicit workspace members. There is no separately maintained deployment
+Programs under `app/*/` are discovered by Cargo's member glob; app's `.cargo/`
+and `target/` are excluded. Add a new program's `Cargo.toml` and `component.mk`
+in its directory. Stage-1 packages explicitly select
+`workspace = "../../../app"` and are workspace members alongside libraries
+outside `app/`. There is no separately maintained deployment
 JSON or test library list.
 
 Each package owns its dependencies and features. Keep dependencies used by only
 one app in that app's manifest (for example, shell's `shlex` and grep's `regex`).
 The workspace supplies shared dependency versions, package metadata, lints and
-build profiles. One `app/Cargo.lock` pins the delivery graph for applications and
-Rust DSOs; a source-only app change does not require editing it. Dependency
+build profiles. One `app/Cargo.lock` pins the delivery graph for bootstrap
+programs, ordinary applications and Rust DSOs; a source-only app change does
+not require editing it. Dependency
 changes should update only the relevant lock entries, without unrelated upgrades.
 
 `native-file` registers an explicit SDK, configuration or fixture file, with
@@ -48,8 +51,16 @@ input format for untrusted manifests.
 
 ## Build and composition
 
-`make app` builds the selected ordinary binaries and workspace libraries in a
-single Cargo invocation, then stages the coherent application/library set.
+`make app` separates static programs owned by `bootstrap/stage1/` from
+ordinary applications and shared libraries. The
+component registry derives this policy from source ownership. Package-qualified
+`APP_FEATURES` and optional probe binaries are routed to their owning graph;
+bootstrap features cannot be unified with shared-library consumers. Installation
+stages the combined application/library set. Each link graph also separates
+components declared with the optional sixth `native-rust-app` argument `core`
+from the default `std` components. This keeps freestanding console workers out
+of std feature unification; their build and installation use the SDK's `no_std`
+target directory. `make app-check` checks the same component graphs.
 The staging directory's `build-manifest.json` records the source revision,
 compiler, SDK fingerprints, features and exact artifact hashes and sizes.
 Implementation rlibs remain usable by host tests. Native delivery crates select
@@ -66,6 +77,26 @@ Architecture is part of the path; the SDK's link/std fingerprints and Rust
 compiler configuration remain Cargo inputs. Do not mix artifacts from separate
 Rust feature graphs, SDKs or compiler builds.
 
+`make app-boot` builds only `APP_BOOT_COMPONENTS` with default Cargo features
+disabled and `HYPER_LINK_MODE=static`. The default selection contains init,
+console-input, console-output, session-service, fallback-sh, io-runtime, fs-backend,
+fs-fat, fs-erofs, mount and umount, using their staged names from the same
+component registry. The init, shell and I/O runtime packages use implementation
+rlibs and have no shared-delivery feature.
+
+Bootstrap Cargo artifacts use `APP_BOOT_CARGO_OUTPUT` (by default
+`$(APP_CARGO_OUTPUT)/boot-static`) and are staged under `APP_BOOT_OUTPUT`
+(`$(APP_OUTPUT)/boot-static`). This separate package selection and target
+directory prevent normal workspace builds from enabling shared-library features
+in bootstrap executables. Installation checks every selected ELF for the
+static-image contract before replacing any staged executable. Debug information
+is retained, and the build manifest records static linking and the exact
+component selection. Normal `make app` also installs stage-1 components from
+the static build tree. The SDK linker rejects dynamic linking
+for packages under `bootstrap/stage1/`, independently of the Make entry point;
+explicit dynamic builds through `hyper-cargo` fail. Static linking checks the
+final ELF as well as the requested flags.
+
 Image composition first applies profile membership and executable overrides.
 Rust shared libraries are providers: the packer follows each final ELF's
 `DT_NEEDED` and interpreter to add only its transitive dependencies. Providers
@@ -79,6 +110,42 @@ publication. Existing symbol policy is preserved: release build artifacts retain
 debug information, and packaging runs only `--strip-debug` on temporary copies.
 The original ELF files, ordinary symbols and dynamic symbols are retained.
 
+## Boot and system images
+
+Default board builds compose static bootstrap executables directly in the
+initial RAM archive root and stage the ordinary executable/DSO closure at
+`system-root/`. The archive becomes `/boot` after system init switches root.
+The image
+packer formats that staging as a dedicated EROFS volume; the configuration FAT
+volume remains separate and writable at `/data`. `EROFS_MKFS` selects the host
+`mkfs.erofs` executable. The generated image uses uncompressed 4096-byte core
+format with xattrs disabled. FAT may be selected for a generated system volume;
+its payload must not contain symlinks other than the optional `lib` alias which
+the packer can omit.
+
+`BOARD_SYSTEM_LAYOUT=ramfs` puts the same `/system` payload into the bootstrap
+archive and creates no system disk volume. Both storage choices use the same
+startup and supervision handoff, with separate core/system
+service graphs and the system init executable. Image checks validate both
+graphs together without pretending that disk executables are in the RAM archive.
+The bootstrap loader is the only loader in `/boot`; the formal loader is part
+of `/system` alongside the application/library payload. Ramfs validation scopes
+both its selected loader and libraries to `system`. The kernel always mounts
+the archive at `/`. System init then creates a new ramfs root, moves the original
+root to `/boot` and carries the configured mounts across an atomic `switch_root`.
+The default formal root contains `/boot`, `/system`, `/data` and `/tmp`, without
+root-level aliases. In ramfs deployment the switch also transfers the system
+subtree out of the old root, so `/boot/system` does not duplicate `/system`.
+These paths remain userspace deployment policy.
+
+System payload hashing checks for concurrent source changes during composition
+and stale persistent disks during subsequent builds. The sidecar record is a
+build consistency check, not runtime authenticity. Replacing an existing image
+remains explicit through `make rebuild` or `make board-rebuild`. Default QEMU
+outputs remain under `target/board/qemu/`, and Pi 5 uses
+`target/board/rpi5-native/`; ramfs outputs append `-ramfs`. See [boot layout](../docs/boot-layout.md) for deployment policy,
+artifacts, recovery behavior and build commands.
+
 ## SDK component cache
 
 The SDK builder uses one CMake invocation template for libhyper, dynamic-loader
@@ -86,6 +153,8 @@ and userspace-loader. Their installed outputs are cached independently beside
 the SDK in `<sdk-output>.components/`, keyed by source/dependency contents,
 compiler/tool identities, configuration and relevant environment. Cache hits
 verify output contents before restoring them into a fresh staging SDK.
+The loaders also include `lib/elf-loader` in their content dependencies, so a
+shared mapper change invalidates cached loader artifacts.
 
 This cache does not publish SDKs. The existing SDK publisher continues to
 serialize writers, check inputs again, preserve unchanged timestamps and replace

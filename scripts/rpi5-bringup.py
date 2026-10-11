@@ -56,6 +56,9 @@ def main():
     parser.add_argument('--replace', action='store_true')
     parser.add_argument('--artifact', action='append', default=[], metavar='NAME=PATH')
     parser.add_argument('--board', type=Path, default=ROOT / 'boards/rpi5-native.json')
+    parser.add_argument('--mkfs-erofs', default='mkfs.erofs')
+    parser.add_argument('--system-root', type=Path,
+                        help='Native /system payload for its independent disk volume')
     args = parser.parse_args()
     try:
         package = args.package
@@ -72,7 +75,8 @@ def main():
             raise ValueError('Pi 5 image requires the firmware boot profile')
         artifacts = packer.artifact_inputs(
             board, [f'{name}={path}' for name, path in artifacts.items()], args.artifact)
-        packer.build(board, artifacts, args.output, replace=args.replace)
+        packer.build(board, artifacts, args.output, replace=args.replace,
+                     system_root=args.system_root, mkfs_erofs=args.mkfs_erofs)
         print(f'Pi 5 image: {args.output}')
         print(f'Retain {package}/sources.tar.gz and manifest.json with any distributed image.')
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

@@ -101,7 +101,9 @@ def resolve(name, links):
         for index in range(1, len(parts) + 1):
             prefix = '/'.join(parts[:index])
             if prefix in links:
-                name = '/'.join(parts[:index - 1] + [links[prefix]] + parts[index:])
+                target = links[prefix]
+                parent = [] if target.startswith('/') else parts[:index - 1]
+                name = '/'.join(parent + [target.lstrip('/')] + parts[index:])
                 break
         else:
             return name
@@ -155,7 +157,18 @@ def add_dependencies(entries, directories):
     return result
 
 
-def validate(entries):
+def validate(entries, library_namespaces=()):
+    """Check each ELF with the library directory its launcher will delegate.
+
+    A namespace such as ``system`` scopes DT_NEEDED to that subtree's lib/ and
+    the explicitly delegated loader to its lib64/. PT_INTERP names the loader's
+    logical identity; the launcher supplies the actual executable capability.
+    This is packaging policy, not a VFS namespace or a process root switch.
+    """
+    for namespace in library_namespaces:
+        if any(part in ('', '.', '..') for part in namespace.split('/')):
+            raise ValueError(f'invalid library namespace: {namespace!r}')
+    namespaces = sorted(set(library_namespaces), key=len, reverse=True)
     links = {entries[index + 1]: entries[index + 2] for index in range(0, len(entries), 3)
              if entries[index] == 'symlink'}
 
@@ -163,12 +176,14 @@ def validate(entries):
               if entries[index] != 'symlink' and
               (image := read_image(entries[index + 2])) is not None}
     for root, image in images.items():
+        namespace = next((prefix + '/' for prefix in namespaces
+                          if root.startswith(prefix + '/')), '')
         arch = {183: 'aarch64', 243: 'riscv64', 62: 'x86_64'}.get(image.machine)
         if arch is None:
             raise ValueError(f'{root}: unsupported Native ELF machine {image.machine}')
         visited, pending = set(), [root]
         if image.interpreter:
-            pending.append(image.interpreter.lstrip('/'))
+            pending.append(namespace + image.interpreter.lstrip('/'))
         while pending:
             name = resolve(pending.pop(), links)
             if name in visited:
@@ -180,7 +195,7 @@ def validate(entries):
                 raise ValueError(f'{root}: dependency architecture mismatch: {name}')
             visited.add(name)
             for needed in dependency.needed:
-                destination = resolve(library_path(dependency, needed), links)
+                destination = resolve(namespace + library_path(dependency, needed), links)
                 if destination in images and images[destination].soname != needed:
                     raise ValueError(f'{name}: library SONAME mismatch: {destination}')
                 pending.append(destination)

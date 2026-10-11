@@ -13,15 +13,16 @@ repositories.
 
 ## Source ownership
 
-The SDK is assembled from the ABI and toolchain under `sdk/` and the runtime
-implementations under `lib/`:
+The SDK is assembled from the ABI and toolchain under `sdk/`, the runtime
+implementations under `lib/`, and the static loader under `bootstrap/stage1/`:
 
 | Path | Responsibility |
 | --- | --- |
 | `sdk/abi/` | Machine-visible values, layouts, syscall metadata, and generated interfaces |
 | `lib/hyper/` | Freestanding C runtime, startup code, and architecture syscall veneers |
-| `lib/userspace-loader/` | Small executable mapper and SDK startup stack builder |
-| `lib/dynamic-loader/` | Capability-relative runtime linker and `dlopen` implementation |
+| `bootstrap/stage1/userspace-loader/` | Static bootstrap executable loader |
+| `lib/elf-loader/` | Shared bounded ELF mapping and startup-stack implementation |
+| `lib/dynamic-loader/` | Formal executable loader, runtime linker and `dlopen` implementation |
 | `lib/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
 | `sdk/toolchain/` | Clang driver, linker script, ELF branding, and transactional SDK assembly |
 
@@ -65,6 +66,10 @@ share/hyper/rust/hyper-os/
 share/hyper/rust/hyper-rt/
 share/hyper/rust/hyper-service/
 share/hyper/rust/hyper-vm-image/
+share/hyper/rust/hyper-block/
+share/hyper/rust/hyper-filesystem/
+share/hyper/rust/hyper-fatfs/
+share/hyper/rust/hyper-erofs/
 share/hyper/manifest
 ```
 
@@ -115,14 +120,21 @@ and logical close. `HYPER_LINK_MODE=static` selects the matching
 or runtime dependency. The dynamic and static libraries are built from the
 same runtime sources and are both supported SDK application link modes.
 
-Product images store both loaders directly under `/lib64/`, shared libraries
-under `/lib64/<arch>-hyper-hyper/`, and publish `/lib -> lib64`. The kernel enters
-`userspace-loader-hyper-<arch>` for every process, including init. That loader opens
-`PT_INTERP` through a bootstrap-only Directory scoped to `/lib64`, then closes
-it before handing off. The dynamic loader's delegated library Directory remains
-the architecture subdirectory. The SDK itself is assembled for one architecture
-and stages link libraries in `lib/` and both loaders in `lib64/`; image composition
-places libraries in the architecture subdirectory.
+The kernel mounts its RAM archive as `/` and looks up only
+`/lib/userspace-loader-hyper-<arch>` and `/init` for initial startup. The bootstrap
+loader accepts static executables only. Subsequent process builders receive an
+explicit executable loader capability: core services use the bootstrap loader,
+while the formal environment uses `ld-hyper-<arch>.so` for both static and dynamic
+programs. The kernel validates and maps the selected restricted loader ELF;
+userspace owns application ELF mapping, stack construction and dynamic linking.
+
+The initial archive holds the bootstrap loader in `/lib64`; it becomes
+`/boot/lib64` after the root switch. Formal `ld` and its delegated
+library Directory are under `/system/lib64/`. Split and ramfs deployments use
+the same paths: only the storage backing `/system` differs. Userspace configures
+the generic VFS root switch and aliases; the kernel has no bootstrap-stage policy. The SDK stages
+link libraries in `lib/` and both loader artifacts in `lib64/`; composition
+selects their runtime placement.
 
 `make sdk-check` validates generated ABI output, lints the Rust SDK crates,
 builds the SDK transactionally, and compiles and links public-interface-only C
@@ -141,10 +153,11 @@ halves or identical addresses across architectures. Applications, allocators,
 and loaders must obey their granted VMAR range. The kernel grants ROOT_VMAR
 from one page to the selected application limit. The SDK creates the final
 stack near that limit, copies startup data and switches SP before retiring the
-kernel bootstrap stack and the userspace-loader mapping.
+kernel bootstrap stack. Static programs also retire the selected loader mapping;
+dynamic programs retain the formal loader for runtime linking.
 
-Executable, interpreter and library windows, heap address hints and final-stack
-placement are [userspace layout policy](../lib/userspace-loader/README.md#address-layout).
+Executable, loader and library windows, heap address hints and final-stack
+placement are [userspace layout policy](../lib/elf-loader/README.md#address-layout).
 They are currently deterministic; userspace ASLR is not implemented. VMAR
 reservations consume virtual address space, not their capacity in physical RAM.
 

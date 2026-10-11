@@ -24,7 +24,7 @@ def gpt(board):
         # VM containers intentionally have a project type GUID, never a host FS type.
         struct.pack_into('<16s16sQQQ72s', entries, index * GPT_ENTRY_BYTES,
                          part.type_id.bytes_le, part.identifier.bytes_le,
-                         part.start, part.end, 0, ('hyper-' + part.name).encode('utf-16-le'))
+                         part.start, part.end, 0, part.name.encode('utf-16-le'))
     checksum = binascii.crc32(entries)
 
     def header(current, alternate, table):
@@ -86,7 +86,48 @@ def pad_arm64_boot_image(path):
         image.truncate(memory_size)
 
 
-def prepare_payload(board, artifacts, directory):
+def system_files(root):
+    """Snapshot typed entries, modes and links without following host symlinks."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f'system payload must be a directory: {root}')
+    files = {}
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            files[str(path.relative_to(root))] = {'symlink': os.readlink(path)}
+            continue
+        if not (path.is_dir() or path.is_file()):
+            raise ValueError(f'unsupported system payload entry: {path}')
+        if path.is_file():
+            files[str(path.relative_to(root))] = {'sha256': digest(path),
+                                                   'mode': path.stat().st_mode & 0o777}
+    if not files:
+        raise ValueError(f'system payload is empty: {root}')
+    return files
+
+
+def system_state(root, board=None):
+    return {'files': system_files(root),
+            'native': board.source['native'] if board is not None else None}
+
+
+def system_state_path(output):
+    return Path(str(output) + '.system.json')
+
+
+def check_system_payload(output, root, board=None):
+    """A persistent disk must contain this build's executables and DSOs."""
+    try:
+        previous = json.loads(system_state_path(output).read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError('split disk has no system payload record; use '
+                         'board-rebuild to recreate it') from error
+    if not output.is_file() or previous != system_state(root, board):
+        raise ValueError('split disk contains a different system payload; use '
+                         'board-rebuild to recreate it '
+                         '(this resets disk data)')
+
+
+def prepare_payload(board, artifacts, directory, system_root=None):
     required = set(board.source['files'].values()) | {
         part.image for part in board.partitions if part.image}
     if artifacts.keys() != required:
@@ -96,7 +137,7 @@ def prepare_payload(board, artifacts, directory):
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f'missing or empty {key} artifact: {path}')
     for part in board.partitions:
-        if part.image and artifacts[part.image].stat().st_size != part.sectors * SECTOR:
+        if part.image and artifacts[part.image].stat().st_size != part.sectors * SECTOR and not part.native:
             # In particular, never silently enlarge a guest GPT disk and strand its
             # backup header in the middle. Resize with the guest's own image tooling.
             raise ValueError(f'{part.image}: disk image must exactly match the configured volume size')
@@ -104,8 +145,9 @@ def prepare_payload(board, artifacts, directory):
         destination = directory / target
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(artifacts[key], destination)
-    for filename, content in [('board.json', board.source), ('volumes.json', board.volumes()),
-                              ('vms.json', board.vms())]:
+    vms = board.vms()
+    for filename, content in [('board.json', board.source), ('partitions.json', board.partition_manifest()),
+                              ('vms.json', vms)]:
         (directory / filename).write_text(json.dumps(content, indent=2) + '\n')
     if board.source['boot'] == 'rpi5-firmware':
         pad_arm64_boot_image(directory / 'hyper.img')
@@ -192,7 +234,48 @@ def image_tool(program, default, formula):
     )
 
 
-def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=False):
+def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs, data_root=None):
+    """Format only requested Native volumes; guest images remain opaque."""
+    images = {}
+    system_part = next((part for part in board.partitions
+                        if part.content == 'system'), None)
+    if system_root is not None and (system_part is None or system_part.image):
+        raise ValueError('--system-root requires a generated Native system volume')
+    if system_part is not None and not system_part.image and system_root is None:
+        raise ValueError('generated system volume requires --system-root')
+    for part in board.partitions:
+        if not part.native or part.image:
+            continue
+        image = staging / (part.identifier.hex + '.fs')
+        root = {'data': data_root, 'system': system_root}.get(part.content)
+        if part.content == 'data' and root is None:
+            continue
+        if part.filesystem == 'erofs':
+            tool = image_tool(mkfs_erofs, 'mkfs.erofs', 'erofs-utils')
+            # erofs-utils 1.7 accepts UUIDs, but not the newer "clear" alias.
+            subprocess.run([tool, '-b4096', '-x-1', '-T0',
+                            '-U00000000-0000-0000-0000-000000000000', '--all-root',
+                            str(image), str(root)], check=True)
+        elif part.filesystem == 'fat':
+            with image.open('xb') as stream:
+                stream.truncate(part.sectors * SECTOR)
+            subprocess.run([mkfs, '--invariant', '-F', '32', '-S', str(SECTOR),
+                            '-n', 'HYPER', str(image)], check=True)
+            if root is not None:
+                if any(path.is_symlink() for path in root.rglob('*')):
+                    raise ValueError('FAT system images cannot encode symbolic links; use EROFS')
+                subprocess.run([mcopy, '-i', str(image), '-s',
+                                *(str(item) for item in sorted(root.iterdir())), '::/'], check=True)
+        else:
+            raise ValueError(f'unsupported Native image format: {part.filesystem}')
+        if image.stat().st_size > part.sectors * SECTOR:
+            raise ValueError(f'{part.name}: filesystem exceeds configured volume capacity')
+        images[part.name] = image
+    return images
+
+
+def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=False,
+          system_root=None, mkfs_erofs='mkfs.erofs'):
     if not replace and (output.exists() or output.is_symlink()):
         raise ValueError('refusing to overwrite an existing image; choose a new output path')
     mkfs = image_tool(mkfs, 'mkfs.fat', 'dosfstools')
@@ -203,36 +286,39 @@ def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=F
         payload = staging / 'payload'
         payload.mkdir()
         checksums = {key: digest(path) for key, path in artifacts.items()}
-        prepare_payload(board, artifacts, payload)
-        config = staging / 'config.fat'
-        with config.open('xb') as stream:
-            stream.truncate(board.partitions[0].sectors * SECTOR)
-        subprocess.run([mkfs, '--invariant', '-F', '32', '-S', str(SECTOR), '-n', 'HYPER',
-                        '-i', f'{board.disk_id.int & 0xffffffff:08x}', str(config)], check=True)
-        subprocess.run([mcopy, '-i', str(config), '-s',
-                        *(str(item) for item in sorted(payload.iterdir())), '::/'], check=True)
+        system_checksums = system_state(system_root, board) if system_root is not None else None
+        prepare_payload(board, artifacts, payload, system_root)
+        native_images = prepare_native_volumes(board, staging, system_root,
+                                               mkfs, mcopy, mkfs_erofs, payload)
         image = staging / 'disk.img'
         with image.open('xb') as stream:
             stream.truncate(board.disk_sectors * SECTOR)
             for sector, contents in gpt(board):
                 stream.seek(sector * SECTOR)
                 stream.write(contents)
-            sparse_copy(config, stream, board.partitions[0].start * SECTOR,
-                        board.partitions[0].sectors * SECTOR)
-            for part in board.partitions[1:]:
-                if part.image:
-                    sparse_copy(artifacts[part.image], stream, part.start * SECTOR,
-                                part.sectors * SECTOR)
+            for part in board.partitions:
+                source = artifacts.get(part.image) if part.image else native_images.get(part.name)
+                if source is not None:
+                    sparse_copy(source, stream, part.start * SECTOR, part.sectors * SECTOR)
             stream.flush()
             os.fsync(stream.fileno())
         if checksums != {key: digest(path) for key, path in artifacts.items()}:
             raise ValueError('artifacts changed while packing; retry')
+        if system_root is not None and system_checksums != system_state(system_root, board):
+            raise ValueError('system payload changed while packing; retry')
+        state = staging / 'system.json'
+        if system_checksums is not None:
+            state.write_text(json.dumps(system_checksums, indent=2, sort_keys=True) + '\n')
         # Keep the old disk intact until the complete replacement is ready.
         if replace:
             os.replace(image, output)
         else:
             # Atomic no-replace publication, including races with another packer.
             os.link(image, output)
+        if system_checksums is not None:
+            state.replace(system_state_path(output))
+        else:
+            system_state_path(output).unlink(missing_ok=True)
     print(f'{output}: {board.disk_sectors * SECTOR} bytes; {len(board.partitions)} volumes')
 
 
@@ -269,18 +355,29 @@ def main():
     parser.add_argument('--plan', action='store_true', help='validate and print volume layout only')
     parser.add_argument('--replace', action='store_true',
                         help='atomically replace the output, resetting all disk data')
+    parser.add_argument('--mkfs-erofs', default='mkfs.erofs')
     parser.add_argument('--mkfs', default='mkfs.fat')
     parser.add_argument('--mcopy', default='mcopy')
+    parser.add_argument('--system-root', type=Path,
+                        help='Native /system payload for its independent disk volume')
+    parser.add_argument('--check-system-payload', action='store_true',
+                        help='check that an existing disk contains the staged Native /system build')
     args = parser.parse_args()
     try:
         board = Board.load(args.board)
         if args.plan:
-            print(json.dumps(board.volumes(), indent=2))
+            print(json.dumps(board.partition_manifest(), indent=2))
             return
         if args.output is None:
             raise ValueError('--output is required when building an image')
+        if args.check_system_payload:
+            if args.system_root is None:
+                raise ValueError('--check-system-payload requires --system-root')
+            check_system_payload(args.output, args.system_root, board)
+            return
         artifacts = artifact_inputs(board, args.default_artifact, args.artifact)
-        build(board, artifacts, args.output, args.mkfs, args.mcopy, replace=args.replace)
+        build(board, artifacts, args.output, args.mkfs, args.mcopy, replace=args.replace,
+              system_root=args.system_root, mkfs_erofs=args.mkfs_erofs)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'board image: {error}\n')
 

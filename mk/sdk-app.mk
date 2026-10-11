@@ -6,6 +6,13 @@
 # Test their implementation crates on the host; exercise delivery through QEMU.
 APP_HOST_EXCLUDES = $(shell python3 -B scripts/app-deployment.py host-excludes --manifest "$(APP_DEPLOYMENT)")
 
+# Bootstrap programs are built independently: a workspace-wide Cargo build can
+# unify shared-library features back into these otherwise static consumers.
+APP_BOOT_COMPONENTS ?= init console-input console-output session-service fallback-sh io-runtime fs-backend fs-fat fs-erofs mount umount
+APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
+APP_BOOT_CARGO_OUTPUT ?= $(APP_CARGO_OUTPUT)/boot-static
+APP_BOOT_SELECTION = $(addprefix --component ,$(APP_BOOT_COMPONENTS))
+
 .PHONY: app-manifest
 app-manifest:
 	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)"
@@ -41,7 +48,7 @@ sdk-check: sdk
 		--workspace --target "$(NATIVE_FREESTANDING_TARGET)" --lib -- -D warnings
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-host" $(CARGO) clippy \
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
-		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image \
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image -p hyper-block -p hyper-filesystem -p hyper-fatfs -p hyper-erofs \
 		--all-targets -- -D warnings
 	$(CARGO) fmt --manifest-path "tools/fit-pack/Cargo.toml" -- --check
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) clippy \
@@ -68,7 +75,7 @@ sdk-test:
 		--target "$(HOST_TARGET)" --all-features
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-tests" $(CARGO) test \
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
-		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image
+		--target "$(HOST_TARGET)" -p hyper-os -p hyper-service -p hyper-sys -p hyper-vm-image -p hyper-block -p hyper-filesystem -p hyper-fatfs -p hyper-erofs
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) test \
 		--manifest-path "tools/fit-pack/Cargo.toml" --target "$(HOST_TARGET)"
 	cmake -S "$(SDK_LIB_SOURCE)/tests/unit" -B "$(SDK_LIB_TEST_OUTPUT)" \
@@ -83,18 +90,50 @@ app-fetch: sdk
 
 app: app-fetch
 	mkdir -p "$(APP_OUTPUT)"
-	@app_bins=$$(python3 -B scripts/app-deployment.py binaries --manifest "$(APP_DEPLOYMENT)") || exit $$?; \
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
+	@set -e; for link_mode in static dynamic; do for rust_runtime in core std; do \
+	build_directory="$(APP_CARGO_OUTPUT)"; \
+	if test "$$link_mode" = static; then build_directory="$(APP_BOOT_CARGO_OUTPUT)"; fi; \
+	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
+	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
+		--manifest "$(APP_DEPLOYMENT)" --link-mode "$$link_mode" --rust-runtime "$$rust_runtime" \
+		--features "$(APP_FEATURES)" \
+		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))) || exit $$?; \
+	test -n "$$app_targets" || continue; \
+	CARGO_TARGET_DIR="$$build_directory" HYPER_LINK_MODE="$$link_mode" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "app/Cargo.toml" --workspace --release --locked --offline \
-		--lib $$app_bins $(addprefix --bin ,$(APP_EXTRA_BINS)) \
-		$(if $(strip $(APP_FEATURES)),--features "$(APP_FEATURES)")
+		HYPER_RUST_STD="$$rust_std" "$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		--manifest-path "app/Cargo.toml" --release --locked --offline $$app_targets; \
+	done; done
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
 		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)" \
+		--static-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" \
+		--core-build "$(APP_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
+		--static-core-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
 		--sdk "$(SDK_OUTPUT)" --features "$(APP_FEATURES)" \
 		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))
+
+.PHONY: app-boot
+app-boot: app-fetch
+	@test -n "$(strip $(APP_BOOT_COMPONENTS))" || { echo "APP_BOOT_COMPONENTS must not be empty" >&2; exit 2; }
+	@set -e; for rust_runtime in core std; do \
+	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
+	boot_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
+		--manifest "$(APP_DEPLOYMENT)" --link-mode static $(APP_BOOT_SELECTION) \
+		--rust-runtime "$$rust_runtime" --features "$(APP_FEATURES)") || exit $$?; \
+	test -n "$$boot_targets" || continue; \
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" \
+		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		HYPER_RUST_STD="$$rust_std" HYPER_LINK_MODE=static "$(SDK_OUTPUT)/bin/hyper-cargo" build \
+		--manifest-path "app/Cargo.toml" --release --locked --offline \
+		--no-default-features $$boot_targets; \
+	done
+	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
+		--build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" \
+		--static-core-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
+		--output "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" --link-mode static \
+		--features "$(APP_FEATURES)" $(APP_BOOT_SELECTION)
 
 .PHONY: app-fixtures app-sdk-test
 app-fixtures: app
@@ -117,11 +156,17 @@ app-fixtures: app
 
 app-check: app-fetch
 	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" \
+	@set -e; for link_mode in static dynamic; do for rust_runtime in core std; do \
+	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
+	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
+		--manifest "$(APP_DEPLOYMENT)" --link-mode "$$link_mode" --rust-runtime "$$rust_runtime") || exit $$?; \
+	test -n "$$app_targets" || continue; \
+	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_LINK_MODE="$$link_mode" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD=1 "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
-		--manifest-path "app/Cargo.toml" --workspace --locked --offline -- -D warnings
+		HYPER_RUST_STD="$$rust_std" "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
+		--manifest-path "app/Cargo.toml" --locked --offline $$app_targets -- -D warnings; \
+	done; done
 
 app-test:
 	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
@@ -129,6 +174,10 @@ app-test:
 		--target "$(HOST_TARGET)" --locked $(APP_TEST_ARGS) \
 		--config "patch.crates-io.hyper-abi.path = '$(SDK_ABI_SOURCE)'" \
 		--config "patch.crates-io.hyper-os.path = '$(SDK_RUST_SOURCE)/hyper-os'" \
+		--config "patch.crates-io.hyper-filesystem.path = '$(SDK_RUST_SOURCE)/hyper-filesystem'" \
+		--config "patch.crates-io.hyper-block.path = '$(SDK_RUST_SOURCE)/hyper-block'" \
+		--config "patch.crates-io.hyper-fatfs.path = '$(SDK_RUST_SOURCE)/hyper-fatfs'" \
+		--config "patch.crates-io.hyper-erofs.path = '$(SDK_RUST_SOURCE)/hyper-erofs'" \
 		--config "patch.crates-io.hyper-rt.path = '$(SDK_RUST_SOURCE)/hyper-rt'" \
 		--config "patch.crates-io.hyper-service.path = '$(SDK_RUST_SOURCE)/hyper-service'" \
 		--config "patch.crates-io.hyper-vm-image.path = '$(SDK_RUST_SOURCE)/hyper-vm-image'" \
@@ -140,6 +189,10 @@ app-sdk-test: app-fetch
 		--target "$(HOST_TARGET)" --locked --offline \
 		--config "patch.crates-io.hyper-abi.path = '$(SDK_OUTPUT)/share/hyper/abi'" \
 		--config "patch.crates-io.hyper-os.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-os'" \
+		--config "patch.crates-io.hyper-filesystem.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-filesystem'" \
+		--config "patch.crates-io.hyper-block.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-block'" \
+		--config "patch.crates-io.hyper-fatfs.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-fatfs'" \
+		--config "patch.crates-io.hyper-erofs.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-erofs'" \
 		--config "patch.crates-io.hyper-rt.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-rt'" \
 		--config "patch.crates-io.hyper-service.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-service'" \
 		--config "patch.crates-io.hyper-vm-image.path = '$(SDK_OUTPUT)/share/hyper/rust/hyper-vm-image'" \

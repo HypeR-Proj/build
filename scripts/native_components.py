@@ -28,12 +28,18 @@ def load_registry(path):
     for record in result.stdout.splitlines():
         fields = record.split('|')
         kind = fields[0]
-        if kind in ('binary', 'library') and len(fields) == 6:
-            _, source, artifact, staged, destination, profiles = fields
+        if kind in ('binary', 'library') and len(fields) in (6, 7):
+            _, source, artifact, staged, destination, profiles = fields[:6]
+            runtime = fields[6] if len(fields) == 7 else 'std'
+            if runtime not in ('std', 'core') or (kind == 'library' and runtime != 'std'):
+                raise ValueError(f'invalid Rust component runtime: {record}')
             directory = (ROOT / source).resolve()
             if directory not in members:
                 raise ValueError(f'component is not an app workspace member: {source}')
             manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
+            static = directory.is_relative_to(ROOT / 'bootstrap/stage1')
+            if static and kind == 'library':
+                raise ValueError(f'bootstrap/stage1 cannot provide a shared library: {source}')
             if kind == 'binary':
                 if artifact not in {item['name'] for item in manifest.get('bin', [])}:
                     raise ValueError(f'component binary is absent from Cargo manifest: {artifact}')
@@ -44,7 +50,10 @@ def load_registry(path):
                     raise ValueError(f'component is not the declared Rust dylib: {artifact}')
             entry = {kind: artifact, 'staged': staged, 'destination': destination,
                      'mode': '0755', 'profiles': profiles.split(),
-                     'package': manifest['package']['name']}
+                     'package': manifest['package']['name'],
+                     'link_mode': 'static' if static else 'dynamic',
+                     'rust_runtime': runtime,
+                     'cargo_binaries': [item['name'] for item in manifest.get('bin', [])]}
         elif kind in ('source', 'symlink') and len(fields) == 5:
             _, source, destination, mode, profiles = fields
             entry = {kind: source, 'destination': destination, 'mode': mode,
@@ -53,3 +62,43 @@ def load_registry(path):
             raise ValueError(f'invalid component record: {record}')
         entries.append(entry)
     return {'version': 1, 'entries': entries}
+
+
+def link_entries(entries, mode):
+    """Select one link graph; bootstrap must never unify features with DSOs."""
+    return [entry for entry in entries if 'package' in entry
+            and (mode is None or entry.get('link_mode', 'dynamic') == mode)]
+
+
+def extra_binary(entries, name):
+    owners = [entry for entry in entries if name in entry.get('cargo_binaries', [])]
+    if len(owners) != 1:
+        raise ValueError(f'extra binary must have one registered Cargo owner: {name}')
+    return owners[0]
+
+
+def cargo_targets(entries, selected, mode, features, extra_bins, runtime=None):
+    """Route qualified features and optional probes to their owning link graph."""
+    owners = {entry['package']: entry for entry in link_entries(entries, None)}
+    packages = {entry['package'] for entry in selected if 'package' in entry}
+    binaries = {entry['binary'] for entry in selected if 'binary' in entry}
+    for name in extra_bins:
+        owner = extra_binary(entries, name)
+        if ((mode is None or owner.get('link_mode', 'dynamic') == mode)
+                and (runtime is None or owner.get('rust_runtime', 'std') == runtime)):
+            packages.add(owner['package'])
+            binaries.add(name)
+    selected_features = []
+    for feature in features.replace(',', ' ').split():
+        package, separator, name = feature.partition('/')
+        if not separator or not name or package not in owners:
+            raise ValueError(f'feature must name a registered package: {feature}')
+        if package in packages:
+            selected_features.append(feature)
+    arguments = [arg for package in sorted(packages) for arg in ('--package', package)]
+    arguments += [arg for binary in sorted(binaries) for arg in ('--bin', binary)]
+    if any('library' in entry for entry in selected):
+        arguments.append('--lib')
+    if selected_features:
+        arguments += ['--features', ','.join(sorted(set(selected_features)))]
+    return arguments

@@ -29,25 +29,31 @@ def newc(files):
 def linux_overlay(board, original):
     # Keep the verified upstream member intact, including its hard-link inode
     # table. A separate compressed archive contributes only HypeR configuration.
-    overlay = newc({'etc/hyper-volumes.conf': board.bootstrap_volumes().encode(),
-                    'etc/hyper-clients.conf': board.bootstrap_clients().encode(),
+    overlay = newc({'etc/hyper-clients.conf': board.backend_clients().encode(),
                     'etc/hyper-networks.conf': board.bootstrap_networks().encode()})
     return original + gzip.compress(overlay, mtime=0)
 
 
 def services(board, root):
-    manifest = json.loads((root / 'app/init/config/services-with-vms.json').read_bytes())
+    manifest = json.loads((root / 'bootstrap/stage1/init/config/services-with-vms.json').read_bytes())
     manifest['virtual-machines']['config'] = '/data/vms.json'
+    manifest['services'].append(filesystem_service())
     for service in manifest['services']:
+        if service['name'] == 'session':
+            service['capabilities'].append({
+                'source': 'bootstrap.filesystem-control-client',
+                'purpose': 'filesystem.control-client', 'operation': 'duplicate',
+                'rights': ['wait', 'write', 'duplicate', 'transfer']})
         if service['name'] == 'vm-manager':
             service['capabilities'].append({
                 'source': 'bootstrap.io-broker-client', 'purpose': 'io.broker-client',
                 'operation': 'move', 'rights': ['wait', 'write']})
         if service['name'] != 'io-runtime':
             continue
-        for capability in service['capabilities']:
-            if capability['purpose'] == 'process.root-directory':
-                capability['rights'] = ['read', 'write', 'execute', 'inspect', 'duplicate']
+        service['after'].append('fs-backend')
+        service['capabilities'].append({
+            'source': 'bootstrap.filesystem-provider', 'purpose': 'filesystem.provider',
+            'operation': 'move', 'rights': ['wait', 'write']})
         service['capabilities'].append({
             'source': 'bootstrap.io-ready-channel', 'purpose': 'io.ready',
             'operation': 'move', 'rights': ['wait', 'write']})
@@ -57,6 +63,39 @@ def services(board, root):
     return manifest
 
 
+def filesystem_service():
+    """A format-independent manager delegates each volume to an isolated worker."""
+    def capability(source, purpose, rights, operation='duplicate'):
+        return {'source': 'bootstrap.' + source, 'purpose': purpose,
+                'operation': operation, 'rights': rights}
+
+    return {
+        'name': 'fs-backend', 'image': '/svc/fs-backend', 'loader': 'bootstrap',
+        'critical': False, 'restart': 'never', 'after': ['console-output'],
+        'capabilities': [
+            capability('filesystem-attach', 'filesystem.attach', ['wait', 'read'], 'move'),
+            capability('filesystem-control-server', 'filesystem.control-server',
+                       ['wait', 'read'], 'move'),
+            capability('service-output-channel', 'stdio.output',
+                       ['wait', 'write', 'duplicate', 'transfer']),
+            capability('service-output-channel', 'stdio.error',
+                       ['wait', 'write', 'duplicate', 'transfer']),
+            capability('root-directory', 'process.root-directory',
+                       ['read', 'write', 'execute', 'protect', 'inspect', 'duplicate', 'transfer']),
+            capability('task-factory', 'process.task-factory',
+                       ['create-process', 'create-task-group']),
+            capability('resource-domain', 'process.resource-domain',
+                       ['create-resource-domain']),
+            capability('dynamic-library-directory', 'process.child-library-directory',
+                       ['read', 'execute', 'protect', 'duplicate', 'transfer']),
+            capability('environment-directory', 'process.environment-directory',
+                       ['read', 'inspect', 'execute', 'protect', 'duplicate', 'transfer']),
+            capability('child-loader', 'process.child-loader',
+                       ['read', 'execute', 'duplicate', 'transfer']),
+        ],
+    }
+
+
 def stage(board, root, output):
     output.mkdir(parents=True, exist_ok=True)
     clients = output / 'io-clients.conf'
@@ -64,8 +103,13 @@ def stage(board, root, output):
     if not clients.exists() or clients.read_text() != contents:
         clients.write_text(contents)
     for name, value in [('services.json', services(board, root)),
-                        ('vms.json', board.vms())]:
+                        ('vms.json', board.vms()),
+                        ('storage.json', board.storage_policy()),
+                        ('filesystem.json', {'worker_directories': [
+                            {'environment': 'svc'}, {'namespace': '/system/svc'}]})]:
         contents = json.dumps(value, indent=2) + '\n'
         target = output / name
         if not target.exists() or target.read_text() != contents:
             target.write_text(contents)
+    fstab = board.source['native']['fstab']
+    (output / 'fstab').write_text(fstab)

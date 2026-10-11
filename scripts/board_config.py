@@ -9,6 +9,8 @@ from pathlib import PurePosixPath
 import re
 import uuid
 
+from native_deployment import prepare, partition_source
+
 MIB = 1024 * 1024
 SECTOR = 512
 ALIGN_SECTORS = MIB // SECTOR
@@ -171,17 +173,22 @@ class Partition:
     sectors: int
     identifier: uuid.UUID
     type_id: uuid.UUID
-    owner: str
     image: str | None = None
+    filesystem: str | None = None
+    content: str | None = None
+
+    @property
+    def native(self):
+        return self.filesystem is not None
 
     @property
     def end(self):
         return self.start + self.sectors - 1
 
     def manifest(self):
-        return {'name': self.name, 'partuuid': str(self.identifier),
-                'sectors': self.sectors, 'sector-size': SECTOR, 'owner': self.owner,
-                'mapper': f'hyper-{self.name}'}
+        return {'label': self.name, 'partuuid': str(self.identifier),
+                'first-lba': self.start, 'sectors': self.sectors,
+                'sector-size': SECTOR}
 
 
 @dataclass(frozen=True)
@@ -192,16 +199,19 @@ class Board:
     disk_sectors: int
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, *, layout=None):
         with open(path, encoding='utf-8') as stream:
             document = stream.read(1024 * 1024 + 1)
         if len(document) > 1024 * 1024:
             raise ValueError('board configuration exceeds 1 MiB')
-        return cls.parse(json.loads(document, object_pairs_hook=unique_object))
+        return cls.parse(json.loads(document, object_pairs_hook=unique_object), layout=layout)
 
     @classmethod
-    def parse(cls, data):
-        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-vm'))
+    def parse(cls, data, *, layout=None):
+        # Canonicalize before deriving GPT, client manifests or bootstrap files:
+        # reloading a generated snapshot must describe exactly the same volumes.
+        data = prepare(data, layout)
+        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-vm'), ('native',))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
@@ -213,13 +223,19 @@ class Board:
                         'rpi5-firmware': 'pci-function'}[data['boot']]
             if resident['network-device']['profile'] != expected:
                 raise ValueError('network controller does not match the board boot profile')
-        keys(data['disk'], ('uuid', 'config-mib'))
         disk_id = uuid.UUID(data['disk']['uuid'])
-        if disk_id.int == 0:
-            raise ValueError('disk UUID must not be nil')
-        config_size = integer(data['disk']['config-mib'], 64, 32768) * MIB // SECTOR
-        partitions = [Partition('config', ALIGN_SECTORS, config_size,
-                                uuid.uuid5(disk_id, 'config'), BASIC_DATA, 'hyper')]
+        partitions = []
+        start = ALIGN_SECTORS
+        for definition in data['disk']['partitions']:
+            label = definition['label']
+            identifier = (uuid.UUID(definition['uuid']) if 'uuid' in definition
+                          else uuid.uuid5(disk_id, label))
+            size = definition['size-mib'] * MIB // SECTOR
+            partitions.append(Partition(label, start, size, identifier,
+                                        BASIC_DATA if definition.get('filesystem') == 'fat' else VM_DISK,
+                                        definition.get('image'), definition.get('filesystem'),
+                                        definition.get('content')))
+            start += size
         if not isinstance(data['files'], dict):
             raise ValueError('files must map destination paths to artifact names')
         required_files = {'hyper.img'} if data['boot'] == 'rpi5-firmware' else set()
@@ -232,7 +248,7 @@ class Board:
         destinations = set()
         for destination, artifact in data['files'].items():
             destination = relative_path(destination).casefold()
-            if destination in destinations or destination in ('board.json', 'vms.json', 'volumes.json', 'config.txt', 'cmdline.txt'):
+            if destination in destinations or destination in ('board.json', 'vms.json', 'partitions.json', 'config.txt', 'cmdline.txt'):
                 raise ValueError('duplicate or reserved deployment path')
             destinations.add(destination)
             name(artifact)
@@ -246,12 +262,15 @@ class Board:
         vms = data['virtual-machines']
         if not isinstance(vms, list) or len(vms) > 8:
             raise ValueError('too many VMs or invalid VM list')
-        seen = {'config', resident['name']}
+        seen = {resident['name']}
+        native = data['native']
+        if len(native['volumes']) + len(vms) > 8:
+            raise ValueError('Native and guest clients exceed the eight I/O data slots')
         networks = {network['name'] for network in resident.get('networks', [])}
         macs = set()
         for vm in vms:
             keys(vm, ('name', 'image', 'autostart', 'configuration'),
-                 ('disk-mib', 'disk-image', 'network'))
+                 ('disk', 'network'))
             vm_configuration(vm['configuration'])
             vm_name = name(vm['name'])
             if vm_name in seen:
@@ -267,51 +286,62 @@ class Board:
                 if mac in macs:
                     raise ValueError('VM MAC addresses must be unique')
                 macs.add(mac)
-            if 'disk-mib' not in vm:
-                if 'disk-image' in vm:
-                    raise ValueError('disk-image requires disk-mib')
-                continue
-            size = integer(vm['disk-mib'], 8, 16 * 1024 * 1024) * MIB // SECTOR
-            source = name(vm['disk-image']) if 'disk-image' in vm else None
-            start = partitions[-1].end + 1
-            partitions.append(Partition(vm_name, start, size, uuid.uuid5(disk_id, vm_name),
-                                        VM_DISK, vm_name, source))
+            if 'disk' in vm:
+                keys(vm['disk'], ('source',), ('read-only',))
+                partition_source(vm['disk']['source'])
+                if type(vm['disk'].get('read-only', False)) is not bool:
+                    raise ValueError('disk read-only must be boolean')
         end = partitions[-1].end + 1 + GPT_TABLE_SECTORS + 1
         total = (end + ALIGN_SECTORS - 1) // ALIGN_SECTORS * ALIGN_SECTORS
         return cls(data, tuple(partitions), disk_id, total)
 
-    def volumes(self):
-        return {'format': 'hyper.volumes.v1', 'disk-uuid': str(self.disk_id),
-                'volumes': [part.manifest() for part in self.partitions]}
+    def partition_manifest(self):
+        return {'format': 'hyper.disk.v1', 'disk-uuid': str(self.disk_id),
+                'partitions': [part.manifest() for part in self.partitions]}
 
     def vms(self):
         definitions = []
         for client, vm in enumerate(self.source['virtual-machines'], start=1):
             definition = {'name': vm['name'], 'image': '/data/' + vm['image'],
                           'autostart': vm['autostart'], 'configuration': vm['configuration']}
-            if 'disk-mib' in vm:
+            if 'disk' in vm:
                 definition['disk'] = {'client': client, 'volume': vm['name']}
             if 'network' in vm:
                 definition['network'] = {'client': client, **vm['network']}
             definitions.append(definition)
         return {'format': 'hyper.vm-config', 'virtual-machines': definitions}
 
-    def bootstrap_volumes(self):
-        """Strict token projection for the small Linux init helper; JSON owns policy."""
-        return 'hyper.volumes.v1\n' + ''.join(
-            f'{part.name} {part.identifier} {part.sectors} {part.owner} hyper-{part.name}\n'
-            for part in self.partitions)
-
     def bootstrap_clients(self):
-        rows = ['hyper.clients.v2', '0 config - -']
+        """HypeR broker identities; no partition policy crosses into Linux."""
+        rows = ['hyper.clients.v3', '0 - - -']
         for client, vm in enumerate(self.source['virtual-machines'], start=1):
-            volume = vm['name'] if 'disk-mib' in vm else '-'
+            volume = vm['name'] if 'disk' in vm else '-'
             network = vm.get('network')
             if volume == '-' and network is None:
                 continue
             rows.append(f"{client} {volume} {network['network'] if network else '-'} "
                         f"{network['mac'] if network else '-'}")
         return '\n'.join(rows) + '\n'
+
+    def backend_clients(self):
+        rows = ['hyper.clients.v3', '0 - -']
+        for line in self.bootstrap_clients().splitlines()[2:]:
+            client, _volume, network, mac = line.split()
+            rows.append(f'{client} {network} {mac}')
+        rows.extend(f"{volume['client']} - -" for volume in self.native_volumes())
+        return '\n'.join(rows) + '\n'
+
+    def native_volumes(self):
+        return [{'client': 8 - index, 'source': volume['source'],
+                 'read_only': volume['read-only']}
+                for index, volume in enumerate(self.source['native']['volumes'])]
+
+    def storage_policy(self):
+        guests = [{'client': client, 'source': vm['disk']['source'],
+                   'read_only': vm['disk'].get('read-only', False)}
+                  for client, vm in enumerate(self.source['virtual-machines'], start=1)
+                  if 'disk' in vm]
+        return {'native': self.native_volumes(), 'guests': guests}
 
     def bootstrap_networks(self):
         return 'hyper.networks.v1\n' + ''.join(

@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +29,7 @@ class EntrypointTests(unittest.TestCase):
             app.mkdir()
             manifest = app / 'Cargo.toml'
             manifest.write_text('[workspace]\nresolver="3"\n'
-                                'members=["*", "../lib/args", "../lib/*/shared"]\n'
+                                'members=["*", "../bootstrap/stage1/*", "../lib/args", "../lib/*/shared"]\n'
                                 'exclude=[".cargo", "target"]\n')
             original = manifest.read_bytes()
             (app / 'README.md').write_text('not a package')
@@ -43,9 +45,11 @@ class EntrypointTests(unittest.TestCase):
                     f'version="0.0.0"\nworkspace="{owner}"\n')
 
             for relative, owner in [('app/tool', '..'), ('lib/args', '../../app'),
-                                    ('lib/args/shared', '../../../app')]:
+                                    ('lib/args/shared', '../../../app'),
+                                    ('bootstrap/stage1/init', '../../../app')]:
                 package(relative, owner)
-            expected = {root / path for path in ('app/tool', 'lib/args', 'lib/args/shared')}
+            expected = {root / path for path in ('app/tool', 'lib/args', 'lib/args/shared',
+                                                 'bootstrap/stage1/init')}
             for added in (False, True):
                 if added:
                     package('app/new-tool', '..')
@@ -89,7 +93,8 @@ class EntrypointTests(unittest.TestCase):
             self.assertRegex(database, r'(?m)^\.DEFAULT_GOAL\s*:?=\s*all$')
             expected = 'board-build' if arch == 'aarch64' else ('image native-initramfs' if arch == 'riscv64' else 'image')
             self.assertRegex(database, rf'(?m)^all: {expected}$')
-            self.assertRegex(database, r'(?m)^board-run: *$')
+            self.assertRegex(database, r'(?m)^BOARD_SYSTEM_LAYOUT\s*[:?]?=\s*split$')
+            self.assertRegex(database, r'(?m)^board-run: board-check-system$')
             self.assertRegex(database, r'(?m)^board-rebuild: image board-initramfs board-guest-images$')
             # Ask Make for its evaluated recipes, not a guessed source filename.
             rebuild = re.search(r'(?ms)^board-rebuild:.*?(?=^[^\s#]|\Z)', database).group(0)
@@ -109,9 +114,12 @@ class EntrypointTests(unittest.TestCase):
                 ['make', '-n', 'run', f'ARCH={arch}', f'RUN_PROFILE={profile}'],
                 cwd=ROOT, check=True, capture_output=True, text=True)
             for build_command in ('cargo build', 'cargo run', 'build-sysroot.sh',
-                                  'pack-native-initramfs.py', 'pack-board-image.py',
+                                  'pack-native-initramfs.py', 'pack-native-system.py',
                                   'fetch-io-vm.py', 'prepare_disk'):
                 self.assertNotIn(build_command, result.stdout)
+            for line in result.stdout.splitlines():
+                if 'pack-board-image.py' in line:
+                    self.assertIn('--check-system-payload', result.stdout)
 
     def test_board_build_keeps_existing_disk_and_run_does_not_create_missing_disk(self):
         with tempfile.TemporaryDirectory(prefix='hyper run policy ') as directory:
@@ -120,7 +128,8 @@ class EntrypointTests(unittest.TestCase):
             disk.write_bytes(b'persistent disk contents')
             result = subprocess.run(
                 ['make', '-o', 'image', '-o', 'board-initramfs', 'board-build',
-                 f'BOARD_OUTPUT={output}'], cwd=ROOT, capture_output=True, text=True)
+                 'BOARD_SYSTEM_LAYOUT=ramfs', f'BOARD_OUTPUT={output}'],
+                cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(disk.read_bytes(), b'persistent disk contents')
             disk.unlink()
@@ -131,6 +140,54 @@ class EntrypointTests(unittest.TestCase):
             self.assertIn('run make first', result.stderr)
             self.assertEqual(list(output.iterdir()), [])
 
+    def test_default_and_ramfs_use_the_same_system_composer(self):
+        for layout in ('split', 'ramfs'):
+            output = subprocess.check_output([
+                'make', '--no-print-directory', '-n', '-o', 'board-deployment',
+                '-o', 'app', '-o', 'app-boot', '-o', 'fit-pack', '-o', 'sdk',
+                'board-initramfs', f'BOARD_SYSTEM_LAYOUT={layout}',
+                'IO_VM_PACKAGE=/test/io-package'], cwd=ROOT, text=True)
+            self.assertIn('scripts/pack-native-system.py', output)
+            self.assertNotIn('native-initramfs NATIVE_INITRAMFS=', output)
+        result = subprocess.run(['make', '-n', 'run', 'BOARD_SYSTEM_LAYOUT=flat'],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must be split or ramfs', result.stderr)
+
+    def test_pi_layout_uses_custom_board_and_extra_volume_artifacts(self):
+        for layout in ('split', 'ramfs'):
+            for override, expected in (
+                    ([], str(ROOT / 'boards/rpi5.json')),
+                    (['BOARD_CONFIG=/tmp/custom pi.json'], '/tmp/custom pi.json'),
+                    (['BOARD_CONFIG=/tmp/custom pi.json',
+                      'RPI5_BOARD_CONFIG=/tmp/other pi.json'], '/tmp/other pi.json')):
+                with self.subTest(layout=layout, override=override):
+                    output = subprocess.check_output([
+                        'make', '--no-print-directory', '-n', '-o', 'image', 'rpi5-sd',
+                        'MAKE=true', f'BOARD_SYSTEM_LAYOUT={layout}',
+                        'BOARD_ARTIFACTS=--artifact extra=/tmp/extra.img', *override],
+                        cwd=ROOT, text=True)
+                    commands = [shlex.split(line) for line in
+                                output.replace('\\\n', '').splitlines()]
+                    build = next(command for command in commands
+                                 if command[:2] == ['true', 'board-initramfs'])
+                    self.assertIn(f'BOARD_CONFIG={expected}', build)
+                    pack = next(command for command in commands
+                                if 'scripts/rpi5-bringup.py' in command)
+                    self.assertIn('extra=/tmp/extra.img', pack)
+                    self.assertEqual('--system-root' in pack, layout == 'split')
+                    self.assertEqual('--mkfs-erofs' in pack, layout == 'split')
+
+    def test_board_image_only_supplies_system_disk_payload_for_split(self):
+        for layout in ('split', 'ramfs'):
+            output = subprocess.check_output([
+                'make', '--no-print-directory', '-n', '-o', 'image',
+                '-o', 'board-initramfs', '-o', 'board-guest-images', 'board-image',
+                f'BOARD_SYSTEM_LAYOUT={layout}'], cwd=ROOT, text=True)
+            command = shlex.split(output.replace('\\\n', ''))
+            self.assertEqual('--system-root' in command, layout == 'split')
+            self.assertEqual('--mkfs-erofs' in command, layout == 'split')
+
     def test_editor_and_build_keep_lockfiles_stable(self):
         # Exercise Cargo resolution, not just configuration spelling. No network,
         # installed SDK or Native compiler artifacts are needed for this fixture.
@@ -140,7 +197,15 @@ class EntrypointTests(unittest.TestCase):
             shared = root / '.vscode/rust-analyzer.toml'
             shared.parent.mkdir()
             shutil.copyfile(ROOT / '.vscode/rust-analyzer.toml', shared)
-            crates = ('abi', 'os', 'rt', 'service', 'sys', 'vm-image')
+            workspaces = ('tools/fit-pack', 'app', 'sdk/toolchain/tests/std-smoke',
+                          'sdk/toolchain/tests/rust-smoke')
+            patches = {
+                workspace: tuple(name.removeprefix('hyper-') for name in
+                                 tomllib.loads((ROOT / workspace / '.cargo/config.toml')
+                                               .read_text())['patch']['crates-io'])
+                for workspace in workspaces if workspace != 'tools/fit-pack'
+            }
+            crates = sorted({name for names in patches.values() for name in names})
             for name in crates:
                 paths = [root / ('sdk/abi' if name == 'abi' else f'lib/rust/hyper-{name}'),
                          root / f'installed/hyper-{name}']
@@ -150,11 +215,13 @@ class EntrypointTests(unittest.TestCase):
                         f'[package]\nname="hyper-{name}"\nversion="0.0.0"\n'
                         '[lib]\npath="lib.rs"\n')
                     (path / 'lib.rs').write_text('')
-            for workspace in ('tools/fit-pack', 'app', 'sdk/toolchain/tests/std-smoke',
-                              'sdk/toolchain/tests/rust-smoke'):
+            for workspace in workspaces:
                 cwd = root / workspace
                 cwd.mkdir(parents=True)
                 native = workspace != 'tools/fit-pack'
+                # Every Native workspace must resolve the complete SDK set.
+                # Using each workspace's own subset hid missing editor patches
+                # when hyper-cargo supplied newly installed crates at check time.
                 deps = ''.join(f'hyper-{name}="=0.0.0"\n' for name in crates) if native else (
                     'hyper-abi={path="../../sdk/abi"}\n')
                 (cwd / 'Cargo.toml').write_text(
@@ -221,16 +288,18 @@ class EntrypointTests(unittest.TestCase):
                 (cwd / 'src').mkdir()
                 (cwd / 'src/lib.rs').write_text('')
             (root / 'app/Cargo.toml').write_text(
-                '[workspace]\nmembers=["cmd", "../lib/args", "../lib/args/shared"]\n')
+                '[workspace]\nmembers=["cmd", "../lib/args", "../lib/args/shared", "../bootstrap/stage1/*"]\n')
             for member, owner in [('app/cmd', '..'), ('lib/args', '../../app'),
-                                  ('lib/args/shared', '../../../app')]:
+                                  ('lib/args/shared', '../../../app'),
+                                  ('bootstrap/stage1/init', '../../../app')]:
                 cwd = root / member
                 (cwd / 'src').mkdir(parents=True)
                 (cwd / 'src/lib.rs').write_text('')
                 (cwd / 'Cargo.toml').write_text(
                     f'[package]\nname="{member.replace("/", "-")}"\nversion="0.0.0"\n'
                     f'workspace="{owner}"\n')
-            for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src'):
+            for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src',
+                              'bootstrap/stage1/init/src'):
                 cwd = root / workspace
                 subprocess.run(['sh', str(script)], cwd=cwd, env=env, check=True)
                 result = json.loads(output.read_text())
