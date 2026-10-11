@@ -196,6 +196,9 @@ dependencies = [
 [[package]]
 name = "hyper-erofs"
 version = "0.0.0"
+dependencies = [
+ "hyper-filesystem",
+]
 
 [[package]]
 name = "hyper-fallback-sh"
