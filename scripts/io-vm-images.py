@@ -72,7 +72,7 @@ def prepare(package, fit_pack, output, test="basic"):
     output.mkdir(parents=True, exist_ok=True)
     definitions = []
     for role in ('io', 'business'):
-        bootargs = ('console=ttyAMA0 earlycon=pl011,mmio32,0x09000000 '
+        bootargs = ('console=ttyAMA0 earlycon '
                     f'rdinit=/init loglevel=7 hyper.role={role} hyper.test={test}')
         subprocess.run([str(fit_pack), str(output / f'{role}.itb'), 'arm64',
                         str(image), '0x40200000', '0x40200000', str(initramfs)], check=True)
