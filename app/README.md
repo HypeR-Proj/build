@@ -7,8 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 
 This directory contains ordinary Native tools and system services.
 The RAM-resident boot and recovery programs live in
-[`bootstrap/stage1`](../bootstrap/stage1/README.md). Both source domains share
-the Cargo workspace and lockfile here, including reusable libraries in `lib/`.
+[`bootstrap/stage1`](../bootstrap/stage1/README.md), an independent static-link
+workspace with its own lockfile and private libraries. The workspace here owns
+formal applications and reusable libraries in the top-level `lib/`.
 Target builds consume the assembled
 Native SDK; source-level host tests use workspace SDK patches. Applications
 do not reach into kernel or runtime implementation internals.
@@ -51,8 +52,8 @@ field and escape rejection); its bounded collections now use Vec storage.
 - Rust std applications with ordinary `main`, built as Native dynamic PIE;
 - a bounded, declarative service manifest loaded by `init` through a root
   `Directory` capability;
-- direction-attenuated physical Console workers and an isolated foreground
-  session manager;
+- a byte-only physical Console service, a separate formal terminal service,
+  and a session manager that supervises terminal and shell lifetimes;
 - a bounded interactive shell which launches commands with explicit process
   authorities and handle-backed standard I/O;
 - a capability-scoped VM manager, isolated runtime, and multi-client `vmm`
@@ -68,8 +69,10 @@ starts any child, then constructs services in dependency order through the
 transactional `ProcessBuilder` ABI. Normal bytes currently follow this route:
 
 ```text
-physical Console <-> Console input/output workers <-> raw ByteChannels
-                 <-> virtual console manager <-> shell <-> command
+physical Console <-> console-raw <-> terminal-service <-> shell / foreground command
+                         ^                ^
+                         | logs           | supervision
+                  background services   session-manager
 ```
 
 The active init retains management authority. The default deployment keeps
@@ -83,32 +86,29 @@ root switch. After adopting supervision, system init prepares a new ramfs root
 and atomically publishes it with the original root mounted at `/boot` and
 existing disk mounts at their configured paths. RAM-resident `/system` is promoted and detached from its old directory in the
 same transaction, without copying files. The formal root has no path aliases. Root-switch failure leaves the old namespace usable
-and core services supervised by system init, without starting the system graph.
+and core services supervised by system init. Formal init attempts its service
+graph through the retained system environment, without reopening bootstrap recovery.
 
-Each Console worker receives only one
-physical direction plus one matching byte-channel direction; the session
-manager receives no physical Console authority. Capability attenuation is
-monotonic; the Console workers and virtual console manager cannot delegate their
-physical transport endpoints. The manager creates fresh client channels before
-starting a noncritical shell and supervises its lifetime. Shell exit or failure
-restarts only that client, with a delay for rapid failures.
-The two blocking workers provide a genuinely duplex data plane without
-polling or a generic per-byte protocol header. Manifest purposes are symbolic,
-image-scoped service-contract names; init resolves them to typed startup
-purposes before creating any process. Application code depends on the safe
-`hyper-os` binding and does not call the raw syscall crate or C runtime
-directly.
+`console-raw` owns the physical Console and exposes separate byte-stream and
+log interfaces. It has no line editing or terminal policy. The formal
+`terminal-service` owns canonical/raw input, echo, conversion, software flow
+control and ordered output. `session-manager` launches and supervises it and the
+shell, without relaying ordinary data. The shell gives a scoped terminal lease
+to a command with unredirected terminal stdin; in a pipeline this is the first
+stage. Process exit restores the preceding lease's settings. Bootstrap
+recovery uses raw transport directly and never starts a terminal service.
 
-Session and VM services also receive `stdio.output` and `stdio.error` write
-endpoints, so ordinary `println!` and `eprintln!` work. These feed the Console
-output worker directly, bypassing the session relay to avoid a dependency on
-the logging service consuming its own queue. VM-manager duplicates these
-streams into each VM-runtime; the Rust runtime owns them through process exit.
-The output queue is bounded and applies backpressure when full. It carries no
-read authority, and process termination closes that process's copies without
-closing other writers. The shell retains its foreground streams. Console
-workers keep only their existing transport endpoints and receive no standard
-streams; other background services receive no stdin.
+Background services receive independent log channels for stdout/stderr, without
+stdin or ordinary physical Console write authority. The raw service continues
+mirroring these bounded channels after terminal takeover. Terminal flow control
+does not pause logs. Overflow is counted per source; this is not persistent log
+storage. Kernel logging is unchanged, and either kind of log can still disturb an
+interactive display. VM-manager delegates its log stream to its VM runtimes.
+
+Standard I/O uses request-sized terminal reads and per-process private stream
+connections; pipes remain binary ByteChannels. The terminal control capability is
+separate from the stream connector. See [Native terminals](../docs/terminal.md)
+for timing, EOF, flow-control, restart and client contracts.
 
 The manifest's optional `virtual-machines.config` path selects a file of named
 VM definitions. Board packaging generates `/data/vms.json` and gates its use on
@@ -157,8 +157,9 @@ are described in [Native component builds](../mk/README.md).
 
 `ARCH=riscv64` selects separate SDK and app output directories and runs the same
 service graph, including the userspace VM fleet. The optional
-`bootstrap/stage1/init/config/services-console-only.json` profile contains console workers and the
-virtual console manager without a VM fleet. The manager starts its shell.
+`bootstrap/stage1/init/config/services-console-only.json` profile contains the raw Console service without a VM fleet. Formal init
+starts the terminal and shell through session-manager; failed bootstrap starts
+the independent fallback shell.
 Acceptance-only manifests live under `bootstrap/stage1/init/tests/config/`.
 The same init and shell binaries support service graphs with or without a VM
 manager; `vmm --help` does not require a running manager.
@@ -170,12 +171,12 @@ app/
   Cargo.toml          App discovery, shared dependency versions, lints and profiles
   Cargo.lock          Locked dependencies for the application and Rust DSO set
   cat/ chmod/ cp/ echo/ free/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
-  init/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
+  init/ session-manager/ terminal-service/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
 bootstrap/stage1/
   init/               Initial service graph and supervision handoff
     config/           Service manifests for VM-enabled and console-only startup
     tests/            Unit tests and acceptance-only configurations
-  console-input/ console-output/ session/ fallback-sh/
+  console-raw/ fallback-sh/
   io-runtime/ fs-backend/ fs-fat/ fs-erofs/ mount/ umount/
   userspace-loader/   Static bootstrap executable loader
 lib/                  Shared application libraries, in the app Cargo workspace
@@ -183,7 +184,8 @@ lib/                  Shared application libraries, in the app Cargo workspace
   tool-args/          Argument parsing and process selection for system tools
   vm-policy/          VM fleet configuration, resource policy and image validation
   vm-support/         Guest loading, virtual devices and I/O backend protocols
-  service-manager/    Shared stage-1 and system-init implementation
+  service-manager/    Formal init supervision and handoff receiver
+  terminal/           Formal terminal client, settings and line discipline
   dynamic-loader/     Formal executable loader and runtime linker
   rust-std/           Common Rust standard-library DSO
 ```
@@ -231,13 +233,13 @@ capability follows the live namespace.
 | Installed executable | Source | Responsibility |
 | --- | --- | --- |
 | `/init` | [init](../bootstrap/stage1/init) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
-| `/svc/console-input` | [console-input](../bootstrap/stage1/console-input) | Read the physical console, normalize input newlines and forward bytes to the session through a channel. Holds only the input direction of the physical console. |
-| `/svc/console-output` | [console-output](../bootstrap/stage1/console-output) | Drain the shared output channel to the physical console. Holds only the output direction and applies backpressure through the bounded channel. |
-| `/svc/session` | [session](../bootstrap/stage1/session) | Own the virtual console, relay foreground input/output, launch the shell and restart it after exit or failure. The console transport survives each shell instance. |
+| `/svc/console-raw` | [console-raw](../bootstrap/stage1/console-raw) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
+| `/system/svc/session-manager` | [session-manager](session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
+| `/system/svc/terminal-service` | [terminal-service](terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
 | `/svc/io-runtime` | [io-runtime](../bootstrap/stage1/io-runtime) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
 | `/system/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
 | `/svc/fs-backend` | [fs-backend](../bootstrap/stage1/fs-backend) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
-| `/system/svc/fs-fat` (default placement) | [fs-fat](../bootstrap/stage1/fs-fat) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by fs-backend. |
+| `/svc/fs-fat` | [fs-fat](../bootstrap/stage1/fs-fat) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by fs-backend; resides in boot RAM by default, independently of the mount phase. |
 | `/svc/fs-erofs` | [fs-erofs](../bootstrap/stage1/fs-erofs) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend. |
 | `/system/svc/init-system` | [init](init/) | Validate the combined service graph, atomically adopt existing core supervisors, switch the root namespace, then start system services and continue whole-system supervision. Retain core supervision if root switching fails. Used with both disk-backed and RAM-resident system files. |
 | `/system/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
@@ -269,8 +271,9 @@ the existing mount. It has no forced or lazy mode. A clean shutdown returns the
 worker's exclusive block owner to the manager for a later mount; a crashed
 worker is not silently reactivated.
 
-Both commands need filesystem control authority, not raw device access. The
-session passes it to the shell, which delegates only WAIT|WRITE to the exact
+Both commands need filesystem control authority, not raw device access. Stage-1
+init or the formal session manager passes it to its shell, which delegates only
+WAIT|WRITE to the exact
 mount/umount paths in `/bin`, `/boot/bin` and `/system/bin`. They are statically
 available in bootfs even when `/system` cannot mount. See
 [filesystem services](../docs/filesystem-services.md) for the protocol and
@@ -443,8 +446,9 @@ the summary remains system-wide even when process rows are filtered.
 
 [shell](shell/) is installed as `/system/bin/sh` and is the normal interactive
 shell. A separate static [fallback-sh](../bootstrap/stage1/fallback-sh) lives in
-`/boot/svc/fallback-sh`. Session waits for startup completion before launching
-`sh`; only stage-1 failure before ownership transfer selects `fallback-sh`.
+`/boot/svc/fallback-sh`. Stage-1 init launches it directly on failure before
+ownership transfer. Formal init instead starts `session-manager`, which launches
+the terminal service and `sh`.
 Post-handoff failures remain under formal init; a missing system shell is retried
 without starting bootstrap recovery.
 The fallback service omits clap, history, pipelines and redirection, retaining
@@ -458,7 +462,9 @@ launch, concurrent pipelines and file redirection. `echo` is an external
 application. Up/Down recalls up to 32 commands and restores the unfinished
 input when moving past the newest entry. Ctrl-U clears the line; Ctrl-L redraws
 the screen. History is local to the shell instance; commands beginning with
-whitespace and consecutive duplicates are omitted. Exiting the shell causes the session service to start a new shell.
+whitespace and consecutive duplicates are omitted. Exiting the shell causes the
+session manager to retire the session and start a fresh terminal and shell,
+subject to its bounded rapid-restart policy.
 See [shell syntax and limits](../docs/shell.md) for supported syntax.
 
 The session delegates process-construction authority to the shell. Commands
@@ -530,14 +536,15 @@ Native SDK calls remain where their semantics are required:
 - VM construction, guest VMO writes, virtual serial and VM lifecycle;
 - capability transfer, resource domains, scoped process construction and
   inspection (`ps`, `handle`, `free`, `top`);
-- console/session channel relays and multi-object waits, including the shell's
-  foreground input handoff and `vmm console` multiplexing;
+- terminal leases, request-sized streams and multi-object waits, including the
+  shell's foreground input handoff and `vmm console` multiplexing;
 - absolute Native deadlines supplied to those waits and service protocols.
 
 The shell emits its own prompts and diagnostics through std stdout and flushes
-before blocking. Input ownership and child-channel routing remain Native;
-buffering that input in std while handing its channel to another consumer
-would require a separate handoff protocol. Init also uses std, retaining Native APIs for bootstrap and delegation.
+before blocking. Input ownership and child-channel routing remain Native.
+Terminal stdin uses request-sized reads so handing foreground ownership to a
+child does not strand unread bytes in a shell-local buffer. Init also uses std,
+retaining Native APIs for bootstrap and delegation.
 
 ## Planned work
 

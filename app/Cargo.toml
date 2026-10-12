@@ -8,6 +8,7 @@ members = [
     "*",
     "../lib/clap",
     "../lib/service",
+    "../lib/terminal",
     "../lib/block",
     "../lib/vm-image",
     "../lib/service-manager",
@@ -40,6 +41,7 @@ hyper-filesystem = "=0.0.0"
 hyper-service-manager = { path = "../lib/service-manager", default-features = false }
 hyper-rt = { version = "=0.0.0", features = ["std"] }
 hyper-service = { path = "../lib/service" }
+hyper-terminal = { path = "../lib/terminal" }
 hyper-vm-image = { path = "../lib/vm-image" }
 hyper-vm-policy = { path = "../lib/vm-policy" }
 hyper-vm-policy-shared = { path = "../lib/vm-policy/shared" }

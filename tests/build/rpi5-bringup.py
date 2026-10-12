@@ -148,7 +148,8 @@ class BringupTests(unittest.TestCase):
             manifest = json.loads((output / 'services.json').read_text())
             names = {service['name'] for service in manifest['services']}
             self.assertIn('vm-manager', names)
-            self.assertIn('session', names)
+            self.assertIn('session-manager', names)
+            self.assertIn('console-raw', names)
             self.assertNotIn('io-runtime', names)
             self.assertEqual(manifest['virtual-machines']['config'], '/boot/etc/hyper/vms.json')
             for service in manifest['services']:
@@ -173,12 +174,14 @@ class BringupTests(unittest.TestCase):
         self.assertEqual(manifest['virtual-machines']['config'], '/data/vms.json')
         runtime = next(item for item in manifest['services'] if item['name'] == 'io-runtime')
         self.assertIn('io.ready', [cap['purpose'] for cap in runtime['capabilities']])
-        for name in ('session', 'io-runtime', 'fs-backend'):
+        for name in ('session-manager', 'io-runtime', 'fs-backend'):
             service = next(item for item in manifest['services'] if item['name'] == name)
             environment = [cap for cap in service['capabilities']
                            if cap['purpose'] == 'process.environment-directory']
             self.assertEqual(len(environment), 1, name)
-            self.assertEqual(environment[0]['source'], 'bootstrap.environment-directory')
+            self.assertEqual(environment[0]['source'],
+                             'bootstrap.boot-environment-directory' if name == 'session-manager'
+                             else 'bootstrap.environment-directory')
             self.assertEqual(environment[0]['operation'], 'duplicate')
             self.assertEqual(set(environment[0]['rights']),
                              {'read', 'inspect', 'execute', 'protect', 'duplicate', 'transfer'})

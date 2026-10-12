@@ -313,6 +313,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-session-manager"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+ "hyper-terminal",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hyper-shell"
 version = "0.0.0"
 dependencies = [
@@ -321,6 +333,7 @@ dependencies = [
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+ "hyper-terminal",
  "shlex",
 ]
 
@@ -329,6 +342,31 @@ name = "hyper-sys"
 version = "0.0.0"
 dependencies = [
  "hyper-abi",
+]
+
+[[package]]
+name = "hyper-terminal"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+]
+
+[[package]]
+name = "hyper-terminal-probe"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-terminal",
+]
+
+[[package]]
+name = "hyper-terminal-service"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-terminal",
 ]
 
 [[package]]
@@ -355,6 +393,7 @@ dependencies = [
  "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
+ "hyper-terminal",
  "hyper-tool-args",
  "hyper-tool-args-shared",
 ]
@@ -454,6 +493,7 @@ dependencies = [
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+ "hyper-terminal",
  "hyper-vm-policy",
  "hyper-vm-policy-shared",
 ]

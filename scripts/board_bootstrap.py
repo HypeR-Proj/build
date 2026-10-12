@@ -39,7 +39,7 @@ def services(board, root):
     manifest['virtual-machines']['config'] = '/data/vms.json'
     manifest['services'].append(filesystem_service())
     for service in manifest['services']:
-        if service['name'] == 'session':
+        if service['name'] == 'session-manager':
             service['capabilities'].append({
                 'source': 'bootstrap.filesystem-control-client',
                 'purpose': 'filesystem.control-client', 'operation': 'duplicate',
@@ -71,7 +71,7 @@ def filesystem_service():
 
     return {
         'name': 'fs-backend', 'image': '/svc/fs-backend', 'loader': 'bootstrap',
-        'critical': False, 'restart': 'never', 'after': ['console-output'],
+        'critical': False, 'restart': 'never', 'after': ['console-raw'],
         'capabilities': [
             capability('filesystem-attach', 'filesystem.attach', ['wait', 'read'], 'move'),
             capability('filesystem-control-server', 'filesystem.control-server',

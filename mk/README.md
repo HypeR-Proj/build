@@ -58,9 +58,8 @@ component registry derives this policy from source ownership. Package-qualified
 bootstrap features cannot be unified with shared-library consumers. Installation
 stages the combined application/library set. Each link graph also separates
 components declared with the optional sixth `native-rust-app` argument `core`
-from the default `std` components. This keeps freestanding console workers out
-of std feature unification; their build and installation use the SDK's `no_std`
-target directory. `make app-check` checks the same component graphs.
+from the default `std` components. Freestanding components use the SDK's
+`no_std` target directory independently of std feature unification. `make app-check` checks the same component graphs.
 The staging directory's `build-manifest.json` records the source revision,
 compiler, SDK fingerprints, features and exact artifact hashes and sizes.
 Implementation rlibs remain usable by host tests. Native delivery crates select
@@ -79,12 +78,12 @@ Rust feature graphs, SDKs or compiler builds.
 
 `make app-boot` builds only `APP_BOOT_COMPONENTS` with default Cargo features
 disabled and `HYPER_LINK_MODE=static`. The default selection contains init,
-console-input, console-output, session-service, fallback-sh, io-runtime, fs-backend,
-fs-erofs, mount and umount, using their staged names from the same
+console-raw, fallback-sh, io-runtime, fs-backend,
+fs-erofs, fs-fat, mount and umount, using their staged names from the same
 component registry. The init, shell and I/O runtime packages use implementation
-rlibs and have no shared-delivery feature. `fs-fat` is also compiled statically,
-but is packaged on `/system` by default; include it in `APP_BOOT_COMPONENTS` when
-it is needed for a bootstrap mount.
+rlibs and have no shared-delivery feature. `fs-fat` is compiled statically and
+packaged in boot RAM by default. Omitting it from `APP_BOOT_COMPONENTS` places
+it on `/system` instead; neither placement changes which fstab requests a mount.
 
 Bootstrap Cargo artifacts use `APP_BOOT_CARGO_OUTPUT` (by default
 `$(APP_CARGO_OUTPUT)/boot-static`) and are staged under `APP_BOOT_OUTPUT`

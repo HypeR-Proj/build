@@ -32,7 +32,7 @@ elf_spec.loader.exec_module(elf_fixtures)
 
 
 class DeploymentTests(unittest.TestCase):
-    def test_runtime_graphs_keep_console_workers_out_of_std_builds(self):
+    def test_runtime_graphs_select_static_std_console_and_route_core_fixtures(self):
         outputs = {}
         for runtime in ('core', 'std'):
             outputs[runtime] = subprocess.check_output([
@@ -40,9 +40,9 @@ class DeploymentTests(unittest.TestCase):
                 '--link-mode', 'static', '--rust-runtime', runtime,
                 '--extra-bin', 'hyper-storage-probe',
                 '--features', 'hyper-io-runtime/storage-probe'], text=True).split()
-        for name in ('hyper-console-input', 'hyper-console-output'):
-            self.assertIn(name, outputs['core'])
-            self.assertNotIn(name, outputs['std'])
+        for name in ('hyper-console-raw',):
+            self.assertIn(name, outputs['std'])
+            self.assertNotIn(name, outputs['core'])
         self.assertNotIn('hyper-storage-probe', outputs['core'])
         self.assertIn('hyper-storage-probe', outputs['std'])
         self.assertNotIn('--features', outputs['core'])
@@ -51,15 +51,23 @@ class DeploymentTests(unittest.TestCase):
             standard, core, output = root / 'standard', root / 'core', root / 'output'
             standard.mkdir()
             core.mkdir()
+            # An explicit freestanding fixture still exercises the independent
+            # core artifact graph; production console-raw now uses static std.
+            entries = deployment.load(MANIFEST)
+            for entry in entries:
+                if entry.get('staged') == 'console-raw':
+                    entry['rust_runtime'] = 'core'
+            manifest = root / 'core-fixture.json'
+            manifest.write_text(json.dumps({'version': 1, 'entries': entries}))
             (standard / 'hyper-init').write_bytes(elf_fixtures.elf())
-            (standard / 'hyper-console-input').write_bytes(b'stale std image')
-            (core / 'hyper-console-input').write_bytes(elf_fixtures.elf())
+            (standard / 'hyper-console-raw').write_bytes(b'stale std image')
+            (core / 'hyper-console-raw').write_bytes(elf_fixtures.elf())
             subprocess.run([
-                sys.executable, str(SCRIPT), 'install', '--manifest', str(MANIFEST),
+                sys.executable, str(SCRIPT), 'install', '--manifest', str(manifest),
                 '--build', str(standard), '--static-core-build', str(core),
                 '--output', str(output), '--component', 'init',
-                '--component', 'console-input'], check=True)
-            self.assertEqual((output / 'console-input').read_bytes(), elf_fixtures.elf())
+                '--component', 'console-raw'], check=True)
+            self.assertEqual((output / 'console-raw').read_bytes(), elf_fixtures.elf())
 
     def test_component_selection_builds_and_installs_only_requested_executables(self):
         selection = ['--component', 'init', '--component', 'fallback-sh']

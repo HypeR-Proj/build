@@ -68,7 +68,7 @@ class ManifestTests(unittest.TestCase):
             source.write_text(json.dumps(graph))
             core, system = SPLIT.services(source)
             self.assertNotIn('guest-fleet', [item['name'] for item in core['services']])
-            self.assertEqual([item['name'] for item in system['services']], ['guest-fleet'])
+            self.assertEqual([item['name'] for item in system['services']], ['session-manager', 'guest-fleet'])
             core_path, system_path = directory / 'core.json', directory / 'system.json'
             core_path.write_text(json.dumps(core))
             system_path.write_text(json.dumps(system))
@@ -78,14 +78,14 @@ class ManifestTests(unittest.TestCase):
     def test_formal_services_are_selected_by_loader_not_vm_role(self):
         graph = json.loads(BASE.read_text())
         service = {'name': 'logger', 'image': '/svc/logger', 'critical': False,
-                   'restart': 'never', 'after': ['console-output'], 'capabilities': []}
+                   'restart': 'never', 'after': ['console-raw'], 'capabilities': []}
         graph['services'].append(service)
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'services.json'
             source.write_text(json.dumps(graph))
             core, system = SPLIT.services(source)
-            self.assertEqual([item['name'] for item in system['services']], ['logger'])
-            self.assertEqual(system['services'][0]['image'], '/system/svc/logger')
+            self.assertEqual([item['name'] for item in system['services']], ['session-manager', 'logger'])
+            self.assertEqual(system['services'][-1]['image'], '/system/svc/logger')
             self.assertTrue(all(item['loader'] == 'bootstrap' for item in core['services']))
             for item in (graph['services'][0], graph['services'][-1]):
                 item['phase'] = 'system' if item.get('loader') == 'bootstrap' else 'boot'
@@ -96,8 +96,8 @@ class ManifestTests(unittest.TestCase):
 
     def test_no_business_services_still_produces_a_formal_manifest(self):
         core, system = SPLIT.services(BASE)
-        self.assertEqual(len(core['services']), 3)
-        self.assertEqual(system['services'], [])
+        self.assertEqual(len(core['services']), 1)
+        self.assertEqual([item['name'] for item in system['services']], ['session-manager'])
         self.assertNotIn('virtual-machines', system)
         self.assertEqual(system['format'], 'hyper.service-manifest')
 

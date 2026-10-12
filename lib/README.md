@@ -31,6 +31,7 @@ the bootstrap or formal loader explicitly through an executable capability.
 | `hyper-tool-args` | `handle`, `ps`, `top`, `free` | Parse complete generation-bearing IDs and sampling intervals; combine process-ID and name selectors. Shared argument types live here; command-specific clap declarations remain in each tool. |
 | `hyper-vm-policy` | System `init`, `vmm`, VM manager and runtime | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
 | `hyper-vm-support` | Formal VM runtime | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
+| `hyper-terminal` | Terminal service, session manager, shell and interactive tools | Native terminal settings/control, bounded line discipline, foreground leases and events. Bootstrap and stdlib do not depend on it. |
 | `hyper-service-manager` | System init | Service graph validation, launch authority, supervision transfer and userspace root-switch policy. |
 | `hyper-rust-std` (in `stdlib/`) | The Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. |
 
@@ -49,7 +50,7 @@ Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
-The service-manager library remains an rlib. Bootstrap owns a separate
+The service-manager and terminal libraries remain rlibs. Bootstrap owns a separate
 supervisor implementation and filesystem-worker libraries. The handoff contract
 is exercised by the boot-system acceptance tests.
 

@@ -8,7 +8,7 @@ APP_HOST_EXCLUDES = $(shell python3 -B scripts/app-deployment.py host-excludes -
 
 # Bootstrap programs are built independently: a workspace-wide Cargo build can
 # unify shared-library features back into these otherwise static consumers.
-APP_BOOT_COMPONENTS ?= init console-input console-output session-service fallback-sh io-runtime fs-backend fs-erofs mount umount
+APP_BOOT_COMPONENTS ?= init console-raw fallback-sh io-runtime fs-backend fs-erofs fs-fat mount umount
 APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
 APP_BOOT_CARGO_OUTPUT ?= $(APP_CARGO_OUTPUT)/boot-static
 APP_BOOT_SELECTION = $(addprefix --component ,$(APP_BOOT_COMPONENTS))
