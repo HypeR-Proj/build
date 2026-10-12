@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'target/documentation'
 TOOLS = ROOT / 'scripts/docs'
 TARGETS = {
-    'aarch64': 'aarch64-unknown-none',
+    'aarch64': 'aarch64-unknown-none-softfloat',
     'riscv64': 'riscv64imac-unknown-none-elf',
     'x86_64': 'x86_64-unknown-none',
 }
