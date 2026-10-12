@@ -68,13 +68,20 @@ def rust_documentation(api):
             env=environment | {'CARGO_TARGET_DIR': str(cargo_output)})
         copy_rustdoc(cargo_output / target / 'doc', api / 'kernel' / architecture)
 
-    applications = workspace_packages(ROOT / 'app/Cargo.toml')
-    sdk_packages = workspace_packages(ROOT / 'lib/rust/Cargo.toml') + abi_packages
-    packages = [arg for package in applications + sdk_packages
-                for arg in ('--package', package['name'])]
+    native_documentation(api)
+
+
+def native_documentation(api):
+    """Document independent link graphs without pulling third-party crates in."""
+    abi_packages = workspace_packages(ROOT / 'sdk/abi/Cargo.toml')
+    environment = {'RUSTC_BOOTSTRAP': '1'}
+    domains = [('app', 'dynamic'), ('bootstrap/stage1', 'static')]
+    applications = {name: workspace_packages(ROOT / name / 'Cargo.toml')
+                    for name, _ in domains}
+    sdk_packages = workspace_packages(ROOT / 'stdlib/rust/Cargo.toml') + abi_packages
     environment['RUSTDOCFLAGS'] = reference_doc_flags(
-        documented_crates(applications + sdk_packages), '..')
-    programs = native_programs(applications)
+        documented_crates([p for group in applications.values() for p in group] + sdk_packages), '..')
+    programs = {name: native_programs(packages) for name, packages in applications.items()}
     for architecture in ('aarch64', 'riscv64'):
         sdk = OUTPUT / 'sdk' / architecture
         run(['make', 'sdk', f'ARCH={architecture}', f'SDK_OUTPUT={sdk}'])
@@ -82,12 +89,18 @@ def rust_documentation(api):
         target = f'{architecture}-unknown-hyper'
         documentation = cargo_output / target / 'doc'
         clean(documentation)
-        command = [str(sdk / 'bin/hyper-cargo'), 'doc', '--manifest-path', 'app/Cargo.toml',
-                   '--no-deps', '--document-private-items', '--locked']
-        # SDK crates are dependencies outside the application workspace. Select
-        # them explicitly so --no-deps excludes only third-party documentation.
-        run(command + packages,
-            env=environment | {'CARGO_TARGET_DIR': str(cargo_output)})
+        def command(workspace):
+            return [str(sdk / 'bin/hyper-cargo'), 'doc', '--manifest-path',
+                    f'{workspace}/Cargo.toml', '--no-deps', '--document-private-items', '--locked']
+
+        # Both independently resolved domains publish into one Native API tree.
+        # All SDK crates occur in bootstrap's dependency graph; select them
+        # there explicitly so --no-deps excludes only third-party documentation.
+        for workspace, mode in domains:
+            selected = applications[workspace] + (sdk_packages if mode == 'static' else [])
+            packages = [arg for package in selected for arg in ('--package', package['name'])]
+            run(command(workspace) + packages,
+                env=environment | {'CARGO_TARGET_DIR': str(cargo_output), 'HYPER_LINK_MODE': mode})
         library_view = api / 'native' / architecture
         copy_rustdoc(documentation, library_view)
 
@@ -96,9 +109,12 @@ def rust_documentation(api):
         # Their library links point two levels up from each crate's HTML pages.
         flags = program_doc_flags(library_view)
         clean(documentation)
-        run(command + ['--workspace'] + [arg for name in programs for arg in ('--bin', name)],
-            env={'RUSTDOCFLAGS': flags, 'CARGO_TARGET_DIR': str(cargo_output)})
-        for name in programs:
+        for workspace, mode in domains:
+            run(command(workspace) + ['--workspace']
+                + [arg for name in programs[workspace] for arg in ('--bin', name)],
+                env={'RUSTDOCFLAGS': flags, 'CARGO_TARGET_DIR': str(cargo_output),
+                     'HYPER_LINK_MODE': mode})
+        for name in (name for group in programs.values() for name in group):
             if not (documentation / name.replace('-', '_') / 'index.html').is_file():
                 raise ValueError(f'missing executable documentation: {architecture}/{name}')
         copy_rustdoc(documentation, library_view / 'programs')
@@ -221,7 +237,8 @@ def prepare_site(revision):
         raise ValueError('API output is missing; run the complete build first')
     shutil.copytree(api, source / 'api')
     files = public_files()
-    groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Libraries', 'Applications', 'Tests', 'Project')}
+    groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Native substrate',
+                                   'Libraries', 'Applications', 'Tests', 'Project')}
     for name in files:
         path = Path(name)
         if path.suffix.lower() not in ('.md', '.png', '.svg', '.jpg', '.jpeg', '.gif'):
@@ -237,7 +254,7 @@ def prepare_site(revision):
         if name.startswith(('tests/', 'kernel/tests/')):
             group = 'Tests'
         else:
-            group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK', 'lib': 'Libraries',
+            group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK', 'lib': 'Libraries', 'stdlib': 'Native substrate',
                      'app': 'Applications'}.get(path.parts[0], 'Project')
         groups[group].append({page_title(ROOT / path): name})
     assets = source / 'assets'

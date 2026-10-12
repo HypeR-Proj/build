@@ -76,7 +76,7 @@ def disk_partitions(disk):
 
 
 def validate(value):
-    if not isinstance(value, dict) or value.keys() - {'layout', 'volumes', 'fstab'}:
+    if not isinstance(value, dict) or value.keys() - {'layout', 'volumes', 'boot-fstab', 'fstab'}:
         raise ValueError('invalid Native deployment fields')
     if value.get('layout') not in ('split', 'ramfs'):
         raise ValueError('Native layout must be split or ramfs')
@@ -91,9 +91,10 @@ def validate(value):
         if source in sources or type(volume['read-only']) is not bool:
             raise ValueError('duplicate or invalid Native volume')
         sources.add(source)
-    fstab = value.get('fstab')
-    if not isinstance(fstab, str) or len(fstab.encode()) > 16384 or '\0' in fstab:
-        raise ValueError('Native fstab must be text of at most 16 KiB')
+    for name in ('boot-fstab', 'fstab'):
+        table = value.get(name)
+        if not isinstance(table, str) or len(table.encode()) > 16384 or '\0' in table:
+            raise ValueError(f'Native {name} must be text of at most 16 KiB')
     return {**value, 'volumes': volumes}
 
 
@@ -120,13 +121,15 @@ def prepare(source, layout=None):
             result['disk']['partitions'] = partitions
         volumes = [{'source': 'PARTLABEL=' + part['label'], 'read-only': part['filesystem'] == 'erofs'}
                    for part in partitions if 'filesystem' in part]
-        mounts = []
+        mounts = {'boot-fstab': [], 'fstab': []}
         for content, target in [('system', '/system'), ('data', '/data')]:
             part = next((part for part in partitions if part.get('content') == content), None)
             if part is not None:
                 option = 'ro' if part['filesystem'] == 'erofs' else 'rw'
-                mounts.append(f"{fstab_field('PARTLABEL=' + part['label'])} {target} auto {option} 0 0\n")
-        policy = validate({'layout': layout, 'volumes': volumes, 'fstab': ''.join(mounts)})
+                table = 'boot-fstab' if content == 'system' else 'fstab'
+                mounts[table].append(f"{fstab_field('PARTLABEL=' + part['label'])} {target} auto {option} 0 0\n")
+        policy = validate({'layout': layout, 'volumes': volumes,
+                           **{name: ''.join(lines) for name, lines in mounts.items()}})
     has_system = any(part.get('content') == 'system' for part in partitions)
     if has_system != (policy['layout'] == 'split'):
         raise ValueError('system partition content must match split/ramfs deployment')

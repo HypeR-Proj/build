@@ -197,7 +197,7 @@ class EntrypointTests(unittest.TestCase):
             shared = root / '.vscode/rust-analyzer.toml'
             shared.parent.mkdir()
             shutil.copyfile(ROOT / '.vscode/rust-analyzer.toml', shared)
-            workspaces = ('tools/fit-pack', 'app', 'sdk/toolchain/tests/std-smoke',
+            workspaces = ('tools/fit-pack', 'app', 'bootstrap/stage1', 'sdk/toolchain/tests/std-smoke',
                           'sdk/toolchain/tests/rust-smoke')
             patches = {
                 workspace: tuple(name.removeprefix('hyper-') for name in
@@ -207,7 +207,7 @@ class EntrypointTests(unittest.TestCase):
             }
             crates = sorted({name for names in patches.values() for name in names})
             for name in crates:
-                paths = [root / ('sdk/abi' if name == 'abi' else f'lib/rust/hyper-{name}'),
+                paths = [root / ('sdk/abi' if name == 'abi' else f'stdlib/rust/hyper-{name}'),
                          root / f'installed/hyper-{name}']
                 for path in paths:
                     path.mkdir(parents=True)
@@ -250,7 +250,7 @@ class EntrypointTests(unittest.TestCase):
                         crate = next(p for p in json.loads(result.stdout)['packages']
                                      if p['name'] == 'hyper-os')
                         expected = root / ('installed/hyper-os' if mode == 'installed'
-                                           else 'lib/rust/hyper-os') / 'Cargo.toml'
+                                           else 'stdlib/rust/hyper-os') / 'Cargo.toml'
                         self.assertEqual(Path(crate['manifest_path']), expected)
 
     def test_analyzer_patches_only_native_workspaces(self):
@@ -268,7 +268,7 @@ class EntrypointTests(unittest.TestCase):
                         f'[{shutil.which("cargo")!r}, *sys.argv[1:]])\n'
                         'with open(os.environ["PROBE"],"w") as f: '
                         'json.dump({"argv":sys.argv[1:],"config":os.getenv("HYPER_CONFIG"),'
-                        '"std":os.getenv("HYPER_RUST_STD"),"cwd":os.getcwd()},f)\n')
+                        '"std":os.getenv("HYPER_RUST_STD"),"link":os.getenv("HYPER_LINK_MODE"),"cwd":os.getcwd()},f)\n')
             (fake / 'cargo').write_text(recorder)
             (fake / 'cargo').chmod(0o755)
             native = root / 'target/sdk/aarch64/bin'
@@ -278,7 +278,7 @@ class EntrypointTests(unittest.TestCase):
             output = root / 'probe.json'
             env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH'], PROBE=str(output))
             env.pop('HYPER_CONFIG', None)
-            workspaces = ('kernel', 'tools/fit-pack', 'app',
+            workspaces = ('kernel', 'tools/fit-pack', 'app', 'bootstrap/stage1',
                           'sdk/toolchain/tests/std-smoke', 'sdk/toolchain/tests/rust-smoke')
             for workspace in workspaces:
                 cwd = root / workspace
@@ -288,24 +288,28 @@ class EntrypointTests(unittest.TestCase):
                 (cwd / 'src').mkdir()
                 (cwd / 'src/lib.rs').write_text('')
             (root / 'app/Cargo.toml').write_text(
-                '[workspace]\nmembers=["cmd", "../lib/args", "../lib/args/shared", "../bootstrap/stage1/*"]\n')
+                '[workspace]\nmembers=["cmd", "../lib/args", "../lib/args/shared"]\n')
             for member, owner in [('app/cmd', '..'), ('lib/args', '../../app'),
                                   ('lib/args/shared', '../../../app'),
-                                  ('bootstrap/stage1/init', '../../../app')]:
+                                  ('bootstrap/stage1/init', '..')]:
                 cwd = root / member
                 (cwd / 'src').mkdir(parents=True)
                 (cwd / 'src/lib.rs').write_text('')
                 (cwd / 'Cargo.toml').write_text(
                     f'[package]\nname="{member.replace("/", "-")}"\nversion="0.0.0"\n'
                     f'workspace="{owner}"\n')
+            (root / 'bootstrap/stage1/Cargo.toml').write_text('[workspace]\nmembers=["init"]\n')
             for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src',
                               'bootstrap/stage1/init/src'):
                 cwd = root / workspace
                 subprocess.run(['sh', str(script)], cwd=cwd, env=env, check=True)
                 result = json.loads(output.read_text())
-                owner = cwd if workspace in workspaces else root / 'app'
+                owner = (cwd if workspace in workspaces else root / (
+                    'bootstrap/stage1' if workspace.startswith('bootstrap/') else 'app'))
                 self.assertEqual(Path(result['cwd']), owner)
                 self.assertIn('--locked', result['argv'])
+                if workspace.startswith('bootstrap/'):
+                    self.assertEqual(result['link'], 'static')
                 if workspace in ('kernel', 'tools/fit-pack'):
                     self.assertNotIn('--config', result['argv'])
                     self.assertEqual(result['config'], str(root / 'kernel/configs/qemu_aarch64_defconfig'))

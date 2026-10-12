@@ -293,7 +293,9 @@ class BoardTests(unittest.TestCase):
             {'client': 7, 'source': 'PARTLABEL=hyper-system', 'read_only': True}])
         self.assertEqual(board.backend_clients().splitlines()[-2:], ['8 - -', '7 - -'])
         self.assertIn('1 alpine ', board.bootstrap_clients())
-        self.assertTrue(board.source['native']['fstab'].startswith('PARTLABEL=hyper-system /system'))
+        self.assertTrue(board.source['native']['boot-fstab'].startswith('PARTLABEL=hyper-system /system'))
+        self.assertNotIn('/data', board.source['native']['boot-fstab'])
+        self.assertEqual(board.source['native']['fstab'], 'PARTLABEL=hyper-data /data auto rw 0 0\n')
         for first, second in zip(board.partitions, board.partitions[1:]):
             self.assertLess(first.end, second.start)
 
@@ -312,7 +314,8 @@ class BoardTests(unittest.TestCase):
             'layout': 'split',
             'volumes': [{'source': 'PARTLABEL=hyper-data', 'read-only': False},
                         {'source': 'PARTLABEL=hyper-system', 'read-only': True}],
-            'fstab': 'PARTLABEL=hyper-system /system auto ro 0 0\nPARTLABEL=hyper-data /data auto rw 0 0\n',
+            'boot-fstab': 'PARTLABEL=hyper-system /system auto ro 0 0\n',
+            'fstab': 'PARTLABEL=hyper-data /data auto rw 0 0\n',
         }
         self.assertEqual(self.source, original)
         self.assertEqual(board.source, explicit)
@@ -330,6 +333,7 @@ class BoardTests(unittest.TestCase):
         ramfs = Board.parse(self.source, layout='ramfs')
         self.assertEqual(ramfs.source['native'], {
             'layout': 'ramfs', 'volumes': [{'source': 'PARTLABEL=hyper-data', 'read-only': False}],
+            'boot-fstab': '',
             'fstab': 'PARTLABEL=hyper-data /data auto rw 0 0\n'})
         self.assertEqual(disk.vms(), ramfs.vms())
         self.assertEqual(disk.source['files'], ramfs.source['files'])
@@ -368,7 +372,8 @@ class BoardTests(unittest.TestCase):
                     self.assertEqual(board, Board.load(source, layout=layout))
                     staged = root / str(layout)
                     stage(board, ROOT, staged)
-                    self.assertEqual((staged / 'fstab').read_text(), board.source['native']['fstab'])
+                    for name in ('boot-fstab', 'fstab'):
+                        self.assertEqual((staged / name).read_text(), board.source['native'][name])
                     self.assertEqual(json.loads((staged / 'storage.json').read_text()),
                                      board.storage_policy())
                     self.assertEqual((staged / 'io-clients.conf').read_text(),

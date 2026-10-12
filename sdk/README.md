@@ -19,16 +19,16 @@ implementations under `lib/`, and the static loader under `bootstrap/stage1/`:
 | Path | Responsibility |
 | --- | --- |
 | `sdk/abi/` | Machine-visible values, layouts, syscall metadata, and generated interfaces |
-| `lib/hyper/` | Freestanding C runtime, startup code, and architecture syscall veneers |
+| `stdlib/hyper/` | Freestanding C runtime, startup code, and architecture syscall veneers |
 | `bootstrap/stage1/userspace-loader/` | Static bootstrap executable loader |
-| `lib/elf-loader/` | Shared bounded ELF mapping and startup-stack implementation |
+| `lib/dynamic-loader/elf/` | Formal loader ELF mapping and startup-stack implementation |
 | `lib/dynamic-loader/` | Formal executable loader, runtime linker and `dlopen` implementation |
-| `lib/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
+| `stdlib/rust/` | Raw Rust ABI bindings, safe Native OS interfaces, and Rust runtime entry |
 | `sdk/toolchain/` | Clang driver, linker script, ELF branding, and transactional SDK assembly |
 
 The kernel consumes `sdk/abi/` as a dependency-free `no_std` path dependency.
 Native applications consume only the assembled SDK. They must not include
-headers from `sdk/abi/` or `lib/hyper/` directly, link source-tree archives, or
+headers from `sdk/abi/` or `stdlib/hyper/` directly, link source-tree archives, or
 depend on private kernel modules.
 
 ## Build and installed layout
@@ -64,12 +64,7 @@ share/hyper/abi/src/
 share/hyper/rust/hyper-sys/
 share/hyper/rust/hyper-os/
 share/hyper/rust/hyper-rt/
-share/hyper/rust/hyper-service/
-share/hyper/rust/hyper-vm-image/
-share/hyper/rust/hyper-block/
 share/hyper/rust/hyper-filesystem/
-share/hyper/rust/hyper-fatfs/
-share/hyper/rust/hyper-erofs/
 share/hyper/manifest
 ```
 
@@ -157,7 +152,7 @@ kernel bootstrap stack. Static programs also retire the selected loader mapping;
 dynamic programs retain the formal loader for runtime linking.
 
 Executable, loader and library windows, heap address hints and final-stack
-placement are [userspace layout policy](../lib/elf-loader/README.md#address-layout).
+placement are [userspace layout policy](../lib/dynamic-loader/elf/README.md#address-layout).
 They are currently deterministic; userspace ASLR is not implemented. VMAR
 reservations consume virtual address space, not their capacity in physical RAM.
 

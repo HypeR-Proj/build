@@ -111,5 +111,5 @@ def stage(board, root, output):
         target = output / name
         if not target.exists() or target.read_text() != contents:
             target.write_text(contents)
-    fstab = board.source['native']['fstab']
-    (output / 'fstab').write_text(fstab)
+    for name in ('boot-fstab', 'fstab'):
+        (output / name).write_text(board.source['native'][name])

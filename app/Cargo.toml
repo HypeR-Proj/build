@@ -3,27 +3,17 @@
 
 [workspace]
 resolver = "3"
-# Native programs own their manifests in app/ and bootstrap/stage1/.
-# Both share SDK delivery and dependency resolution with the libraries in lib/.
+# Formal system programs and their implementation libraries.
 members = [
     "*",
-    "../bootstrap/stage1/console-input",
-    "../bootstrap/stage1/console-output",
-    "../bootstrap/stage1/fs-backend",
-    "../bootstrap/stage1/fs-erofs",
-    "../bootstrap/stage1/fs-fat",
-    "../bootstrap/stage1/init",
-    "../bootstrap/stage1/io-runtime",
-    "../bootstrap/stage1/mount",
-    "../bootstrap/stage1/session",
-    "../bootstrap/stage1/fallback-sh",
-    "../bootstrap/stage1/umount",
     "../lib/clap",
-    "../lib/fs-service",
+    "../lib/service",
+    "../lib/block",
+    "../lib/vm-image",
     "../lib/service-manager",
     "../lib/tool-args",
     "../lib/tool-args/shared",
-    "../lib/rust-std",
+    "../stdlib/rust-std",
     "../lib/vm-policy",
     "../lib/vm-policy/shared",
     "../lib/vm-support",
@@ -39,20 +29,18 @@ repository = "https://github.com/roolrz/HypeR"
 publish = false
 
 [workspace.dependencies]
+hyper-abi = "=0.0.0"
 hyper-clap-shared = { path = "../lib/clap" }
-hyper-rust-std = { path = "../lib/rust-std" }
+hyper-rust-std = { path = "../stdlib/rust-std" }
 hyper-tool-args = { path = "../lib/tool-args" }
 hyper-tool-args-shared = { path = "../lib/tool-args/shared" }
 hyper-os = "=0.0.0"
-hyper-block = "=0.0.0"
+hyper-block = { path = "../lib/block" }
 hyper-filesystem = "=0.0.0"
-hyper-fatfs = "=0.0.0"
-hyper-erofs = "=0.0.0"
-hyper-fs-service = { path = "../lib/fs-service" }
 hyper-service-manager = { path = "../lib/service-manager", default-features = false }
 hyper-rt = { version = "=0.0.0", features = ["std"] }
-hyper-service = "=0.0.0"
-hyper-vm-image = "=0.0.0"
+hyper-service = { path = "../lib/service" }
+hyper-vm-image = { path = "../lib/vm-image" }
 hyper-vm-policy = { path = "../lib/vm-policy" }
 hyper-vm-policy-shared = { path = "../lib/vm-policy/shared" }
 hyper-vm-support = { path = "../lib/vm-support" }

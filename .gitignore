@@ -3,9 +3,10 @@
 
 /target/
 /app/target/
+/bootstrap/stage1/target/
 /kernel/target/
 /sdk/abi/target/
-/lib/rust/target/
+/stdlib/rust/target/
 /sdk/toolchain/target/
 /sdk/toolchain/tests/rust-smoke/target/
 /sdk/toolchain/tests/std-smoke/target/

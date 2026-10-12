@@ -159,7 +159,7 @@ def main():
             entries.append(['0644', 'etc/hyper/' + name,
                             str((args.output.parent / 'board' / name).resolve())])
         entries.append(['0644', 'etc/fstab',
-                        str((args.output.parent / 'board/fstab').resolve())])
+                        str((args.output.parent / 'board/boot-fstab').resolve())])
     write_json(args.output.with_suffix('.entries.json'), entries)
 
 

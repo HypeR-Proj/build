@@ -138,10 +138,10 @@ def root_switch_policy(native):
     """Userspace chooses the root and mount placement; the kernel knows neither."""
     mounts = [{'source': '/system', 'target': '/system',
                'ramfs': native['layout'] == 'ramfs'}]
-    targets = ['/data']
-    # Additional configured volumes retain their mount paths after the switch.
-    # The system service parses fstab; composition only prepares placement.
-    for line in native.get('fstab', '').splitlines():
+    targets = []
+    # Only already-mounted bootstrap volumes need moving. Formal mount policy
+    # must not constrain handoff: the manager creates those mountpoints later.
+    for line in native.get('boot-fstab', '').splitlines():
         # Match fs-backend's token-based comments: '#' inside a label or path
         # is literal, while a whitespace-delimited '#...' starts a comment.
         fields = []
@@ -157,7 +157,7 @@ def root_switch_policy(native):
     mounts.extend({'source': target, 'target': target, 'optional': True}
                   for target in targets)
     return {
-        'new-root': '/.newroot', 'put-old': '/boot', 'directories': ['/tmp'],
+        'new-root': '/.newroot', 'put-old': '/boot', 'directories': ['/tmp', '/data'],
         'mounts': mounts,
     }
 
@@ -199,9 +199,10 @@ def compose(args, native, service_path):
     write_json(manifest_path, core)
     write_json(system_manifest_path, system)
     init_path = metadata / 'init.json'
-    write_json(init_path, {'system-init': '/system/svc/init-system',
-                           'services': '/system/etc/hyper/services.json',
-                           'root-switch': root_switch_policy(native)})
+    write_json(init_path, {'system-init': '/system/svc/init-system'})
+    system_init_path = metadata / 'system-init.json'
+    write_json(system_init_path, {'services': '/system/etc/hyper/services.json',
+                                 'root-switch': root_switch_policy(native)})
     placeholder = metadata / 'empty'
     placeholder.touch()
     boot.extend([
@@ -209,8 +210,14 @@ def compose(args, native, service_path):
         ['0644', 'etc/hyper/init.json', str(init_path.resolve())],
         ['0644', f'lib64/{args.arch}-hyper-hyper/.keep', str(placeholder.resolve())],
     ])
+    formal_fstab = metadata / 'fstab'
+    formal_fstab.write_text(native.get('fstab', ''))
+    disk.append(['0644', 'etc/fstab', str(formal_fstab.resolve())])
+    checksums[str(formal_fstab.resolve())] = archive.digest(formal_fstab)
     disk.append(['0644', 'etc/hyper/services.json', str(system_manifest_path.resolve())])
     checksums[str(system_manifest_path.resolve())] = archive.digest(system_manifest_path)
+    disk.append(['0644', 'etc/hyper/init.json', str(system_init_path.resolve())])
+    checksums[str(system_init_path.resolve())] = archive.digest(system_init_path)
 
     images = [name for mode, name, source in boot
               if mode != 'symlink' and read_image(source) is not None]

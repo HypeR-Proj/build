@@ -9,8 +9,8 @@ script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 PATH="$PATH:$HOME/.cargo/bin"
 
-# Resolve ownership, not directory ancestry: bootstrap/stage1 programs and
-# libraries under lib/ belong to app/, while Native bindings own lib/rust/.
+# Resolve ownership, not directory ancestry: bootstrap/stage1 owns its private static workspace;
+# system libraries belong to app/, while Native bindings own stdlib/rust/.
 # External members do not inherit app/.cargo/config.toml from their directory.
 # A direct invocation from the product root checks its Native workspace.
 if [ "$(pwd -P)" = "$root" ]; then
@@ -22,7 +22,7 @@ cd "$workspace"
 config=$workspace/.cargo/config.toml
 
 case "$workspace" in
-    "$root/app" | "$root/sdk/toolchain/tests/std-smoke" | "$root/sdk/toolchain/tests/rust-smoke")
+    "$root/app" | "$root/bootstrap/stage1" | "$root/sdk/toolchain/tests/std-smoke" | "$root/sdk/toolchain/tests/rust-smoke")
         sdk=$root/target/sdk/aarch64
         if [ ! -x "$sdk/bin/hyper-cargo" ]; then
             echo "rust-analyzer: run make sdk ARCH=aarch64 to prepare Native std" >&2
@@ -31,6 +31,9 @@ case "$workspace" in
         export HYPER_SYSROOT="$sdk" HYPER_ARCH=aarch64 HYPER_RUST_STD=1
         if [ "$workspace" = "$root/sdk/toolchain/tests/rust-smoke" ]; then
             HYPER_RUST_STD=0
+        fi
+        if [ "$workspace" = "$root/bootstrap/stage1" ]; then
+            export HYPER_LINK_MODE=static
         fi
         # Keep navigation on repository SDK sources, not the installed copies.
         # Native executables have no host test harness.

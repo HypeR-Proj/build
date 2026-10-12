@@ -303,6 +303,30 @@ class NativePayloadTests(unittest.TestCase):
         self.args.board.write_text(json.dumps(self.board))
         return split.compose_entries(self.args, self.board['native'])
 
+    def test_init_policies_are_packaged_in_their_own_environments(self):
+        self.args.output = self.root / 'output'
+        self.args.initramfs = self.root / 'bootstrap.cpio'
+        self.args.packer = 'unused-packer'
+        self.args.strip = 'unused-strip'
+        graph = self.root / 'services.json'
+        graph.write_text(json.dumps({'format': 'hyper.service-manifest', 'services': []}))
+        # Exercise real metadata generation and payload staging; this fixture
+        # contains no ELF programs and does not invoke external build tools.
+        with patch.object(split, 'compose_entries', return_value=([], [], {})), \
+                patch.object(split.subprocess, 'run'):
+            split.compose(self.args, self.board['native'], graph)
+        entries = json.loads((self.args.output / 'native-system/boot.entries.json').read_text())
+        boot_config = next(Path(source) for _, name, source in entries
+                           if name == 'etc/hyper/init.json')
+        self.assertEqual(json.loads(boot_config.read_text()),
+                         {'system-init': '/system/svc/init-system'})
+        system = self.args.output / 'system-root'
+        self.assertEqual(json.loads((system / 'etc/hyper/init.json').read_text()), {
+            'services': '/system/etc/hyper/services.json',
+            'root-switch': split.root_switch_policy(self.board['native']),
+        })
+        self.assertEqual((system / 'etc/fstab').read_text(), self.board['native']['fstab'])
+
     def test_boot_is_static_and_keeps_system_services_separate(self):
         boot, disk, _ = self.compose()
         links = {name: target for mode, name, target in boot if mode == 'symlink'}
@@ -330,6 +354,12 @@ class NativePayloadTests(unittest.TestCase):
         self.assertEqual(system['filesystem'], 'erofs')
         self.assertFalse(any(name.endswith('/fs-erofs') for _, name, _ in boot + disk))
 
+    def test_data_worker_can_live_in_system_without_entering_boot(self):
+        self.args.boot_components.remove('fs-fat')
+        boot, system, _ = self.compose()
+        self.assertNotIn('svc/fs-fat', {name for _, name, _ in boot})
+        self.assertIn('svc/fs-fat', {name for _, name, _ in system})
+
     def test_ramfs_uses_the_same_core_and_formal_payload_as_disk(self):
         boot, disk, _ = self.compose()
         ramfs = {'layout': 'ramfs', 'volumes': []}
@@ -344,9 +374,9 @@ class NativePayloadTests(unittest.TestCase):
         self.assertEqual(policy.get('links', []), [])
         self.assertEqual(policy['mounts'], [
             {'source': '/system', 'target': '/system', 'ramfs': False},
-            {'source': '/data', 'target': '/data', 'optional': True},
         ])
-        ramfs = {'layout': 'ramfs', 'fstab': 'media /media/my\\040disk auto noauto 0 0\n'}
+        self.assertIn('/data', policy['directories'])
+        ramfs = {'layout': 'ramfs', 'boot-fstab': 'media /media/my\\040disk auto noauto 0 0\n'}
         policy = split.root_switch_policy(ramfs)
         self.assertTrue(policy['mounts'][0]['ramfs'])
         self.assertIn({'source': '/media/my disk', 'target': '/media/my disk',
@@ -355,7 +385,7 @@ class NativePayloadTests(unittest.TestCase):
     def test_root_switch_preserves_literal_hashes_in_fstab_fields(self):
         policy = split.root_switch_policy({
             'layout': 'split',
-            'fstab': ('# ignored comment\n'
+            'boot-fstab': ('# ignored comment\n'
                       'PARTLABEL=archive#1 /archive auto rw 0 0 # comment\n'
                       'PARTLABEL=archive2 /archive#2 auto rw 0 0\n'
                       'PARTLABEL=archive3 /archive\\040#3 auto rw 0 0\n'),
@@ -363,7 +393,13 @@ class NativePayloadTests(unittest.TestCase):
         for target in ('/archive', '/archive#2', '/archive #3'):
             self.assertIn({'source': target, 'target': target, 'optional': True},
                           policy['mounts'])
-        self.assertEqual(len(policy['mounts']), 5)
+        self.assertEqual(len(policy['mounts']), 4)
+
+    def test_formal_mount_policy_cannot_change_root_switch(self):
+        native = {'layout': 'split', 'boot-fstab': ''}
+        expected = split.root_switch_policy(native)
+        native['fstab'] = 'PARTLABEL=archive /boot/archive auto rw 0 0\n'
+        self.assertEqual(split.root_switch_policy(native), expected)
 
     def test_extra_data_stays_in_boot_and_extra_elf_uses_system(self):
         guest = self.root / 'guest.itb'

@@ -207,7 +207,7 @@ uses the workspace's SDK source patches and does not require SDK assembly. `make
 all workspace members. Component staged names are independent of their
 bootstrap or system installation directory.
 
-Reusable OS interaction belongs to `lib/rust/hyper-os`; application-local
+Reusable OS interaction belongs to `stdlib/rust/hyper-os`; application-local
 service and command policy remains under `app`. Shared application implementations
 live in [`lib/`](../lib/README.md), and their Native DSOs are installed in
 `/system/lib64/<arch>-hyper-hyper/`, also accessible through `/system/lib`.
@@ -237,7 +237,7 @@ capability follows the live namespace.
 | `/svc/io-runtime` | [io-runtime](../bootstrap/stage1/io-runtime) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
 | `/system/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
 | `/svc/fs-backend` | [fs-backend](../bootstrap/stage1/fs-backend) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
-| `/svc/fs-fat` | [fs-fat](../bootstrap/stage1/fs-fat) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by fs-backend. |
+| `/system/svc/fs-fat` (default placement) | [fs-fat](../bootstrap/stage1/fs-fat) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by fs-backend. |
 | `/svc/fs-erofs` | [fs-erofs](../bootstrap/stage1/fs-erofs) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend. |
 | `/system/svc/init-system` | [init](init/) | Validate the combined service graph, atomically adopt existing core supervisors, switch the root namespace, then start system services and continue whole-system supervision. Retain core supervision if root switching fails. Used with both disk-backed and RAM-resident system files. |
 | `/system/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
@@ -256,8 +256,9 @@ HypeR-specific. Use `COMMAND --help` for the complete option list.
 ### `mount` and `umount`: Native volume administration
 
 [mount](../bootstrap/stage1/mount) lists active managed volumes without arguments. `mount -a`
-applies automatic boot-environment `etc/fstab` entries; `mount /data` or `mount PARTLABEL=hyper-data` selects
-one fstab entry. `mount -t auto -o ro PARTLABEL=hyper-system /system` selects an authorized
+applies automatic `/system/etc/fstab` entries; `mount /data` or
+`mount PARTLABEL=hyper-data` selects one entry there. `-T /boot/etc/fstab` selects
+the bootstrap table after root switching (`-T /etc/fstab` before the switch). `mount -t auto -o ro PARTLABEL=hyper-system /system` selects an authorized
 GPT partition and target. Types are `auto`, `fat`/`vfat`, and `erofs`; EROFS requires
 `ro`. The manager identifies media before selecting an installed worker, and
 reports unavailable volumes, format mismatches and missing workers separately.
@@ -443,7 +444,9 @@ the summary remains system-wide even when process rows are filtered.
 [shell](shell/) is installed as `/system/bin/sh` and is the normal interactive
 shell. A separate static [fallback-sh](../bootstrap/stage1/fallback-sh) lives in
 `/boot/svc/fallback-sh`. Session waits for startup completion before launching
-`sh`; startup failure or an unavailable system shell selects `fallback-sh`.
+`sh`; only stage-1 failure before ownership transfer selects `fallback-sh`.
+Post-handoff failures remain under formal init; a missing system shell is retried
+without starting bootstrap recovery.
 The fallback service omits clap, history, pipelines and redirection, retaining
 basic line editing, quoted arguments, `cd`, `pwd`, `help`, `exit` and external
 command launch. It is not on the command search path. See the

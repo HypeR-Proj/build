@@ -23,7 +23,8 @@ def load_registry(path):
     result = subprocess.run(
         ['make', '--no-print-directory', '-s', '-f', str(Path(path).resolve()),
          'component-records'], cwd=ROOT, env=env, check=True, capture_output=True, text=True)
-    members = member_directories(ROOT / 'app/Cargo.toml')
+    members = (member_directories(ROOT / 'app/Cargo.toml')
+               | member_directories(ROOT / 'bootstrap/stage1/Cargo.toml'))
     entries = []
     for record in result.stdout.splitlines():
         fields = record.split('|')
@@ -35,7 +36,7 @@ def load_registry(path):
                 raise ValueError(f'invalid Rust component runtime: {record}')
             directory = (ROOT / source).resolve()
             if directory not in members:
-                raise ValueError(f'component is not an app workspace member: {source}')
+                raise ValueError(f'component is not a Native workspace member: {source}')
             manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
             static = directory.is_relative_to(ROOT / 'bootstrap/stage1')
             if static and kind == 'library':

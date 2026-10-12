@@ -23,12 +23,16 @@ def main():
             raise SystemExit('--core requires a manifest path')
         arguments[index] = str(Path(arguments[index]).resolve())
     environment = dict(os.environ, CARGO_TARGET_DIR=str(root / 'target/app-host-tests'))
-    # Running in app/ uses its source patches, not an installed target SDK.
+    # Each supervisor owns its parser. Validate core manifests with bootstrap
+    # and the combined graph with the formal supervisor's parser.
+    system = '--core' in arguments
+    workspace = 'app' if system else 'bootstrap/stage1'
+    package = 'hyper-service-manager' if system else 'bootstrap-service-manager'
     result = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--target', host,
-        '-p', 'hyper-service-manager', '--example', 'check-services', '--',
+        '-p', package, '--example', 'check-services', '--',
         str(Path(sys.argv[1]).resolve()), *arguments,
-    ], cwd=root / 'app', env=environment)
+    ], cwd=root / workspace, env=environment)
     raise SystemExit(result.returncode)
 
 

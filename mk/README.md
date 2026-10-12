@@ -12,7 +12,8 @@ building an SDK or changing any files.
 
 Each Native program and shared library declares delivery in its own
 `component.mk`. `mk/components.mk` discovers `app/*/component.mk`,
-`bootstrap/stage1/*/component.mk` and `lib/*/component.mk`, then applies the
+`bootstrap/stage1/*/component.mk`, `lib/*/component.mk` and
+`stdlib/*/component.mk`, then applies the
 shared templates under `mk/components/`.
 Acceptance-only payloads are declared in `tests/native/component.mk`.
 
@@ -30,17 +31,16 @@ features and crate types remain in Cargo; the Make templates do not duplicate
 them. Native-only dylib declarations also supply the host-test exclusion list.
 Programs under `app/*/` are discovered by Cargo's member glob; app's `.cargo/`
 and `target/` are excluded. Add a new program's `Cargo.toml` and `component.mk`
-in its directory. Stage-1 packages explicitly select
-`workspace = "../../../app"` and are workspace members alongside libraries
-outside `app/`. There is no separately maintained deployment
+in its directory. Stage-1 programs select their own workspace with `workspace = ".."`; private
+libraries below `bootstrap/stage1/lib/` use `workspace = "../.."`. There is no separately maintained deployment
 JSON or test library list.
 
 Each package owns its dependencies and features. Keep dependencies used by only
 one app in that app's manifest (for example, shell's `shlex` and grep's `regex`).
 The workspace supplies shared dependency versions, package metadata, lints and
-build profiles. One `app/Cargo.lock` pins the delivery graph for bootstrap
-programs, ordinary applications and Rust DSOs; a source-only app change does
-not require editing it. Dependency
+build profiles. `app/Cargo.lock` pins formal applications and DSOs;
+`bootstrap/stage1/Cargo.lock` independently pins bootstrap. Source-only changes
+do not require editing either lockfile. Dependency
 changes should update only the relevant lock entries, without unrelated upgrades.
 
 `native-file` registers an explicit SDK, configuration or fixture file, with
@@ -80,9 +80,11 @@ Rust feature graphs, SDKs or compiler builds.
 `make app-boot` builds only `APP_BOOT_COMPONENTS` with default Cargo features
 disabled and `HYPER_LINK_MODE=static`. The default selection contains init,
 console-input, console-output, session-service, fallback-sh, io-runtime, fs-backend,
-fs-fat, fs-erofs, mount and umount, using their staged names from the same
+fs-erofs, mount and umount, using their staged names from the same
 component registry. The init, shell and I/O runtime packages use implementation
-rlibs and have no shared-delivery feature.
+rlibs and have no shared-delivery feature. `fs-fat` is also compiled statically,
+but is packaged on `/system` by default; include it in `APP_BOOT_COMPONENTS` when
+it is needed for a bootstrap mount.
 
 Bootstrap Cargo artifacts use `APP_BOOT_CARGO_OUTPUT` (by default
 `$(APP_CARGO_OUTPUT)/boot-static`) and are staged under `APP_BOOT_OUTPUT`
@@ -153,8 +155,8 @@ and userspace-loader. Their installed outputs are cached independently beside
 the SDK in `<sdk-output>.components/`, keyed by source/dependency contents,
 compiler/tool identities, configuration and relevant environment. Cache hits
 verify output contents before restoring them into a fresh staging SDK.
-The loaders also include `lib/elf-loader` in their content dependencies, so a
-shared mapper change invalidates cached loader artifacts.
+Each loader owns its `elf/` implementation below its source root. Changes to
+that mapper invalidate only its owning loader cache.
 
 This cache does not publish SDKs. The existing SDK publisher continues to
 serialize writers, check inputs again, preserve unchanged timestamps and replace

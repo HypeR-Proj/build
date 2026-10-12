@@ -3,18 +3,17 @@ SPDX-FileCopyrightText: 2026 roolrz
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Native runtime and shared libraries
+# Formal-system implementation libraries
 
-This directory owns userspace runtime implementations and reusable application
-code. ABI definitions and SDK construction remain in `sdk/abi` and
+This directory owns formal-system userspace implementations and reusable application
+code. Bootstrap cannot depend on it. Common kernel interfaces and language-runtime
+support live in [`stdlib/`](../stdlib/README.md). ABI definitions and SDK construction remain in `sdk/abi` and
 `sdk/toolchain`; the assembled SDK remains the build boundary for applications.
 
 | Source | Responsibility | Build owner |
 | --- | --- | --- |
-| [`hyper/`](hyper/README.md) | Freestanding C runtime, startup, syscall veneers and std adapters; produces `libhyper` | SDK assembly through CMake |
-| `elf-loader/` | Shared bounded ELF mapping and initial stack construction | Internal C implementation used by both loaders |
 | [`dynamic-loader/`](dynamic-loader/README.md) | Formal static/dynamic executable loading, relocation and capability-relative runtime loading | SDK assembly through CMake |
-| [`rust/`](rust/README.md) | Raw and safe Native Rust bindings, Rust entry and service interfaces | Independent Cargo workspace, installed into the SDK |
+| `service/`, `block/`, `vm-image/` | Service protocols, GPT parsing and guest-image handling | Formal Cargo workspace |
 
 The application libraries below are explicit members of `app/Cargo.toml`, with
 one lockfile, dependency graph, profile and installed-SDK boundary. They do not
@@ -30,11 +29,10 @@ the bootstrap or formal loader explicitly through an executable capability.
 | --- | --- | --- |
 | `hyper-clap-shared` | All clap-based Native tools | Own the common clap parser, validation and help code; applications retain their argument types and derive expansions. |
 | `hyper-tool-args` | `handle`, `ps`, `top`, `free` | Parse complete generation-bearing IDs and sampling intervals; combine process-ID and name selectors. Shared argument types live here; command-specific clap declarations remain in each tool. |
-| `hyper-vm-policy` | `init`, `vmm`, VM manager and runtimes | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
-| `hyper-vm-support` | VM and I/O runtimes | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
-| `hyper-fs-service` | Filesystem format workers | Common ordered filesystem request dispatch, shared-buffer lifetime, mount publication and parent-liveness handling; media semantics live in the format adapter. |
-| `hyper-service-manager` | Stage-1 init and system init | Service graph validation, launch authority, supervision transfer and userspace root-switch policy. |
-| `hyper-rust-std` | The other Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. It uses the installed SDK's std port. |
+| `hyper-vm-policy` | System `init`, `vmm`, VM manager and runtime | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
+| `hyper-vm-support` | Formal VM runtime | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
+| `hyper-service-manager` | System init | Service graph validation, launch authority, supervision transfer and userspace root-switch policy. |
+| `hyper-rust-std` (in `stdlib/`) | The Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. |
 
 `make app` builds the libraries and installs their `.so` artifacts under
 `target/app/<arch>/lib/`. The delivered files are `libhyper_clap_shared.so`, `libhyper_tool_args_shared.so`,
@@ -51,18 +49,17 @@ Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
-The filesystem worker and service-manager libraries remain rlibs. They supply
-per-driver dispatch and shared init policy, respectively, without adding another
-installed shared object.
+The service-manager library remains an rlib. Bootstrap owns a separate
+supervisor implementation and filesystem-worker libraries. The handoff contract
+is exercised by the boot-system acceptance tests.
 
 The clap delivery crate re-exports the unmodified upstream API and shares the
 same std owner. Each policy/support implementation crate remains an rlib.
 Its small `shared/` package re-exports
 the same API as a Rust dylib. Dynamic Native consumers enable the shared-delivery
-feature and select that package through target dependencies. Static bootstrap
-programs and host tests use the implementation rlibs directly. This keeps Native
-SDK calls out of host shared-library links without introducing FFI wrappers or
-duplicating implementations. The shared-delivery packages require dynamic linking.
+feature and select that package through target dependencies. Host tests use the implementation rlibs directly. Bootstrap uses its own
+private implementations. This keeps Native
+SDK calls out of host shared-library links without introducing FFI wrappers for the formal environment. The shared-delivery packages require dynamic linking.
 `make app-check`, `make app-test`, `make app-sdk-test`, and the Native API documentation include
 the implementation crates automatically; the Native-only delivery packages are
 compiled and exercised by the image and QEMU checks. For example:
