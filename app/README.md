@@ -21,14 +21,13 @@ receives only the control or runtime byte-channel authority needed for one comma
 
 ## Application development
 
-The in-tree executables use the SDK's partial Rust std port. Command-line interfaces
-use clap, shell words use shlex, and formatting, collections, paths, and ordinary
+The in-tree executables use the SDK's partial Rust std port. Application
+command-line interfaces use clap; the formal shell retains quotes in its own
+lexer/parser until expansion. Formatting, collections, paths and ordinary
 command output use std. `echo` supports `-n`, `-e` and `-E`; unknown options such
 as `--help` are text, and the first operand ends option parsing. Other public
-commands provide clap help and reject extra or
-conflicting arguments. Shell builtins use `try_parse_from` so help and argument
-errors return to the prompt rather than terminating the shell. Shell quoting
-follows POSIX shlex rules, including comments and double-quote escaping.
+commands provide clap help and reject extra or conflicting arguments. Shell
+syntax and builtin errors return to the interactive prompt.
 
 `hyper_rt::process::startup()` transfers Native capabilities once to a std
 application. The runtime retains standard streams and the bootstrap Console
@@ -456,16 +455,20 @@ basic line editing, quoted arguments, `cd`, `pwd`, `help`, `exit` and external
 command launch. It is not on the command search path. See the
 [shell and recovery behavior](../docs/shell.md).
 
-The formal shell provides bounded line editing,
-quoting, the `cd`, `pwd`, `help`, `clear` and `exit` builtins, external command
-launch, concurrent pipelines and file redirection. `echo` is an external
-application. Up/Down recalls up to 32 commands and restores the unfinished
-input when moving past the newest entry. Ctrl-U clears the line; Ctrl-L redraws
-the screen. History is local to the shell instance; commands beginning with
-whitespace and consecutive duplicates are omitted. Exiting the shell causes the
-session manager to retire the session and start a fresh terminal and shell,
-subject to its bounded rapid-restart policy.
-See [shell syntax and limits](../docs/shell.md) for supported syntax.
+The formal shell provides cursor editing, completion, reverse history search,
+multiline input and bracketed paste. Its language includes variables, command
+and arithmetic substitution, globbing, control structures, functions, scripts,
+pipelines, exit statuses, and ordered redirection with descriptor aliases and
+here-documents. `echo` and `printf` are builtins; `/system/bin/echo` remains an
+independent application. `status` shows the previous result and elapsed time.
+
+History retains at most 256 entries in `/tmp/hyper-sh.history`, is bounded to
+256 KiB on disk, and disappears with the default RAM-backed `/tmp` on reboot.
+It never falls back to `/data` or a home directory. Leading whitespace opts out
+of history; duplicates are omitted. Shell exit causes the session manager to
+retire the session and start a fresh terminal and shell, subject to its bounded
+restart policy. Background jobs and full Bash compatibility are outside this
+implementation; see [shell syntax and limits](../docs/shell.md).
 
 The session delegates process-construction authority to the shell. Commands
 inherit attenuated root and cwd Directory capabilities, standard streams and

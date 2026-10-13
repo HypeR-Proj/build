@@ -65,6 +65,11 @@ test-terminal: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-terminal.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/terminal.log"
 
+.PHONY: test-shell
+test-shell: image native-initramfs
+	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-shell.py \
+		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/shell.log"
+
 # Native authority fixture boots as /init, independently of product services.
 test-vm-smoke: image app-fetch $(NEWC_PACK)
 	@test "$(ARCH)" = riscv64 -o "$(ARCH)" = aarch64 || { echo "VM smoke fixture requires aarch64 or riscv64" >&2; exit 2; }
