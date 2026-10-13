@@ -412,19 +412,26 @@ TID and capability details, or `top` for CPU activity over time.
 
 ### `free`: physical memory accounting
 
-[free](free/) reports HypeR's total, used, free and reserved physical memory,
-reclaimable cache and buffer usage, and ownership by kernel, heap, page tables,
-Native users and guests. `free -b` prints bytes instead of human-readable sizes;
-`-k`, `-m` and `-g` select whole KiB, MiB and GiB. `free -m -c 5 -s 0.5` collects
-five snapshots half a second apart, starting immediately. Sampling is finite
-and defaults to one snapshot; `-s` alone does not request continuous monitoring.
-This is host physical accounting, not the guest Linux view of free memory.
+[free](free/) derives total, used, free, reclaimable and estimated available
+memory from the kernel's raw physical counters. `used = total - free -
+reclaimable`, including reserved RAM. The ownership row separately partitions
+managed allocations into non-reclaimable kernel memory, Native VMO backing,
+guest backing and `buffered/cached`. `kernel` combines direct pages, heap and
+page tables minus reclaimable slab. `buffered/cached` combines file-cache
+backing and reclaimable slab, including file pages currently pinned or loading.
+A guest's backend aliases do not count the same backing again. This is host
+physical accounting, not the guest Linux view of free RAM.
 
-`cache` includes reclaimable VFS pages and allocator CPU caches and is already
-part of `used`; `buffers` also overlaps those totals. Do not add these columns
-as separate pools. An unavailable cache sample is shown as `—`, not zero.
-See [memory cache reporting](../docs/applications.md#memory-cache-reporting) for
-the accounting definitions.
+`Cache` distinguishes reclaimable file and slab pages. `Ramfs` reports logical
+payload capacity within kernel memory; it is not discardable cache or another
+physical pool. Unknown censuses appear as `—` in dependent fields without hiding
+valid physical totals. See [memory cache reporting](../docs/applications.md#memory-cache-reporting)
+for the identities, overlap rules and estimation limits.
+
+`free -b` prints exact bytes; `-k`, `-m` and `-g` select whole KiB, MiB and GiB.
+`free -m -c 5 -s 0.5` collects five snapshots half a second apart, starting
+immediately. Sampling is finite and defaults to one snapshot; `-s` alone does
+not request continuous monitoring.
 
 ### `top`: live CPU and process activity
 

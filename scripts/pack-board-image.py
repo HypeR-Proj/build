@@ -2,15 +2,18 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build a new flashable GPT image from board policy and immutable build artifacts."""
+"""Build GPT images and refresh generated system volumes without resetting data."""
 
 import argparse
 import binascii
+import errno
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import struct
 import subprocess
 import tempfile
@@ -51,6 +54,29 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def validate_disk(stream, board):
+    """Require both GPT copies and the disk extent to match before using offsets."""
+    if os.fstat(stream.fileno()).st_size != board.disk_sectors * SECTOR:
+        raise ValueError('missing or incompatible board disk; create a new board-image first')
+    for sector, expected in gpt(board):
+        stream.seek(sector * SECTOR)
+        if stream.read(len(expected)) != expected:
+            raise ValueError('board configuration does not match the existing disk GPT')
+
+
+def sparse_copy_bytes(source, destination, remaining):
+    """Copy a bounded extent into a fresh zero-filled image, retaining holes."""
+    while remaining:
+        chunk = source.read(min(1024 * 1024, remaining))
+        if not chunk:
+            raise ValueError('source shortened during packing')
+        if chunk.count(0) == len(chunk):
+            destination.seek(len(chunk), os.SEEK_CUR)
+        else:
+            destination.write(chunk)
+        remaining -= len(chunk)
+
+
 def sparse_copy(source, destination, offset, capacity):
     """Bound writes to one volume; preserve zero extents in newly created images."""
     remaining = source.stat().st_size
@@ -58,15 +84,7 @@ def sparse_copy(source, destination, offset, capacity):
         raise ValueError(f'artifact exceeds its partition: {source}')
     with source.open('rb') as stream:
         destination.seek(offset)
-        while remaining:
-            chunk = stream.read(min(1024 * 1024, remaining))
-            if not chunk:
-                raise ValueError(f'artifact shortened during packing: {source}')
-            if chunk.count(0) == len(chunk):
-                destination.seek(len(chunk), os.SEEK_CUR)
-            else:
-                destination.write(chunk)
-            remaining -= len(chunk)
+        sparse_copy_bytes(stream, destination, remaining)
         if stream.read(1):
             raise ValueError(f'artifact grew during packing: {source}')
 
@@ -119,12 +137,82 @@ def check_system_payload(output, root, board=None):
     try:
         previous = json.loads(system_state_path(output).read_text())
     except (OSError, ValueError) as error:
-        raise ValueError('split disk has no system payload record; use '
-                         'board-rebuild to recreate it') from error
+        raise ValueError('split disk has no system payload record; run make to '
+                         'refresh its generated system volume') from error
     if not output.is_file() or previous != system_state(root, board):
-        raise ValueError('split disk contains a different system payload; use '
-                         'board-rebuild to recreate it '
-                         '(this resets disk data)')
+        raise ValueError('split disk contains a different system payload; run make '
+                         'to refresh its generated system volume (disk data is preserved)')
+
+
+def disk_stamp(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def refresh_system_payload(board, output, root, mkfs_erofs='mkfs.erofs'):
+    """Publish an updated EROFS volume while preserving every byte outside it.
+
+    Build a sibling image under a POSIX byte-range lock, which conflicts with
+    QEMU's image locks. Failure before publication leaves the old disk intact.
+    The payload record follows disk publication: interruption between the two
+    leaves a stale record, so the next build safely retries the refresh.
+    """
+    if output.is_symlink() or not output.is_file():
+        raise ValueError('system refresh requires an existing regular disk image, not a symlink')
+    with output.open('r+b') as source:
+        validate_disk(source, board)
+        current = system_state(root, board)
+        try:
+            previous = json.loads(system_state_path(output).read_text())
+        except (OSError, ValueError):
+            previous = None
+        if previous == current:
+            return False
+        part = next((part for part in board.partitions if part.content == 'system'), None)
+        if part is None or part.image or part.filesystem != 'erofs':
+            raise ValueError('automatic system refresh requires a generated EROFS volume; '
+                             'use a new output path or an explicit board-rebuild')
+        try:
+            fcntl.lockf(source, fcntl.LOCK_EX | fcntl.LOCK_NB, 0, 0)
+        except OSError as error:
+            if error.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            raise ValueError('disk image is in use; stop QEMU before refreshing /system') from error
+        original = os.fstat(source.fileno())
+        validate_disk(source, board)
+        with tempfile.TemporaryDirectory(prefix='.board-update-', dir=output.parent) as temporary:
+            staging = Path(temporary)
+            system_image = staging / 'system.erofs'
+            prepare_erofs(root, system_image, mkfs_erofs)
+            image = staging / 'disk.img'
+            start, end = part.start * SECTOR, (part.end + 1) * SECTOR
+            if system_image.stat().st_size > end - start:
+                raise ValueError(f'artifact exceeds its partition: {system_image}')
+            with image.open('xb') as destination:
+                destination.truncate(original.st_size)
+                # Never copy the old system extent: holes and unused tail bytes
+                # in a smaller replacement must remain zero, not stale content.
+                for offset, length in ((0, start), (end, original.st_size - end)):
+                    source.seek(offset)
+                    destination.seek(offset)
+                    sparse_copy_bytes(source, destination, length)
+                sparse_copy(system_image, destination, start, end - start)
+                os.fchmod(destination.fileno(), stat.S_IMODE(original.st_mode))
+                destination.flush()
+                os.fsync(destination.fileno())
+            if current != system_state(root, board):
+                raise ValueError('system payload changed while packing; retry')
+            if (disk_stamp(os.fstat(source.fileno())) != disk_stamp(original)
+                    or disk_stamp(output.stat()) != disk_stamp(original)):
+                raise ValueError('disk image changed during system refresh; retry with the disk idle')
+            state = staging / 'system.json'
+            with state.open('w') as stream:
+                stream.write(json.dumps(current, indent=2, sort_keys=True) + '\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(image, output)
+            state.replace(system_state_path(output))
+    print(f'{output}: refreshed {part.name}; persistent data and guest volumes preserved')
+    return True
 
 
 def prepare_payload(board, artifacts, directory, system_root=None):
@@ -234,6 +322,14 @@ def image_tool(program, default, formula):
     )
 
 
+def prepare_erofs(root, image, mkfs_erofs):
+    tool = image_tool(mkfs_erofs, 'mkfs.erofs', 'erofs-utils')
+    # erofs-utils 1.7 accepts UUIDs, but not the newer "clear" alias.
+    subprocess.run([tool, '-b4096', '-x-1', '-T0',
+                    '-U00000000-0000-0000-0000-000000000000', '--all-root',
+                    str(image), str(root)], check=True)
+
+
 def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs, data_root=None):
     """Format only requested Native volumes; guest images remain opaque."""
     images = {}
@@ -251,11 +347,7 @@ def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs,
         if part.content == 'data' and root is None:
             continue
         if part.filesystem == 'erofs':
-            tool = image_tool(mkfs_erofs, 'mkfs.erofs', 'erofs-utils')
-            # erofs-utils 1.7 accepts UUIDs, but not the newer "clear" alias.
-            subprocess.run([tool, '-b4096', '-x-1', '-T0',
-                            '-U00000000-0000-0000-0000-000000000000', '--all-root',
-                            str(image), str(root)], check=True)
+            prepare_erofs(root, image, mkfs_erofs)
         elif part.filesystem == 'fat':
             with image.open('xb') as stream:
                 stream.truncate(part.sectors * SECTOR)
@@ -353,15 +445,18 @@ def main():
     parser.add_argument('--default-artifact', action='append', default=[], metavar='NAME=PATH',
                         help='build default, selected only when referenced by board policy')
     parser.add_argument('--plan', action='store_true', help='validate and print volume layout only')
-    parser.add_argument('--replace', action='store_true',
-                        help='atomically replace the output, resetting all disk data')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--replace', action='store_true',
+                      help='atomically replace the output, resetting all disk data')
     parser.add_argument('--mkfs-erofs', default='mkfs.erofs')
     parser.add_argument('--mkfs', default='mkfs.fat')
     parser.add_argument('--mcopy', default='mcopy')
     parser.add_argument('--system-root', type=Path,
                         help='Native /system payload for its independent disk volume')
-    parser.add_argument('--check-system-payload', action='store_true',
-                        help='check that an existing disk contains the staged Native /system build')
+    mode.add_argument('--check-system-payload', action='store_true',
+                      help='check that an existing disk contains the staged Native /system build')
+    mode.add_argument('--refresh-system-payload', action='store_true',
+                      help='update a generated EROFS system volume, preserving all other disk bytes')
     args = parser.parse_args()
     try:
         board = Board.load(args.board)
@@ -374,6 +469,11 @@ def main():
             if args.system_root is None:
                 raise ValueError('--check-system-payload requires --system-root')
             check_system_payload(args.output, args.system_root, board)
+            return
+        if args.refresh_system_payload:
+            if args.system_root is None:
+                raise ValueError('--refresh-system-payload requires --system-root')
+            refresh_system_payload(board, args.output, args.system_root, args.mkfs_erofs)
             return
         artifacts = artifact_inputs(board, args.default_artifact, args.artifact)
         build(board, artifacts, args.output, args.mkfs, args.mcopy, replace=args.replace,

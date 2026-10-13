@@ -13,7 +13,7 @@ import importlib.util
 
 def validate_board_disk(path, configuration):
     """A deployment boot may never silently substitute an empty scratch disk."""
-    from board_config import Board, SECTOR
+    from board_config import Board
     spec = importlib.util.spec_from_file_location(
         'hyper_board_packer', Path(__file__).with_name('pack-board-image.py'))
     packer = importlib.util.module_from_spec(spec)
@@ -21,13 +21,10 @@ def validate_board_disk(path, configuration):
     board = Board.load(configuration)
     if board.source['boot'] != 'qemu-direct':
         raise ValueError('the interactive QEMU launcher requires qemu-direct boot')
-    if not path.is_file() or path.stat().st_size != board.disk_sectors * SECTOR:
+    if not path.is_file():
         raise ValueError('missing or incompatible board disk; create a new board-image first')
     with path.open('rb') as stream:
-        for sector, expected in packer.gpt(board):
-            stream.seek(sector * SECTOR)
-            if stream.read(len(expected)) != expected:
-                raise ValueError('board configuration does not match the existing disk GPT')
+        packer.validate_disk(stream, board)
     return board
 
 

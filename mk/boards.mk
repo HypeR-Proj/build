@@ -114,12 +114,12 @@ board-initramfs: board-deployment app app-boot fit-pack $(NEWC_PACK)
 		$(BOARD_EXTRA_ENTRIES)
 
 # QEMU loads kernel/bootstrap directly from the host. Refresh these on every
-# build, but populate persistent volumes only when creating the first disk.
+# build, refresh the generated EROFS volume, and seed persistent data only once.
 board-build: image board-initramfs
 	@if test ! -e "$(BOARD_IMAGE)" && test ! -L "$(BOARD_IMAGE)"; then \
 		$(MAKE) -o image -o board-initramfs board-image; \
 	fi
-	$(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),$(MAKE) board-check-system,@:)
+	$(if $(filter split,$(BOARD_SYSTEM_LAYOUT)),$(MAKE) board-update-system,@:)
 
 # Explicit full repacking resets persistent volumes only after successful packing.
 board-rebuild: image board-initramfs board-guest-images
@@ -140,7 +140,12 @@ board-image: image board-initramfs board-guest-images
 		--default-artifact "alpine=$(BOARD_OUTPUT)/alpine.itb" \
 		--default-artifact "alpine-rootfs=$(BOARD_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
 
-.PHONY: board-check-system
+.PHONY: board-update-system board-check-system
+board-update-system:
+	python3 -B scripts/pack-board-image.py --board "$(BOARD_DEPLOYMENT)" \
+		--output "$(BOARD_IMAGE)" --system-root "$(BOARD_OUTPUT)/system-root" \
+		--mkfs-erofs "$(EROFS_MKFS)" --refresh-system-payload
+
 board-check-system:
 	@test -f "$(BOARD_DEPLOYMENT)" -a -f "$(BOARD_IMAGE)" -a -d "$(BOARD_OUTPUT)/system-root" || { \
 		echo "Deployment artifacts are missing; run make first." >&2; exit 2; \

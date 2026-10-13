@@ -267,7 +267,7 @@ class BoardTests(unittest.TestCase):
             packer.prepare_payload(board, {'alpine': artifact}, payload, system)
             self.assertEqual(json.loads((payload / 'board.json').read_text()), board.source)
 
-    def test_stale_system_payload_requires_explicit_rebuild(self):
+    def test_run_rejects_stale_system_payload_without_mutating_disk(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             output = root / 'disk.img'
@@ -281,7 +281,7 @@ class BoardTests(unittest.TestCase):
             packer.system_state_path(output).write_text(json.dumps(packer.system_state(system)))
             packer.check_system_payload(output, system)
             tool.write_bytes(b'build two')
-            with self.assertRaisesRegex(ValueError, 'board-rebuild'):
+            with self.assertRaisesRegex(ValueError, 'run make'):
                 packer.check_system_payload(output, system)
             self.assertEqual(output.read_bytes(), b'persistent user data')
 

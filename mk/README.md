@@ -140,9 +140,12 @@ subtree out of the old root, so `/boot/system` does not duplicate `/system`.
 These paths remain userspace deployment policy.
 
 System payload hashing checks for concurrent source changes during composition
-and stale persistent disks during subsequent builds. The sidecar record is a
-build consistency check, not runtime authenticity. Replacing an existing image
-remains explicit through `make rebuild` or `make board-rebuild`. Default QEMU
+and stale system volumes during subsequent builds. The sidecar record is a
+build consistency check, not runtime authenticity. `board-build` refreshes
+generated EROFS contents while preserving all disk bytes outside that partition;
+it validates GPT, stages a replacement and publishes atomically. Unchanged
+payloads do not rewrite the disk. `board-run` remains validation-only. Resetting
+persistent volumes remains explicit through `make rebuild` or `make board-rebuild`. Default QEMU
 outputs remain under `target/board/qemu/`, and Pi 5 uses
 `target/board/rpi5-native/`; ramfs outputs append `-ramfs`. See [boot layout](../docs/boot-layout.md) for deployment policy,
 artifacts, recovery behavior and build commands.
