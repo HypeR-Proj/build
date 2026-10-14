@@ -2,18 +2,13 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-"""Compose the bootstrap root and formal /system Native environment.
-
-Static core services stay in RAM; system init moves this root to /boot.
-The same service graph and paths work with disk-backed or all-RAM /system.
-"""
+"""Compose a static bootstrap archive and an independent formal root filesystem."""
 
 import argparse
 import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -64,60 +59,109 @@ def services(path):
         service['phase'] = phase
         if not service['image'].startswith('/'):
             raise ValueError(f"service {service['name']} image must be absolute")
-        if phase == 'system' and not service['image'].startswith('/system/'):
-            service['image'] = '/system' + service['image']
         (core if phase == 'boot' else system)['services'].append(service)
     return core, system
 
 
-def compose_entries(args, native):
-    """Partition one selected component set, applying explicit overrides once."""
-    roots = {key: str(getattr(args, key)) for key in ('apps', 'sdk', 'std', 'arch')}
-    entries = deployment.compose(args.deployment, args.profile, roots, args.replace)
-    archive.validate_entries(entries)
-    archive.validate_entries(args.extra_entries)
-    for mode, _, source in triples(args.extra_entries):
-        if mode != 'symlink' and not Path(source).is_absolute():
-            raise ValueError('additional entry sources must be absolute paths')
-    extras = {name: [mode, name, source] for mode, name, source in triples(args.extra_entries)}
-    replacements = {value.partition('=')[0] for value in args.replace}
-    selected = {name: [mode, name, source] for mode, name, source in triples(entries)}
-    selected.update(extras)
+def scoped_path(value, selected):
+    """Resolve one destination without guessing between boot and formal copies."""
+    environment, separator, name = value.partition(':')
+    if separator:
+        if environment not in ('boot', 'system'):
+            raise ValueError(f'invalid deployment environment: {environment}')
+        return environment, deployment.archive_path(name)
+    name = deployment.archive_path(value)
+    matches = [scope for scope, entries in selected.items() if name in entries]
+    if len(matches) > 1:
+        raise ValueError(f'ambiguous deployment path {name}; use boot:{name} or system:{name}')
+    return (matches[0] if matches else None), name
 
-    components = {entry['staged']: entry for entry in deployment.load(args.deployment)
-                  if 'binary' in entry}
-    boot_images = {}
+
+def compose_entries(args, native):
+    """Compose independent boot and formal components, including scoped overrides."""
+    expected = 'recovery' if args.recovery_only else 'split'
+    if native.get('layout') != expected:
+        raise ValueError(f'composition requires {expected} layout; embedded system is unsupported')
+    roots = {key: str(getattr(args, key)) for key in ('apps', 'sdk', 'std', 'arch')}
+    declarations = deployment.load(args.deployment)
+    components = {entry['staged']: entry for entry in declarations if 'binary' in entry}
     if len(set(args.boot_components)) != len(args.boot_components):
         raise ValueError('duplicate boot component')
     for name in args.boot_components:
-        if name not in components:
+        item = components.get(name)
+        if item is None or item.get('environment', 'system') != 'boot':
             raise ValueError(f'unknown boot component: {name}')
-        item = components[name]
-        destination = item['destination']
-        if destination in extras or destination in replacements:
-            mode, _, source = selected[destination]
-        else:
-            mode, source = item['mode'], str(args.boot_apps / name)
-        image = None if mode == 'symlink' else read_image(source)
-        if image is None or image.needed or image.interpreter or image.soname:
-            raise ValueError(f'boot component must be a static ELF: {source}')
-        boot_images[destination] = [mode, destination, source]
 
-    bootstrap_loader = f'lib64/userspace-loader-hyper-{args.arch}'
-    boot = list(boot_images.values())
-    system = []
-    for name, record in selected.items():
-        mode, _, source = record
-        if name in boot_images:
+    selected = {'boot': {}, 'system': {}}
+    boot_executables = set()
+    for item in declarations:
+        if 'library' in item:
             continue
-        # Additional configuration and guest payloads are boot data, not
-        # applications. Explicit application replacements retain their ELF role.
-        boot_data = name in extras and (mode == 'symlink' or read_image(source) is None)
-        if name == bootstrap_loader or boot_data:
-            boot.append([mode, name, source])
+        environment = item.get('environment', 'system')
+        if args.recovery_only and environment == 'system':
+            continue
+        if environment == 'boot' and 'binary' in item:
+            if item['staged'] not in args.boot_components:
+                continue
+        elif args.profile not in item['profiles']:
+            continue
+        name = deployment.archive_path(item['destination'].format_map(roots))
+        if environment == 'boot' and 'binary' in item:
+            boot_executables.add(name)
+        if name in selected[environment]:
+            raise ValueError(f'duplicate deployment destination: {environment}:{name}')
+        if 'symlink' in item:
+            record = ['symlink', name, item['symlink'].format_map(roots)]
         else:
-            system.extend(record)
-    # Resolve the same-build DSO closure before placing it under /system. The
+            directory = args.boot_apps if environment == 'boot' else args.apps
+            source = (str(directory / item['staged']) if 'source' not in item
+                      else item['source'].format_map(roots))
+            record = [item['mode'], name, source]
+        selected[environment][name] = record
+
+    replaced = set()
+    for replacement in args.replace:
+        path, separator, source = replacement.partition('=')
+        if not separator or not source:
+            raise ValueError(f'invalid deployment replacement: {replacement}')
+        environment, name = scoped_path(path, selected)
+        key = (environment, name)
+        record = selected.get(environment, {}).get(name)
+        if record is None or record[0] == 'symlink':
+            raise ValueError(f'replacement not in selected profile: {path}')
+        if key in replaced:
+            raise ValueError(f'duplicate deployment replacement: {path}')
+        replaced.add(key)
+        record[2] = source
+
+    archive.validate_entries(args.extra_entries)
+    extras = {'boot': [], 'system': []}
+    for mode, path, source in triples(args.extra_entries):
+        if mode != 'symlink' and not Path(source).is_absolute():
+            raise ValueError('additional entry sources must be absolute paths')
+        environment, name = scoped_path(path, selected)
+        if environment is None:
+            environment = 'boot' if mode == 'symlink' or read_image(source) is None else 'system'
+        if args.recovery_only and environment != 'boot':
+            raise ValueError('stage1 recovery cannot contain formal system entries')
+        extras[environment].extend([mode, name, source])
+    for environment, entries in extras.items():
+        archive.validate_entries(entries)
+        selected[environment].update({name: [mode, name, source]
+                                      for mode, name, source in triples(entries)})
+    for entries in selected.values():
+        archive.validate_entries([field for record in entries.values() for field in record])
+    boot = list(selected['boot'].values())
+    for mode, name, source in boot:
+        image = None if mode == 'symlink' else read_image(source)
+        if name in boot_executables or image is not None:
+            if image is None or image.needed or image.interpreter or image.soname:
+                raise ValueError(f'boot component must be a static ELF: {source}')
+    boot.append(['symlink', 'lib', 'lib64'])
+    if args.recovery_only:
+        return boot, [], {}
+    system = [field for record in selected['system'].values() for field in record]
+    # Resolve the same-build DSO closure for the independent system root. The
     # selected formal loader remains the canonical PT_INTERP identity.
     system = add_dependencies(system, [args.apps / 'lib', args.sdk / 'lib', args.sdk / 'lib64'])
     archive.validate_entries(system)
@@ -130,36 +174,7 @@ def compose_entries(args, native):
         disk = [record for record in disk if record != ['symlink', 'lib', 'lib64']]
         if any(mode == 'symlink' for mode, _, _ in disk):
             raise ValueError('FAT system payload cannot represent symbolic links')
-    boot.append(['symlink', 'lib', 'lib64'])
     return boot, disk, checksums
-
-
-def root_switch_policy(native):
-    """Userspace chooses the root and mount placement; the kernel knows neither."""
-    mounts = [{'source': '/system', 'target': '/system',
-               'ramfs': native['layout'] == 'ramfs'}]
-    targets = []
-    # Only already-mounted bootstrap volumes need moving. Formal mount policy
-    # must not constrain handoff: the manager creates those mountpoints later.
-    for line in native.get('boot-fstab', '').splitlines():
-        # Match fs-backend's token-based comments: '#' inside a label or path
-        # is literal, while a whitespace-delimited '#...' starts a comment.
-        fields = []
-        for field in line.split():
-            if field.startswith('#'):
-                break
-            fields.append(field)
-        if len(fields) == 6:
-            escapes = {'040': ' ', '011': '\t', '134': '\\'}
-            target = re.sub(r'\\(040|011|134)', lambda match: escapes[match[1]], fields[1])
-            if target != '/system' and target not in targets:
-                targets.append(target)
-    mounts.extend({'source': target, 'target': target, 'optional': True}
-                  for target in targets)
-    return {
-        'new-root': '/.newroot', 'put-old': '/boot', 'directories': ['/tmp', '/data'],
-        'mounts': mounts,
-    }
 
 
 def stage_system(records, destination, strip, checksums):
@@ -178,6 +193,13 @@ def stage_system(records, destination, strip, checksums):
             os.chmod(target, int(mode, 8))
             if read_image(target) is not None:
                 subprocess.run([strip, '--strip-debug', str(target)], check=True)
+        for name in ('boot', 'tmp', 'data'):
+            mountpoint = staging / name
+            if mountpoint.is_symlink() or (mountpoint.exists() and not mountpoint.is_dir()):
+                raise ValueError(f'system mountpoint must be a directory: /{name}')
+            mountpoint.mkdir(exist_ok=True)
+            if any(mountpoint.iterdir()):
+                raise ValueError(f'system mountpoint must be empty: /{name}')
         if checksums != {source: archive.digest(source) for source in checksums}:
             raise ValueError('system build inputs changed during composition; retry')
         # This is build staging, not a user's mounted or persistent filesystem.
@@ -199,10 +221,12 @@ def compose(args, native, service_path):
     write_json(manifest_path, core)
     write_json(system_manifest_path, system)
     init_path = metadata / 'init.json'
-    write_json(init_path, {'system-init': '/system/svc/init-system'})
+    write_json(init_path, {'system-root': '/system', 'put-old': '/boot',
+                          'system-init': '/svc/init'})
+    filesystem_path = metadata / 'system-filesystem.json'
+    write_json(filesystem_path, {'worker_directories': [{'environment': 'svc'}]})
     system_init_path = metadata / 'system-init.json'
-    write_json(system_init_path, {'services': '/system/etc/hyper/services.json',
-                                 'root-switch': root_switch_policy(native)})
+    write_json(system_init_path, {'services': '/etc/hyper/services.json'})
     placeholder = metadata / 'empty'
     placeholder.touch()
     boot.extend([
@@ -210,12 +234,18 @@ def compose(args, native, service_path):
         ['0644', 'etc/hyper/init.json', str(init_path.resolve())],
         ['0644', f'lib64/{args.arch}-hyper-hyper/.keep', str(placeholder.resolve())],
     ])
+    boot_fstab = metadata / 'boot-fstab'
+    boot_fstab.write_text(native.get('boot-fstab', ''))
+    boot = [record for record in boot if record[1] != 'etc/fstab']
+    boot.append(['0644', 'etc/fstab', str(boot_fstab.resolve())])
     formal_fstab = metadata / 'fstab'
     formal_fstab.write_text(native.get('fstab', ''))
     disk.append(['0644', 'etc/fstab', str(formal_fstab.resolve())])
     checksums[str(formal_fstab.resolve())] = archive.digest(formal_fstab)
     disk.append(['0644', 'etc/hyper/services.json', str(system_manifest_path.resolve())])
     checksums[str(system_manifest_path.resolve())] = archive.digest(system_manifest_path)
+    disk.append(['0644', 'etc/hyper/filesystem.json', str(filesystem_path.resolve())])
+    checksums[str(filesystem_path.resolve())] = archive.digest(filesystem_path)
     disk.append(['0644', 'etc/hyper/init.json', str(system_init_path.resolve())])
     checksums[str(system_init_path.resolve())] = archive.digest(system_init_path)
 
@@ -224,25 +254,26 @@ def compose(args, native, service_path):
     images.extend(name for mode, name, source in disk
                   if mode != 'symlink' and read_image(source) is not None)
     subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
-                    str(manifest_path), *images], check=True)
-    subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
-                    str(system_manifest_path), '--core', str(manifest_path),
-                    *images, *['system/' + name for mode, name, source in disk
-                              if mode != 'symlink' and read_image(source) is not None]], check=True)
+                    str(manifest_path), '--bootstrap', *images], check=True)
+    if not args.recovery_only:
+        subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
+                        str(system_manifest_path), '--core', str(manifest_path), *images], check=True)
     archive.validate_entries([field for record in boot for field in record])
     archive.validate_entries([field for record in disk for field in record])
     # Publish checked staging first. A failed composition must not make an old
     # system disk fingerprint match a newly published bootstrap archive.
-    stage_system(disk, args.output / 'system-root', args.strip, checksums)
-    if native['layout'] == 'ramfs':
-        boot.extend([mode, 'system/' + name, source] for mode, name, source in disk)
+    if not args.recovery_only:
+        stage_system(disk, args.output / 'system-root', args.strip, checksums)
     archive.validate_entries([field for record in boot for field in record])
     write_json(metadata / 'boot.entries.json', boot)
     subprocess.run([sys.executable, str(ROOT / 'scripts/pack-native-initramfs.py'),
                     '--packer', args.packer, '--strip', args.strip,
-                    '--output', str(args.initramfs), '--library-namespace', 'system',
+                    '--output', str(args.initramfs),
                     '--entries-from', str(metadata / 'boot.entries.json')], check=True)
-    print(f'Native system: {args.initramfs} and {args.output}/system-root')
+    if args.recovery_only:
+        print(f'Stage1 recovery: {args.initramfs}')
+    else:
+        print(f'Native system: {args.initramfs} and {args.output}/system-root')
 
 
 def main():
@@ -251,13 +282,16 @@ def main():
     parser.add_argument('--board-output', type=Path)
     parser.add_argument('--services', type=Path,
                         help='input service graph; required without --board')
+    parser.add_argument('--recovery-only', action='store_true',
+                        help='compose static stage1 recovery only, without a formal system payload')
     parser.add_argument('--deployment', type=Path, required=True)
     for name in ('apps', 'sdk', 'std', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--boot-apps', type=Path, help='static boot artifacts; defaults to --apps')
     parser.add_argument('--profile', choices=('system', 'development'), default='system')
     parser.add_argument('--initramfs', type=Path, help='defaults to OUTPUT/bootstrap.cpio')
-    parser.add_argument('--replace', action='append', default=[])
+    parser.add_argument('--replace', action='append', default=[],
+                        help='[boot:|system:]PATH=SOURCE; environment required for shared paths')
     parser.add_argument('--entries-from', type=Path, action='append', default=[])
     parser.add_argument('--arch', required=True)
     parser.add_argument('--boot-components', nargs='+', required=True)
@@ -267,10 +301,12 @@ def main():
     args = parser.parse_args()
     if len(args.extra_entries) % 3:
         parser.error('extra entries must be MODE ARCHIVE_PATH SOURCE triples')
+    if args.board and args.recovery_only:
+        parser.error('recovery composition uses --services, not a formal board deployment')
     if args.board and not args.board_output:
         parser.error('--board requires --board-output')
     if not args.board and not args.services:
-        parser.error('Native ramfs composition requires --services')
+        parser.error('composition without a board requires --services')
     args.boot_apps = args.boot_apps or args.apps
     for name in ('deployment', 'apps', 'boot_apps', 'sdk', 'std', 'output',
                  'board', 'board_output', 'services', 'initramfs'):
@@ -279,7 +315,10 @@ def main():
             setattr(args, name, value.resolve())
     args.initramfs = args.initramfs or args.output / 'bootstrap.cpio'
     try:
-        native = {'layout': 'ramfs', 'volumes': []}
+        native = {'layout': 'split', 'volumes': [],
+                  'boot-fstab': 'PARTLABEL=hyper-system /system auto ro 0 0\n'}
+        if args.recovery_only:
+            native = {'layout': 'recovery', 'volumes': [], 'boot-fstab': ''}
         service_path = args.services
         if args.board:
             board = Board.load(args.board)

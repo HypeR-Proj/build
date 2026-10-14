@@ -59,7 +59,7 @@ def services(board, root):
             'operation': 'move', 'rights': ['wait', 'write']})
         service['capabilities'].append({
             'source': 'bootstrap.io-broker-server', 'purpose': 'io.broker-server',
-            'operation': 'move', 'rights': ['wait', 'read']})
+            'operation': 'move', 'rights': ['wait', 'read', 'transfer']})
     return manifest
 
 
@@ -75,7 +75,7 @@ def filesystem_service():
         'capabilities': [
             capability('filesystem-attach', 'filesystem.attach', ['wait', 'read'], 'move'),
             capability('filesystem-control-server', 'filesystem.control-server',
-                       ['wait', 'read'], 'move'),
+                       ['wait', 'read', 'transfer'], 'move'),
             capability('service-output-channel', 'stdio.output',
                        ['wait', 'write', 'duplicate', 'transfer']),
             capability('service-output-channel', 'stdio.error',
@@ -106,7 +106,7 @@ def stage(board, root, output):
                         ('vms.json', board.vms()),
                         ('storage.json', board.storage_policy()),
                         ('filesystem.json', {'worker_directories': [
-                            {'environment': 'svc'}, {'namespace': '/system/svc'}]})]:
+                            {'environment': 'svc'}]})]:
         contents = json.dumps(value, indent=2) + '\n'
         target = output / name
         if not target.exists() or target.read_text() != contents:

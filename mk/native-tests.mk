@@ -14,25 +14,39 @@ guest-itb: fit-pack
 		"$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz"
 
-# Diskless deployments use the same core/system handoff, with /system in RAM.
-# Development additionally includes acceptance programs in the system payload.
-native-initramfs: app $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fixtures) $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
+# Isolated acceptance environment: a test-only init copies the formal payload
+# into a distinct RAMFS mount, then invokes the unmodified stage-1 supervisor.
+# Product board images always use independent system storage instead.
+.PHONY: native-fixture-init
+native-fixture-init: app-fetch
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" HYPER_LINK_MODE=static HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path bootstrap/stage1/Cargo.toml \
+		-p hyper-bootstrap-stage1-init --bin hyper-native-test-init --release --locked --offline
+
+native-initramfs: APP_BUILD_PROFILE = $(NATIVE_IMAGE_PROFILE)
+native-initramfs: app app-boot native-fixture-init $(if $(filter development,$(NATIVE_IMAGE_PROFILE)),app-fixtures) $(NEWC_PACK) $(NATIVE_GUEST_PREREQUISITES)
 	python3 -B scripts/pack-native-system.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(NATIVE_INITRAMFS).deployment" --initramfs "$(NATIVE_INITRAMFS)" \
 		--deployment "$(APP_DEPLOYMENT)" --profile "$(NATIVE_IMAGE_PROFILE)" \
-		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
 		--std "$(NATIVE_STD_TEST_OUTPUT)" --arch "$(NATIVE_ARCH)" \
 		--boot-components $(APP_BOOT_COMPONENTS) \
 		--services "$(NATIVE_SERVICE_MANIFEST)" \
-		--replace "init=$(NATIVE_INIT)" \
+		--replace "init=$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-native-test-init" \
 		--replace "bin/ps=$(NATIVE_PS_IMAGE)" \
 		--replace "svc/vm-manager=$(NATIVE_VM_MANAGER)" \
 		--replace "svc/vm-runtime=$(NATIVE_VM_RUNTIME)" \
 		$(if $(strip $(NATIVE_ENTRY_MANIFEST)),--entries-from "$(NATIVE_ENTRY_MANIFEST)") \
 		$(NATIVE_GUEST_ENTRY) \
-		$(if $(strip $(NATIVE_VM_CONFIG)),0644 etc/hyper/vms.json "$(NATIVE_VM_CONFIG)") \
+		$(if $(strip $(NATIVE_VM_CONFIG)),0644 system:etc/hyper/vms.json "$(NATIVE_VM_CONFIG)") \
 		$(NATIVE_EXTRA_ENTRIES)
+
+	python3 -B tests/qemu/prepare-native-fixture.py \
+		--composition "$(NATIVE_INITRAMFS).deployment" --output "$(NATIVE_INITRAMFS)" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)"
 
 NATIVE_QEMU_ENV = QEMU_MACHINE="$(QEMU_MACHINE)" QEMU_CPU="$(QEMU_CPU)" \
 	QEMU_CPUS="$(QEMU_CPUS)" QEMU_MEMORY="$(QEMU_MEMORY)" \
@@ -95,14 +109,17 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 # A media-independent real process/VMO/RPC test; no backend fault modes are
 # compiled or installed in the normal system image.
 test-filesystem-failure: image app-fetch $(NEWC_PACK)
-	$(MAKE) -o app-fetch app APP_OUTPUT="$(APP_OUTPUT)/filesystem-failure-apps" \
-		APP_FEATURES=hyper-fs-backend/failure-test APP_EXTRA_BINS=hyper-fs-failure
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" HYPER_LINK_MODE=static HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path app/Cargo.toml \
+		-p hyper-fs-failure --release --locked --offline
+	mkdir -p "$(APP_OUTPUT)"
 	python3 -B scripts/pack-native-initramfs.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/filesystem-failure.cpio" \
-		--library-dir "$(APP_OUTPUT)/filesystem-failure-apps/lib" \
 		--library-dir "$(SDK_OUTPUT)/lib" --library-dir "$(SDK_OUTPUT)/lib64" \
-		0755 init "$(APP_OUTPUT)/filesystem-failure-apps/fs-failure" \
+		0755 init "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-fs-failure" \
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
@@ -151,6 +168,7 @@ test-runtime-crash: image native-initramfs
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "VM runtime acceptance is not implemented for $(ARCH)" >&2; exit 2; }
 	python3 -B tests/qemu/vm_fixtures.py "$(NATIVE_VM_CONFIG)" "$(APP_OUTPUT)/fleet-fixtures"
 	$(MAKE) -o app-fetch app APP_OUTPUT="$(APP_OUTPUT)/runtime-crash-apps" \
+		APP_BUILD_PROFILE="$(NATIVE_IMAGE_PROFILE)" \
 		APP_FEATURES=hyper-vm-runtime/test-runtime-crash
 	$(MAKE) -o app native-initramfs \
 		APP_OUTPUT="$(APP_OUTPUT)/runtime-crash-apps" \
@@ -167,12 +185,13 @@ test-runtime-crash: image native-initramfs
 		--isolation-only
 
 .PHONY: test-storage-failure
-test-storage-failure: image app $(NEWC_PACK)
+test-storage-failure: image app app-boot native-fixture-init $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "storage recovery acceptance requires aarch64" >&2; exit 2; }
 	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		python3 -B tests/qemu/verify-storage-failure.py prepare \
-		--apps "$(APP_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
+		--fixture-init "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-native-test-init" \
 		--boot-components $(APP_BOOT_COMPONENTS) \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/storage-failure"
@@ -182,6 +201,7 @@ test-storage-failure: image app $(NEWC_PACK)
 
 # Definition admission is a bootstrap result, independent of autostart outcomes.
 .PHONY: test-fleet-config
+test-fleet-config: APP_BUILD_PROFILE = $(NATIVE_IMAGE_PROFILE)
 test-fleet-config: image app
 	@test "$(NATIVE_TEST_VM)" = 1 || { echo "VM fleet acceptance is not implemented for $(ARCH)" >&2; exit 2; }
 	python3 -B tests/qemu/vm_fixtures.py "$(NATIVE_VM_CONFIG)" "$(APP_OUTPUT)/fleet-fixtures"
@@ -206,6 +226,7 @@ power-crash-case:
 	@case "$(POWER_CRASH_STATE)" in dormant|pending|powered-off) ;; *) exit 2 ;; esac
 	HYPER_TEST_POWER_CRASH="$(POWER_CRASH_STATE)" \
 		$(MAKE) -o app-fetch app APP_OUTPUT="$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE)-apps" \
+		APP_BUILD_PROFILE="$(NATIVE_IMAGE_PROFILE)" \
 		APP_FEATURES=hyper-vm-runtime/test-power-crash
 	$(MAKE) -o app native-initramfs ARCH=aarch64 \
 		APP_OUTPUT="$(APP_OUTPUT)/power-crash-$(POWER_CRASH_STATE)-apps" \
@@ -218,6 +239,7 @@ power-crash-case:
 
 # Select SMP policy from JSON; reuse the same guest payload bundle.
 # The same archive exercises both hardware GIC backends and host overcommit.
+guest-smp-initramfs: APP_BUILD_PROFILE = $(NATIVE_IMAGE_PROFILE)
 guest-smp-initramfs: app $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "guest SMP acceptance requires AArch64" >&2; exit 2; }
 	$(MAKE) -o app native-initramfs ARCH=aarch64 \

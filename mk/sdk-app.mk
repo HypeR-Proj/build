@@ -98,7 +98,8 @@ app: app-fetch
 	if test "$$link_mode" = static; then workspace=bootstrap/stage1; build_directory="$(APP_BOOT_CARGO_OUTPUT)"; fi; \
 	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
 	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
-		--manifest "$(APP_DEPLOYMENT)" --link-mode "$$link_mode" --rust-runtime "$$rust_runtime" \
+		--manifest "$(APP_DEPLOYMENT)" --profile "$(APP_BUILD_PROFILE)" \
+		--link-mode "$$link_mode" --rust-runtime "$$rust_runtime" \
 		--features "$(APP_FEATURES)" \
 		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))) || exit $$?; \
 	test -n "$$app_targets" || continue; \
@@ -109,6 +110,7 @@ app: app-fetch
 		--manifest-path "$$workspace/Cargo.toml" --release --locked --offline $$app_targets; \
 	done; done
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
+		--profile "$(APP_BUILD_PROFILE)" \
 		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)" \
 		--static-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" \
 		--core-build "$(APP_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
@@ -139,6 +141,7 @@ app-boot: app-fetch
 		--features "$(APP_FEATURES)" $(APP_BOOT_SELECTION)
 
 .PHONY: app-fixtures app-sdk-test
+app-fixtures: APP_BUILD_PROFILE = development
 app-fixtures: app
 	HYPER_LINK_MODE=static HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \

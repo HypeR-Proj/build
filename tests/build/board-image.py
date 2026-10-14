@@ -299,12 +299,15 @@ class BoardTests(unittest.TestCase):
         for first, second in zip(board.partitions, board.partitions[1:]):
             self.assertLess(first.end, second.start)
 
-    def test_all_ramfs_has_no_system_disk_or_worker_build_requirement(self):
-        board = Board.parse(self.source, layout='ramfs')
+    def test_recovery_omits_formal_system_and_mounts(self):
+        board = Board.parse(self.source, recovery=True)
         self.assertEqual([p.name for p in board.partitions], ['hyper-data', 'alpine'])
         self.assertEqual(len(board.native_volumes()), 1)
-        board.source['native']['fstab'] = 'PARTLABEL=hyper-data /data erofs ro 0 0\n'
-        Board.parse(board.source)  # Runtime magic/worker selection owns mount errors.
+        self.assertEqual(board.source['native']['boot-fstab'], '')
+        self.assertEqual(board.source['native']['fstab'], '')
+        self.assertEqual(Board.parse(board.source, recovery=True), board)
+        with self.assertRaisesRegex(ValueError, 'must be split'):
+            Board.parse(board.source)
 
     def test_omitted_native_policy_is_canonical_split_without_mutating_source(self):
         original = copy.deepcopy(self.source)
@@ -328,26 +331,15 @@ class BoardTests(unittest.TestCase):
             path.write_text(json.dumps(board.source))
             self.assertEqual(board, Board.load(path))
 
-    def test_layout_selection_changes_only_native_system_medium(self):
-        disk = Board.parse(self.source)
-        ramfs = Board.parse(self.source, layout='ramfs')
-        self.assertEqual(ramfs.source['native'], {
-            'layout': 'ramfs', 'volumes': [{'source': 'PARTLABEL=hyper-data', 'read-only': False}],
-            'boot-fstab': '',
-            'fstab': 'PARTLABEL=hyper-data /data auto rw 0 0\n'})
-        self.assertEqual(disk.vms(), ramfs.vms())
-        self.assertEqual(disk.source['files'], ramfs.source['files'])
-        self.assertEqual(disk.source['io-vm'], ramfs.source['io-vm'])
-        self.assertEqual(disk.partitions[0], ramfs.partitions[0])
-        self.assertEqual(Board.parse(ramfs.source), ramfs)
-        for layout, source in [('ramfs', disk.source), ('split', ramfs.source)]:
-            with self.subTest(layout=layout), self.assertRaisesRegex(ValueError, 'conflicts'):
-                Board.parse(source, layout=layout)
+    def test_normal_deployment_requires_an_independent_system_partition(self):
+        source = copy.deepcopy(self.source)
+        source['disk']['partitions'] = [part for part in source['disk']['partitions']
+                                        if part.get('content') != 'system']
+        with self.assertRaisesRegex(ValueError, 'independent system partition'):
+            Board.parse(source)
 
-    def test_removed_flat_and_null_native_policies_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'split or ramfs'):
-            Board.parse(self.source, layout='flat')
-        for policy in (None, {'layout': 'flat', 'volumes': [], 'fstab': ''}):
+    def test_removed_embedded_and_null_native_policies_are_rejected(self):
+        for policy in (None, {'layout': 'flat'}, {'layout': 'ramfs'}):
             source = copy.deepcopy(self.source)
             source['native'] = policy
             with self.subTest(policy=policy), self.assertRaises(ValueError):
@@ -360,17 +352,17 @@ class BoardTests(unittest.TestCase):
             source = root / 'source.json'
             source.write_text(json.dumps(self.source))
             original = source.read_bytes()
-            for layout in (None, 'split', 'ramfs'):
-                with self.subTest(layout=layout):
-                    output = root / f'{layout}.json'
+            for recovery in (False, True):
+                with self.subTest(recovery=recovery):
+                    output = root / f'{recovery}.json'
                     command = [sys.executable, '-B', str(ROOT / 'scripts/prepare-native-layout.py'),
                                '--board', str(source), '--output', str(output)]
-                    if layout is not None:
-                        command.extend(['--layout', layout])
+                    if recovery:
+                        command.append('--recovery')
                     subprocess.run(command, check=True, capture_output=True)
-                    board = Board.load(output)
-                    self.assertEqual(board, Board.load(source, layout=layout))
-                    staged = root / str(layout)
+                    board = Board.load(output, recovery=recovery)
+                    self.assertEqual(board, Board.load(source, recovery=recovery))
+                    staged = root / str(recovery)
                     stage(board, ROOT, staged)
                     for name in ('boot-fstab', 'fstab'):
                         self.assertEqual((staged / name).read_text(), board.source['native'][name])
@@ -390,8 +382,6 @@ class BoardTests(unittest.TestCase):
         source['virtual-machines'] = [dict(prototype, name=f'guest{i}') for i in range(7)]
         with self.assertRaisesRegex(ValueError, 'eight I/O data slots'):
             Board.parse(source)
-        ramfs = Board.parse(source, layout='ramfs')
-        self.assertIn('7 guest6 - -\n', ramfs.bootstrap_clients())
         source['virtual-machines'].pop()
         split = Board.parse(source)
         clients = [row.split()[0] for row in split.backend_clients().splitlines()[1:]]
@@ -723,7 +713,7 @@ class BoardTests(unittest.TestCase):
         self.source['disk']['partitions'][2]['size-mib'] = 8
         self.source['disk']['partitions'][2]['image'] = 'guest-disk'
         # This fixture qualifies FAT and opaque guest disk publication only.
-        board = Board.parse(self.source, layout='ramfs')
+        board = Board.parse(self.source, recovery=True)
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             artifacts = {}

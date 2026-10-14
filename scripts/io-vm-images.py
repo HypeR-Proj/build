@@ -88,29 +88,13 @@ def write_json(path, value):
         path.write_text(contents)
 
 
-def bringup_config(output, board):
-    """Boot the appliance as a supervised VM without physical-device authority."""
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((root / 'bootstrap/stage1/init/config/services-with-vms.json').read_text())
-    manifest['services'] = [service for service in manifest['services']
-                            if service['name'] != 'io-runtime']
-    manifest['virtual-machines'] = {'config': '/boot/etc/hyper/vms.json'}
-    resident = board.source['io-vm']
-    vms = {'format': 'hyper.vm-config', 'virtual-machines': [
-        {'name': resident['name'], 'image': '/boot' + resident['image'], 'autostart': False,
-         'configuration': resident['configuration']}]}
-    output.mkdir(parents=True, exist_ok=True)
-    for name, value in [('services.json', manifest), ('vms.json', vms)]:
-        (output / name).write_text(json.dumps(value, indent=2) + '\n')
-
-
 def deployment_board(board, mode):
     """Retain one board snapshot; diskless qualification cannot require volumes."""
     from board_config import Board
     source = copy.deepcopy(board.source)
     config = source['io-vm']['configuration']
     if mode != 'storage':
-        # Standby and diskless bring-up have no physical network transport.
+        # Standby has no physical network transport.
         # Their reduced snapshot must not inherit a production uplink claim.
         source['io-vm'].pop('network-device', None)
         source['io-vm'].pop('networks', None)
@@ -130,15 +114,13 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--board', type=Path, required=True,
                         help='board JSON owning the I/O VM configuration')
-    parser.add_argument('--mode', choices=('storage', 'standby', 'bringup'), default='storage',
-                        help='storage deployment, idle backend, or diskless supervised bring-up')
+    parser.add_argument('--mode', choices=('storage', 'standby'), default='storage',
+                        help='storage deployment or idle backend')
     args = parser.parse_args()
     board = deployment_board(Board.load(args.board), args.mode)
     platform = 'rpi5' if board.source['boot'] == 'rpi5-firmware' else 'qemu'
     image, initramfs = package_payloads(args.package, platform)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if args.mode == 'bringup':
-        bringup_config(args.output.parent / 'bringup', board)
     if args.mode == 'storage':
         stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
         contents = linux_overlay(board, bounded_read(initramfs, 8 * MIB))

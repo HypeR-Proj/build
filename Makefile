@@ -40,6 +40,7 @@ APP_VARIANT := $(if $(strip $(APP_FEATURES) $(APP_EXTRA_BINS)),/$(shell python3 
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)$(APP_VARIANT)
 APP_CARGO_OUTPUT ?= $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)$(APP_VARIANT)
 APP_DEPLOYMENT := $(CURDIR)/mk/components.mk
+APP_BUILD_PROFILE ?= system
 NATIVE_IMAGE_PROFILE ?= development
 ifeq ($(filter $(NATIVE_IMAGE_PROFILE),development system),)
 $(error NATIVE_IMAGE_PROFILE must be development or system)
@@ -83,12 +84,11 @@ IO_VM_DISK ?= $(APP_OUTPUT)/io-disk.img
 IO_VM_ORAS ?=
 IO_VM_PACKAGE ?=
 BOARD ?= qemu
-BOARD_SYSTEM_LAYOUT ?= split
-ifeq ($(filter $(BOARD_SYSTEM_LAYOUT),split ramfs),)
-$(error BOARD_SYSTEM_LAYOUT must be split or ramfs)
+ifneq ($(origin BOARD_SYSTEM_LAYOUT),undefined)
+$(error BOARD_SYSTEM_LAYOUT was removed; system requires independent storage)
 endif
 BOARD_CONFIG ?= $(CURDIR)/boards/$(BOARD).json
-BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)$(if $(filter ramfs,$(BOARD_SYSTEM_LAYOUT)),-ramfs)
+BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)
 BOARD_DEPLOYMENT = $(BOARD_OUTPUT)/deployment.json
 EROFS_MKFS ?= $(if $(wildcard $(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs),$(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs,mkfs.erofs)
 BOARD_IMAGE ?= $(BOARD_OUTPUT)/disk.img
@@ -100,7 +100,7 @@ RPI5_BOOT_PACKAGE ?=
 # Honor explicitly selected board policy, while the bare Pi target still uses
 # the Pi firmware profile instead of the general QEMU default.
 RPI5_BOARD_CONFIG ?= $(if $(filter undefined default file,$(origin BOARD_CONFIG)),$(CURDIR)/boards/rpi5.json,$(BOARD_CONFIG))
-RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native$(if $(filter ramfs,$(BOARD_SYSTEM_LAYOUT)),-ramfs)
+RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native
 
 BOARD_TEST_OUTPUT ?= $(CURDIR)/target/board-tests
 
@@ -138,7 +138,7 @@ NATIVE_GUEST_LOAD := 0x40200000
 endif
 NATIVE_VM_CONFIG := $(CURDIR)/bootstrap/stage1/init/tests/config/$(if $(filter riscv64,$(ARCH)),vms-riscv64.json,vms.json)
 NATIVE_GUEST_PREREQUISITES := guest-itb
-NATIVE_GUEST_ENTRY := 0644 vm/alpine.itb "$(NATIVE_GUEST_ITB)"
+NATIVE_GUEST_ENTRY := 0644 system:vm/alpine.itb "$(NATIVE_GUEST_ITB)"
 QEMU_CPUS ?= 4
 QEMU_MEMORY ?= 1G
 QEMU_BOOTARGS ?= earlycon=pl011,mmio32,0x09000000

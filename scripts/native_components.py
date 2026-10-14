@@ -53,12 +53,13 @@ def load_registry(path):
                      'mode': '0755', 'profiles': profiles.split(),
                      'package': manifest['package']['name'],
                      'link_mode': 'static' if static else 'dynamic',
-                     'rust_runtime': runtime,
+                     'rust_runtime': runtime, 'environment': 'boot' if static else 'system',
                      'cargo_binaries': [item['name'] for item in manifest.get('bin', [])]}
-        elif kind in ('source', 'symlink') and len(fields) == 5:
-            _, source, destination, mode, profiles = fields
+        elif kind in ('source', 'symlink') and len(fields) in (5, 6):
+            _, source, destination, mode, profiles = fields[:5]
             entry = {kind: source, 'destination': destination, 'mode': mode,
-                     'profiles': profiles.split()}
+                     'profiles': profiles.split(),
+                     'environment': fields[5] if len(fields) == 6 else 'system'}
         else:
             raise ValueError(f'invalid component record: {record}')
         entries.append(entry)

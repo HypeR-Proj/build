@@ -34,9 +34,13 @@ def load(path):
     entries = manifest['entries']
     for entry in entries:
         name = archive_path(entry['destination'])
-        if name in destinations:
-            raise ValueError(f'duplicate deployment destination: {name}')
-        destinations.add(name)
+        environment = entry.get('environment', 'system')
+        if environment not in ('boot', 'system'):
+            raise ValueError(f'invalid deployment environment: {environment}')
+        key = (environment, name)
+        if key in destinations:
+            raise ValueError(f'duplicate deployment destination: {environment}:{name}')
+        destinations.add(key)
         if not re.fullmatch(r'0[0-7]{3}', entry['mode']):
             raise ValueError(f'invalid deployment mode: {name}')
         if not entry['profiles'] or set(entry['profiles']) - {'system', 'development', 'io'}:
@@ -61,7 +65,7 @@ def load(path):
     return entries
 
 
-def compose(manifest, profile, roots, replacements=()):
+def compose(manifest, profile, roots, replacements=(), environment='system'):
     entries = []
     overrides = {}
     for replacement in replacements:
@@ -70,7 +74,7 @@ def compose(manifest, profile, roots, replacements=()):
             raise ValueError(f'invalid deployment replacement: {replacement}')
         overrides[name] = source
     for item in load(manifest):
-        if profile not in item['profiles']:
+        if profile not in item['profiles'] or item.get('environment', 'system') != environment:
             continue
         # Rust DSOs are providers, not unconditional payload. Packaging follows
         # DT_NEEDED after all executable overrides and fixture entries are known.
@@ -116,6 +120,8 @@ def main():
     parser.add_argument('--extra-bin', action='append', default=[])
     parser.add_argument('--sdk', type=Path)
     parser.add_argument('--features', default='')
+    parser.add_argument('--profile', choices=['system', 'development', 'io'],
+                        help='build and install only components in this deployment profile')
     parser.add_argument('--component', action='append', default=[],
                         help='select an executable by its staged component name')
     parser.add_argument('--link-mode', choices=['dynamic', 'static'],
@@ -125,6 +131,11 @@ def main():
     args = parser.parse_args()
     all_entries = load(args.manifest)
     entries = select_components(all_entries, args.component)
+    if args.profile:
+        filtered = [entry for entry in entries if args.profile in entry['profiles']]
+        if args.component and len(filtered) != len(entries):
+            parser.error('component selection conflicts with its deployment profile')
+        entries = filtered
     if args.link_mode:
         filtered = link_entries(entries, args.link_mode)
         if args.component and len(filtered) != len(entries):
@@ -161,7 +172,7 @@ def main():
             artifacts.append((entry, binary, binary.removeprefix('hyper-')))
     sources = []
     # Check every bootstrap artifact before replacing any staged image. The
-    # restriction follows source ownership in disk-backed and all-RAM deployments.
+    # restriction follows source ownership, independently of installed paths.
     for entry, binary, staged in artifacts:
         static = entry.get('link_mode', 'dynamic') == 'static'
         build = (args.static_build or args.build) if static else args.build
@@ -194,6 +205,7 @@ def main():
             'features': sorted(set(args.features.replace(',', ' ').split())),
             'link_mode': args.link_mode or 'mixed',
             'components': sorted(set(args.component)),
+            'profile': args.profile,
             'extra_binaries': sorted(set(args.extra_bin)),
             'sdk': {name: (args.sdk / 'share/hyper' / name).read_text().strip()
                     for name in ('manifest', 'link-fingerprint', 'std-fingerprint')},

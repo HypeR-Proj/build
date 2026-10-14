@@ -22,7 +22,7 @@ The source-directory split does not change installed library names or paths.
 
 `lib/` owns formal-system implementation libraries. `bootstrap/stage1/` owns
 its own implementations and Cargo lockfile. Bootstrap may depend on this
-substrate, its private crates, and third-party Cargo libraries, but never on
+substrate and third-party Cargo libraries, but never on
 `lib/`, even through an optional, build, target-specific or vendored dependency.
 `tests/ci/check-workspace.py` checks these edges and the substrate's own
 transitive path dependencies. `make app-fetch`, and therefore Native build and
@@ -31,6 +31,6 @@ check targets, run the check before dependency resolution.
 Filesystem recognition, FAT/EROFS engines, service supervision, VM deployment
 policy, guest-image parsing and ELF loading are userspace implementations.
 They do not belong here merely because bootstrap needs them. Bootstrap owns
-its versions under `bootstrap/stage1/lib/` and `userspace-loader/elf/`; the formal
-environment owns its implementations under `lib/`. Communication between the
+its implementations under the owning stage-1 executable and `userspace-loader/elf/`;
+formal implementations live under `app/` and `lib/`. Communication between the
 environments uses explicit capability and wire contracts, not Rust type sharing.

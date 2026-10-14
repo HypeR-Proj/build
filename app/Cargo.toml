@@ -6,12 +6,13 @@ resolver = "3"
 # Formal system programs and their implementation libraries.
 members = [
     "*",
+    "../tests/app/*",
     "../lib/clap",
     "../lib/service",
     "../lib/terminal",
     "../lib/block",
+    "../lib/fs-service",
     "../lib/vm-image",
-    "../lib/service-manager",
     "../lib/tool-args",
     "../lib/tool-args/shared",
     "../stdlib/rust-std",
@@ -38,7 +39,7 @@ hyper-tool-args-shared = { path = "../lib/tool-args/shared" }
 hyper-os = "=0.0.0"
 hyper-block = { path = "../lib/block" }
 hyper-filesystem = "=0.0.0"
-hyper-service-manager = { path = "../lib/service-manager", default-features = false }
+hyper-fs-service = { path = "../lib/fs-service" }
 hyper-rt = { version = "=0.0.0", features = ["std"] }
 hyper-service = { path = "../lib/service" }
 hyper-terminal = { path = "../lib/terminal" }

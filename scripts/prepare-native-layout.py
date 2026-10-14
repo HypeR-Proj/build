@@ -14,11 +14,12 @@ from board_config import Board
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--board', type=Path, required=True)
-    parser.add_argument('--layout', choices=('split', 'ramfs'))
+    parser.add_argument('--recovery', action='store_true',
+                        help='prepare a stage1-only hardware recovery disk without formal system')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     try:
-        board = Board.load(args.board, layout=args.layout)
+        board = Board.load(args.board, recovery=args.recovery)
         contents = json.dumps(board.source, indent=2) + '\n'
         args.output.parent.mkdir(parents=True, exist_ok=True)
         if not args.output.exists() or args.output.read_text() != contents:

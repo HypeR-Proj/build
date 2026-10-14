@@ -8,8 +8,11 @@ SPDX-License-Identifier: Apache-2.0
 This directory contains ordinary Native tools and system services.
 The RAM-resident boot and recovery programs live in
 [`bootstrap/stage1`](../bootstrap/stage1/README.md), an independent static-link
-workspace with its own lockfile and private libraries. The workspace here owns
+workspace with its own lockfile and executable-owned implementations. The workspace here owns
 formal applications and reusable libraries in the top-level `lib/`.
+Native acceptance executables live under [`tests/app`](../tests/app/README.md);
+they share this workspace's dependency lock but are built or packaged only by
+their selected test targets or development profile.
 Target builds consume the assembled
 Native SDK; source-level host tests use workspace SDK patches. Applications
 do not reach into kernel or runtime implementation internals.
@@ -74,19 +77,24 @@ physical Console <-> console-raw <-> terminal-service <-> shell / foreground com
                   background services   session-manager
 ```
 
-The active init retains management authority. The default deployment keeps
-bootstrap programs in RAM at `/boot` and system programs on EROFS at `/system`.
-A separately launched `init-system` adopts the live core service
-supervisors through one atomic capability transfer before boot init exits.
-Pre-commit failure leaves boot init supervising recovery services. See
-[boot and system deployment](../docs/boot-layout.md). Choosing
-`BOARD_SYSTEM_LAYOUT=ramfs` stores `/system` in RAM with the same handoff and
-root switch. After adopting supervision, system init prepares a new ramfs root
-and atomically publishes it with the original root mounted at `/boot` and
-existing disk mounts at their configured paths. RAM-resident `/system` is promoted and detached from its old directory in the
-same transaction, without copying files. The formal root has no path aliases. Root-switch failure leaves the old namespace usable
-and core services supervised by system init. Formal init attempts its service
-graph through the retained system environment, without reopening bootstrap recovery.
+The active init retains management authority. Bootstrap runs from the initial RAM
+archive, mounts the independent system volume at `/system`, then switches it to
+`/` before starting `init`. The candidate adopts core supervision through
+one atomic capability transfer. Pre-commit failure rolls back to stage-1 recovery.
+After commitment, formal init owns failure handling and retirement timing. It
+adopts the running I/O VM and mounted filesystems into independent providers from
+`app/`, starts formal services and stops predecessors before detaching the archive.
+The I/O VM does not reboot. An unsuccessful provider handoff retains the resources
+still needed by that provider.
+
+The original root is temporarily mounted at `/boot`; after successful retirement
+that mountpoint is empty. Original archive backing is reclaimed when its last
+borrowed file/page owner releases it. Formal executable and library mappings
+belong to the independent system filesystem and do not pin the boot archive.
+The formal root contains real `/bin`, `/svc`, `/etc` and `/lib64` directories;
+`/tmp` is writable RAM and `/data` is persistent storage. See
+[boot and system deployment](../docs/boot-layout.md) and the
+[handoff contract](../docs/bootstrap-handoff.md).
 
 `console-raw` owns the physical Console and exposes separate byte-stream and
 log interfaces. It has no line editing or terminal policy. The formal
@@ -146,7 +154,7 @@ that consume `lib/` use dynamic linking; the integration image still executes
 `echo-static`, a standalone C fixture, as the SDK static-link contract test.
 Rust static linking remains covered by `std-test-static`. Both static and
 dynamic system executables use the explicitly delegated
-`/system/lib64/ld-hyper-<arch>.so` loader. The static userspace loader under
+`/lib64/ld-hyper-<arch>.so` loader. The static userspace loader under
 `/boot` serves bootstrap programs only.
 
 Clap-based tools select `libhyper_clap_shared.so` for Native builds; the same
@@ -170,7 +178,8 @@ app/
   Cargo.toml          App discovery, shared dependency versions, lints and profiles
   Cargo.lock          Locked dependencies for the application and Rust DSO set
   cat/ chmod/ cp/ echo/ free/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
-  init/ session-manager/ terminal-service/ vm-manager/ vm-runtime/ vm-smoke/ vmm/
+  init/ console-raw/ io-runtime/ fs-backend/ fs-fat/ fs-erofs/ mount/ umount/
+  session-manager/ terminal-service/ vm-manager/ vm-runtime/ vmm/
 bootstrap/stage1/
   init/               Initial service graph and supervision handoff
     config/           Service manifests for VM-enabled and console-only startup
@@ -183,10 +192,11 @@ lib/                  Shared application libraries, in the app Cargo workspace
   tool-args/          Argument parsing and process selection for system tools
   vm-policy/          VM fleet configuration, resource policy and image validation
   vm-support/         Guest loading, virtual devices and I/O backend protocols
-  service-manager/    Formal init supervision and handoff receiver
   terminal/           Formal terminal client, settings and line discipline
   dynamic-loader/     Formal executable loader and runtime linker
-  rust-std/           Common Rust standard-library DSO
+stdlib/rust-std/      Common Rust standard-library DSO
+tests/app/            Standalone Native acceptance programs
+  vm-smoke/ terminal-probe/ fs-failure/
 ```
 
 Each executable is its own Cargo package with `Cargo.toml` and `src/main.rs`.
@@ -211,7 +221,7 @@ bootstrap or system installation directory.
 Reusable OS interaction belongs to `stdlib/rust/hyper-os`; application-local
 service and command policy remains under `app`. Shared application implementations
 live in [`lib/`](../lib/README.md), and their Native DSOs are installed in
-`/system/lib64/<arch>-hyper-hyper/`, also accessible through `/system/lib`.
+`/lib64/<arch>-hyper-hyper/`, also accessible through `/lib`.
 Applications and Rust DSOs must be built and deployed together with the same
 SDK, compiler, profile and features. Host tests use the rlib variants.
 
@@ -223,29 +233,29 @@ standalone shell commands. The selected deployment profile determines which
 services are present. See [init configuration](../bootstrap/stage1/init/config/README.md) for the
 manifest and board configuration inputs.
 
-The bootstrap paths below describe their initial launch locations. After the
-root switch they reside under `/boot`, and formal services remain under `/system`.
-There are no root-level service or tool aliases. Core launchers retain a fixed
-`process.environment-directory` for their own files; their separate root
-capability follows the live namespace.
+Bootstrap paths below identify initial launch locations. Their independent
+formal replacements live on the independent root; they do not retain bootstrap loaders,
+worker binaries or configuration directories. There are no root-level service or
+tool aliases. Each launcher receives its own `process.environment-directory` for
+configuration and workers, separately from the live root namespace capability.
 
 | Installed executable | Source | Responsibility |
 | --- | --- | --- |
 | `/init` | [init](../bootstrap/stage1/init) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
-| `/svc/console-raw` | [console-raw](../bootstrap/stage1/console-raw) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
-| `/system/svc/session-manager` | [session-manager](session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
-| `/system/svc/terminal-service` | [terminal-service](terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
-| `/svc/io-runtime` | [io-runtime](../bootstrap/stage1/io-runtime) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
-| `/system/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
-| `/svc/fs-backend` | [fs-backend](../bootstrap/stage1/fs-backend) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
-| `/svc/fs-fat` | [fs-fat](../bootstrap/stage1/fs-fat) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by fs-backend; resides in boot RAM by default, independently of the mount phase. |
-| `/svc/fs-erofs` | [fs-erofs](../bootstrap/stage1/fs-erofs) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend. |
-| `/system/svc/init-system` | [init](init/) | Validate the combined service graph, atomically adopt existing core supervisors, switch the root namespace, then start system services and continue whole-system supervision. Retain core supervision if root switching fails. Used with both disk-backed and RAM-resident system files. |
-| `/system/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
+| `/svc/console-raw` in each environment | [bootstrap](../bootstrap/stage1/console-raw), [formal](console-raw/) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
+| `/svc/session-manager` | [session-manager](session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
+| `/svc/terminal-service` | [terminal-service](terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
+| `/svc/io-runtime` in each environment | [bootstrap](../bootstrap/stage1/io-runtime), [formal](io-runtime/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
+| `/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
+| `/svc/fs-backend` in each environment | [bootstrap](../bootstrap/stage1/fs-backend), [formal](fs-backend/) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
+| `/svc/fs-fat` in each environment | [bootstrap](../bootstrap/stage1/fs-fat), [formal](fs-fat/) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by the manager in its own environment; the formal worker takes over existing FAT mounts before bootstrap retirement. |
+| `/svc/fs-erofs` in each environment | [bootstrap](../bootstrap/stage1/fs-erofs), [formal](fs-erofs/) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend; the formal worker takes over the mounted system volume. |
+| `/svc/init` | [init](init/) | Validate the combined service graph, atomically adopt existing core supervisors, replace core providers, start system services, and retire bootstrap when ready. Retain predecessor resources when adoption fails. Starts after stage-1 switches to the independent system root. |
+| `/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
 
 The resident Linux I/O VM runs physical device drivers. `io-runtime` is the
 Native service that manages that VM; `vm-runtime` manages an individual business
-guest. [vm-smoke](vm-smoke/README.md) is a separate privileged acceptance fixture,
+guest. [vm-smoke](../tests/app/vm-smoke/README.md) is a separate privileged acceptance fixture,
 not an interactive command or production service.
 
 ## HypeR commands
@@ -256,25 +266,24 @@ HypeR-specific. Use `COMMAND --help` for the complete option list.
 
 ### `mount` and `umount`: Native volume administration
 
-[mount](../bootstrap/stage1/mount) lists active managed volumes without arguments. `mount -a`
-applies automatic `/system/etc/fstab` entries; `mount /data` or
-`mount PARTLABEL=hyper-data` selects one entry there. `-T /boot/etc/fstab` selects
-the bootstrap table after root switching (`-T /etc/fstab` before the switch). `mount -t auto -o ro PARTLABEL=hyper-system /system` selects an authorized
+[mount](mount/) lists active managed volumes without arguments. `mount -a`
+applies automatic `/etc/fstab` entries; `mount /data` or
+`mount PARTLABEL=hyper-data` selects one entry there. An explicit `-T` path
+selects another table; `/boot/etc/fstab` exists only while bootstrap is retained. `mount -t auto -o ro PARTLABEL=backup /mnt/backup` selects an authorized
 GPT partition and target. Types are `auto`, `fat`/`vfat`, and `erofs`; EROFS requires
 `ro`. The manager identifies media before selecting an installed worker, and
 reports unavailable volumes, format mismatches and missing workers separately.
 
-[umount](../bootstrap/stage1/umount) synchronizes and detaches one idle target. Open files,
+[umount](umount/) synchronizes and detaches one idle target. Open files,
 directory/cwd handles, active lookups or nested mounts return Busy and preserve
 the existing mount. It has no forced or lazy mode. A clean shutdown returns the
 worker's exclusive block owner to the manager for a later mount; a crashed
 worker is not silently reactivated.
 
-Both commands need filesystem control authority, not raw device access. Stage-1
-init or the formal session manager passes it to its shell, which delegates only
-WAIT|WRITE to the exact
-mount/umount paths in `/bin`, `/boot/bin` and `/system/bin`. They are statically
-available in bootfs even when `/system` cannot mount. See
+Both commands need filesystem control authority, not raw device access. The
+formal session manager passes it to its shell, which delegates only WAIT|WRITE
+to `/bin/mount` and `/bin/umount`. Independent static recovery
+copies remain in bootfs for failures before system takeover. See
 [filesystem services](../docs/filesystem-services.md) for the protocol and
 [boot layout](../docs/boot-layout.md) for supported fstab options.
 
@@ -358,16 +367,16 @@ See the [inspection reference](../docs/applications.md#object-and-capability-ins
 interpreter and complete `DT_NEEDED` dependency graph. It does not execute the
 input, load it into executable memory, or call constructors. The default
 listing includes each dependency name once; paths resolve symbolic links, so
-the `/system/lib` alias is displayed as `/system/lib64/<arch>-hyper-hyper/`. The
+the `/lib` alias is displayed as `/lib64/<arch>-hyper-hyper/`. The
 ELF's declared interpreter is shown separately from the loader file being checked.
 
 ```text
-ldd /system/bin/vmm
-ldd --tree /system/svc/vm-runtime
-ldd --direct /system/bin/ps
-ldd -v /system/bin/vmm /system/bin/handle
-ldd --library-dir /data/candidate-libraries /system/bin/vmm
-ldd --loader /data/candidate-loader --library-dir /data/candidate-libraries /system/bin/vmm
+ldd /bin/vmm
+ldd --tree /svc/vm-runtime
+ldd --direct /bin/ps
+ldd -v /bin/vmm /bin/handle
+ldd --library-dir /data/candidate-libraries /bin/vmm
+ldd --loader /data/candidate-loader --library-dir /data/candidate-libraries /bin/vmm
 ```
 
 `--tree` shows which object requires each library, marking cycles and already
@@ -379,10 +388,9 @@ unreadable, malformed or incompatible files have specific diagnostics. Multiple
 operands are processed independently, with a failing exit status if any inspected
 dependency cannot be resolved or validated.
 
-The lookup directory defaults to `/system/lib/<arch>-hyper-hyper/` for the
-input ELF architecture. The canonical `PT_INTERP` name
-`/lib64/ld-hyper-<arch>.so` selects `/system/lib64/ld-hyper-<arch>.so` for
-inspection; other interpreter names are inspected literally. `--library-dir`
+The lookup directory defaults to `/lib/<arch>-hyper-hyper/` for the
+input ELF architecture. Every `PT_INTERP` path is inspected literally; the canonical Native interpreter
+is `/lib64/ld-hyper-<arch>.so`. `--library-dir`
 inspects an alternate library set, and `--loader FILE` checks an explicitly
 selected executable loader. These options are independent and do not change
 the target program's runtime launch policy. The ELF declaration remains
@@ -450,7 +458,7 @@ the summary remains system-wide even when process rows are filtered.
 
 ### `sh`: the foreground Native shell
 
-[shell](shell/) is installed as `/system/bin/sh` and is the normal interactive
+[shell](shell/) is installed as `/bin/sh` and is the normal interactive
 shell. A separate static [fallback-sh](../bootstrap/stage1/fallback-sh) lives in
 `/boot/svc/fallback-sh`. Stage-1 init launches it directly on failure before
 ownership transfer. Formal init instead starts `session-manager`, which launches
@@ -466,7 +474,7 @@ The formal shell provides cursor editing, completion, reverse history search,
 multiline input and bracketed paste. Its language includes variables, command
 and arithmetic substitution, globbing, control structures, functions, scripts,
 pipelines, exit statuses, and ordered redirection with descriptor aliases and
-here-documents. `echo` and `printf` are builtins; `/system/bin/echo` remains an
+here-documents. `echo` and `printf` are builtins; `/bin/echo` remains an
 independent application. `status` shows the previous result and elapsed time.
 
 History retains at most 256 entries in `/tmp/hyper-sh.history`, is bounded to
@@ -481,21 +489,21 @@ The session delegates process-construction authority to the shell. Commands
 inherit attenuated root and cwd Directory capabilities, standard streams and
 authorized process resources; path traversal is bounded by the delegated root,
 not the initial cwd. Inspector delegation depends on the resolved executable
-path: `/system/bin/ps` receives task inspection, `/system/bin/free` memory
-inspection, and `/system/bin/top` task, memory and CPU inspection.
-`/system/bin/handle` receives object
+path: `/bin/ps` receives task inspection, `/bin/free` memory
+inspection, and `/bin/top` task, memory and CPU inspection.
+`/bin/handle` receives object
 inspection including privileged details, plus task inspection for process
 lookup. Copying or
 renaming a tool to another path does not acquire those grants.
-The trusted `/system/bin/sh` path receives the shell's delegatable diagnostic
-and control capabilities, so nested shells and recovery-to-formal launches keep
-the same tool access. It also retains the bootstrap loader for recovery tools.
+The trusted `/bin/sh` path receives the shell's delegatable diagnostic
+and control capabilities, so nested shells keep the same tool access. Every
+formal child uses the system dynamic loader, including static executables; the
+shell retains no bootstrap loader or archive directory.
 
 ## File tools
 
 The normal profile installs these independent std/clap applications under
-`/system/bin`, leaving static recovery tools in `/boot/bin`. The placement and
-shell search order are the same for disk-backed and RAM-resident `/system`:
+`/bin`. The default shell PATH searches only that directory, on the independent system root:
 
 | Command | Supported operations |
 | --- | --- |

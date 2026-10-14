@@ -84,7 +84,7 @@ class BringupTests(unittest.TestCase):
             policy.write_text(json.dumps(source))
             ramdisk = root / 'initramfs.gz'
             ramdisk.write_bytes(b'payload')
-            for mode in ('storage', 'standby', 'bringup'):
+            for mode in ('storage', 'standby'):
                 output = root / mode / 'io.itb'
                 with self.subTest(mode=mode), \
                         patch.object(sys, 'argv', ['io-vm-images.py', '--package', str(root),
@@ -105,7 +105,8 @@ class BringupTests(unittest.TestCase):
                     self.assertEqual(snapshot['io-vm']['image'], source['io-vm']['image'])
                     entries = json.loads(output.with_suffix('.entries.json').read_text())
                     self.assertEqual(entries[:2], [
-                        ['0644', 'vm/custom image.itb', str(output.resolve())],
+                        ['0644', 'vm/custom image.itb',
+                         str(output.resolve())],
                         ['0644', 'etc/hyper/board.json',
                          str(output.with_suffix('.board.json').resolve())],
                     ])
@@ -128,37 +129,15 @@ class BringupTests(unittest.TestCase):
                         self.assertNotIn('network-device', snapshot['io-vm'])
                         self.assertNotIn('networks', snapshot['io-vm'])
                         self.assertTrue(all('network' not in vm for vm in snapshot['virtual-machines']))
-                    if mode == 'bringup':
-                        vm = json.loads((output.parent / 'bringup/vms.json').read_text())['virtual-machines'][0]
-                        self.assertEqual(vm['configuration'], config)
-                        self.assertEqual(vm['name'], source['io-vm']['name'])
-                        self.assertEqual(vm['image'], '/boot' + source['io-vm']['image'])
             self.assertEqual(json.loads(policy.read_text()), source)
 
-    def test_diskless_io_config_has_supervision_without_device_assignment(self):
-        spec = importlib.util.spec_from_file_location('io_images', ROOT / 'scripts/io-vm-images.py')
-        images = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(images)
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp)
-            board = bringup.Board.load(ROOT / 'boards/rpi5.json')
-            board = images.deployment_board(board, 'bringup')
-            images.bringup_config(output, board)
-            resident = board.source['io-vm']
-            manifest = json.loads((output / 'services.json').read_text())
-            names = {service['name'] for service in manifest['services']}
-            self.assertIn('vm-manager', names)
-            self.assertIn('session-manager', names)
-            self.assertIn('console-raw', names)
-            self.assertNotIn('io-runtime', names)
-            self.assertEqual(manifest['virtual-machines']['config'], '/boot/etc/hyper/vms.json')
-            for service in manifest['services']:
-                for cap in service['capabilities']:
-                    self.assertNotEqual(cap['source'], 'bootstrap.device-assignment-authority')
-            vms = json.loads((output / 'vms.json').read_text())
-            self.assertEqual(vms['virtual-machines'], [
-                {'name': resident['name'], 'image': '/boot' + resident['image'], 'autostart': False,
-                 'configuration': resident['configuration']}])
+    def test_diskless_recovery_board_cannot_be_loaded_as_formal_deployment(self):
+        board = bringup.Board.load(ROOT / 'boards/rpi5-native.json', recovery=True)
+        self.assertFalse(any(part.content == 'system' for part in board.partitions))
+        self.assertEqual(board.source['native']['boot-fstab'], '')
+        self.assertEqual(board.source['native']['fstab'], '')
+        with self.assertRaisesRegex(ValueError, 'must be split'):
+            bringup.Board.parse(board.source)
 
     def test_pi_deployment_exports_configuration_and_qemu_equivalent_alpine(self):
         from board_bootstrap import services
@@ -179,9 +158,7 @@ class BringupTests(unittest.TestCase):
             environment = [cap for cap in service['capabilities']
                            if cap['purpose'] == 'process.environment-directory']
             self.assertEqual(len(environment), 1, name)
-            self.assertEqual(environment[0]['source'],
-                             'bootstrap.boot-environment-directory' if name == 'session-manager'
-                             else 'bootstrap.environment-directory')
+            self.assertEqual(environment[0]['source'], 'bootstrap.environment-directory')
             self.assertEqual(environment[0]['operation'], 'duplicate')
             self.assertEqual(set(environment[0]['rights']),
                              {'read', 'inspect', 'execute', 'protect', 'duplicate', 'transfer'})

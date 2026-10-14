@@ -32,7 +32,6 @@ the bootstrap or formal loader explicitly through an executable capability.
 | `hyper-vm-policy` | System `init`, `vmm`, VM manager and runtime | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
 | `hyper-vm-support` | Formal VM runtime | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
 | `hyper-terminal` | Terminal service, session manager, shell and interactive tools | Native terminal settings/control, bounded line discipline, foreground leases and events. Bootstrap and stdlib do not depend on it. |
-| `hyper-service-manager` | System init | Service graph validation, launch authority, supervision transfer and userspace root-switch policy. |
 | `hyper-rust-std` (in `stdlib/`) | The Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. |
 
 `make app` builds the libraries and installs their `.so` artifacts under
@@ -40,18 +39,17 @@ the bootstrap or formal loader explicitly through an executable capability.
 `libhyper_vm_policy_shared.so`, `libhyper_vm_support_shared.so` and
 `libhyper_rust_std.so`. Per-library `component.mk` declarations register them as
 providers. Image composition follows ELF dependencies and installs needed libraries in
-`/system/lib64/<arch>-hyper-hyper/` in both system and development images, with
-`/system/lib -> lib64`. AArch64 therefore uses `/system/lib/aarch64-hyper-hyper/`;
-RISC-V uses `/system/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory.
+`/lib64/<arch>-hyper-hyper/` in both system and development images, with
+`/lib -> lib64`. AArch64 therefore uses `/lib/aarch64-hyper-hyper/`;
+RISC-V uses `/lib/riscv64-hyper-hyper/`. `libhyper.so` shares that directory.
 ELF files retain the interpreter identity `/lib64/ld-hyper-<arch>.so`; process
-launchers explicitly supply the formal loader from `/system/lib64/`. This layout
-is the same whether `/system` resides on disk or in ramfs.
+launchers explicitly supply the formal loader from `/lib64/`. The independent system filesystem is the formal root.
 Applications have actual ELF `DT_NEEDED` entries;
 the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
-The service-manager and terminal libraries remain rlibs. Bootstrap owns a separate
-supervisor implementation and filesystem-worker libraries. The handoff contract
+The terminal library remains an rlib. Formal service supervision belongs to
+`app/init`; bootstrap owns separate supervisor and filesystem-worker implementations. The handoff contract
 is exercised by the boot-system acceptance tests.
 
 The clap delivery crate re-exports the unmodified upstream API and shares the

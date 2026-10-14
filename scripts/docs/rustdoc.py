@@ -17,10 +17,12 @@ UPSTREAM_LINKS = {
 
 
 class RustdocLinks(HTMLParser):
-    def __init__(self, text, page=None, root=None):
+    def __init__(self, text, page=None, root=None, source_roots=()):
         super().__init__(convert_charrefs=True)
         self.page = page.resolve() if page is not None else None
         self.root = root.resolve() if root is not None else None
+        self.source_roots = ((self.root / 'src',) + tuple(path.resolve() for path in source_roots)
+                             if self.root is not None else ())
         self.offsets = [0]
         for line in text.split('\n')[:-1]:
             self.offsets.append(self.offsets[-1] + len(line) + 1)
@@ -48,29 +50,35 @@ class RustdocLinks(HTMLParser):
                                   '<a ' + ' '.join(attributes) + '>'))
 
     def source_link(self, href):
-        # Cross-crate source locations can retain a crate-index-relative
-        # ../src/ URL even on nested item pages. Repair only a missing Source
-        # target whose exact file exists in this Rustdoc view's source tree.
+        # Cross-crate reexports can retain a crate-relative ../src/ URL at an
+        # unrelated depth. An executable view can also refer to SDK sources
+        # generated in its owning library view. Only explicit source roots are
+        # eligible: never guess another architecture or provider's source.
         if self.page is None or self.root is None:
             return href
         url = urlsplit(href)
         path = unquote(url.path)
-        if url.scheme or url.netloc or not path.startswith('../src/'):
+        if url.scheme or url.netloc or not path.startswith('../'):
             return href
         if (self.page.parent / path).is_file():
             return href
-        source = (self.root / path[3:]).resolve()
-        if not source.is_relative_to(self.root / 'src') or not source.is_file():
+        while path.startswith('../'):
+            path = path[3:]
+        if not path.startswith('src/'):
             return href
-        relative = os.path.relpath(source, self.page.parent).replace(os.sep, '/')
-        return urlunsplit(('', '', quote(relative, safe='/'), url.query, url.fragment))
+        for source_root in self.source_roots:
+            source = (source_root / path[4:]).resolve()
+            if source.is_relative_to(source_root) and source.is_file():
+                relative = os.path.relpath(source, self.page.parent).replace(os.sep, '/')
+                return urlunsplit(('', '', quote(relative, safe='/'), url.query, url.fragment))
+        return href
 
 
-def fix_rustdoc_links(text, page=None, root=None):
+def fix_rustdoc_links(text, page=None, root=None, source_roots=()):
     # Only actual anchor attributes are rewritten;
     # prose, escaped source examples, scripts and unrelated URLs retain bytes.
     if not any(link in text for link in UPSTREAM_LINKS) and '../src/' not in text:
         return text
-    for start, length, replacement in reversed(RustdocLinks(text, page, root).replacements):
+    for start, length, replacement in reversed(RustdocLinks(text, page, root, source_roots).replacements):
         text = text[:start] + replacement + text[start + length:]
     return text

@@ -54,6 +54,8 @@ def main():
     parser.add_argument('--initramfs', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--replace', action='store_true')
+    parser.add_argument('--recovery', action='store_true',
+                        help='stage1-only recovery image; no formal system is included')
     parser.add_argument('--artifact', action='append', default=[], metavar='NAME=PATH')
     parser.add_argument('--board', type=Path, default=ROOT / 'boards/rpi5-native.json')
     parser.add_argument('--mkfs-erofs', default='mkfs.erofs')
@@ -70,7 +72,7 @@ def main():
             package = fetcher.fetch(ROOT / 'target/rpi5-boot')
         artifacts = boot_artifacts(package)
         artifacts.update(hyper=args.kernel, bootstrap=args.initramfs)
-        board = Board.load(args.board)
+        board = Board.load(args.board, recovery=args.recovery)
         if board.source['boot'] != 'rpi5-firmware':
             raise ValueError('Pi 5 image requires the firmware boot profile')
         artifacts = packer.artifact_inputs(

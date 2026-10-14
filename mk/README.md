@@ -12,7 +12,7 @@ building an SDK or changing any files.
 
 Each Native program and shared library declares delivery in its own
 `component.mk`. `mk/components.mk` discovers `app/*/component.mk`,
-`bootstrap/stage1/*/component.mk`, `lib/*/component.mk` and
+`tests/app/*/component.mk`, `bootstrap/stage1/*/component.mk`, `lib/*/component.mk` and
 `stdlib/*/component.mk`, then applies the
 shared templates under `mk/components/`.
 Acceptance-only payloads are declared in `tests/native/component.mk`.
@@ -30,10 +30,14 @@ membership. Cargo package names are read from those manifests. Dependencies,
 features and crate types remain in Cargo; the Make templates do not duplicate
 them. Native-only dylib declarations also supply the host-test exclusion list.
 Programs under `app/*/` are discovered by Cargo's member glob; app's `.cargo/`
-and `target/` are excluded. Add a new program's `Cargo.toml` and `component.mk`
-in its directory. Stage-1 programs select their own workspace with `workspace = ".."`; private
-libraries below `bootstrap/stage1/lib/` use `workspace = "../.."`. There is no separately maintained deployment
-JSON or test library list.
+and `target/` are excluded. Acceptance programs are separate members under
+`tests/app/*/`, using `workspace = "../../../app"`; ordinary profiles do not
+include them. Add a new program's `Cargo.toml` and `component.mk`
+in its directory. Stage-1 programs select their own workspace with `workspace = ".."`.
+Their device/format implementations belong to the owning executable package;
+`bootstrap/stage1/contracts/` contains protocol source modules rather than a
+separate library workspace. There is no separately maintained deployment JSON
+or test library list.
 
 Each package owns its dependencies and features. Keep dependencies used by only
 one app in that app's manifest (for example, shell's `shlex` and grep's `regex`).
@@ -44,9 +48,10 @@ do not require editing either lockfile. Dependency
 changes should update only the relevant lock entries, without unrelated upgrades.
 
 `native-file` registers an explicit SDK, configuration or fixture file, with
-source, destination, mode and profiles. Sources can use `{apps}`, `{sdk}`,
+source, destination, mode and profiles, plus an optional `boot` or `system`
+environment (default `system`). Sources can use `{apps}`, `{sdk}`,
 `{std}` and `{arch}` placeholders. `native-symlink` takes target, destination
-and profiles. These declarations are repository-controlled Make source, not an
+and profiles, with the same optional environment. These declarations are repository-controlled Make source, not an
 input format for untrusted manifests.
 
 ## Build and composition
@@ -82,8 +87,11 @@ console-raw, fallback-sh, io-runtime, fs-backend,
 fs-erofs, fs-fat, mount and umount, using their staged names from the same
 component registry. The init, shell and I/O runtime packages use implementation
 rlibs and have no shared-delivery feature. `fs-fat` is compiled statically and
-packaged in boot RAM by default. Omitting it from `APP_BOOT_COMPONENTS` places
-it on `/system` instead; neither placement changes which fstab requests a mount.
+packaged in boot RAM by default. Omitting a boot component removes it from the
+boot payload. Formal providers are separate components from `app/`, with distinct
+staged names such as `fs-fat-system`; they are selected independently. Both may
+install as `svc/fs-fat` inside their respective environment. Fstab determines
+the mount phase independently of worker placement.
 
 Bootstrap Cargo artifacts use `APP_BOOT_CARGO_OUTPUT` (by default
 `$(APP_CARGO_OUTPUT)/boot-static`) and are staged under `APP_BOOT_OUTPUT`
@@ -92,13 +100,23 @@ directory prevent normal workspace builds from enabling shared-library features
 in bootstrap executables. Installation checks every selected ELF for the
 static-image contract before replacing any staged executable. Debug information
 is retained, and the build manifest records static linking and the exact
-component selection. Normal `make app` also installs stage-1 components from
-the static build tree. The SDK linker rejects dynamic linking
+component selection. Normal `make app` uses `APP_BUILD_PROFILE=system` and installs stage-1 components
+from the static build tree, excluding development-only probes from compilation
+and installation. Native acceptance and `app-fixtures` explicitly select the
+development profile. The SDK linker rejects dynamic linking
 for packages under `bootstrap/stage1/`, independently of the Make entry point;
 explicit dynamic builds through `hyper-cargo` fail. Static linking checks the
 final ELF as well as the requested flags.
 
-Image composition first applies profile membership and executable overrides.
+Image composition selects boot executables through `APP_BOOT_COMPONENTS` and
+formal programs through image-profile membership, independently. Explicit boot
+files such as the loader also declare their image profiles. Rust components derive their environment from their
+source directory. Duplicate destinations within one environment are errors; a
+boot and formal provider can share a relative path. `--replace boot:svc/fs-fat=...`
+and `--replace system:svc/fs-fat=...` select the intended copy. Additional
+`MODE PATH SOURCE` entries accept the same prefixes. An unqualified override is
+accepted only when its destination belongs to one selected environment. New
+additional ELF programs default to `system`; new data entries default to `boot`.
 Rust shared libraries are providers: the packer follows each final ELF's
 `DT_NEEDED` and interpreter to add only its transitive dependencies. Providers
 come from the staged applications and the selected SDK. Standalone fixtures use
@@ -115,7 +133,7 @@ The original ELF files, ordinary symbols and dynamic symbols are retained.
 
 Default board builds compose static bootstrap executables directly in the
 initial RAM archive root and stage the ordinary executable/DSO closure at
-`system-root/`. The archive becomes `/boot` after system init switches root.
+`system-root/`. The archive becomes `/boot` when stage-1 switches to the independent system root.
 The image
 packer formats that staging as a dedicated EROFS volume; the configuration FAT
 volume remains separate and writable at `/data`. `EROFS_MKFS` selects the host
@@ -124,20 +142,16 @@ format with xattrs disabled. FAT may be selected for a generated system volume;
 its payload must not contain symlinks other than the optional `lib` alias which
 the packer can omit.
 
-`BOARD_SYSTEM_LAYOUT=ramfs` puts the same `/system` payload into the bootstrap
-archive and creates no system disk volume. Both storage choices use the same
-startup and supervision handoff, with separate core/system
-service graphs and the system init executable. Image checks validate both
-graphs together without pretending that disk executables are in the RAM archive.
-The bootstrap loader is the only loader in `/boot`; the formal loader is part
-of `/system` alongside the application/library payload. Ramfs validation scopes
-both its selected loader and libraries to `system`. The kernel always mounts
-the archive at `/`. System init then creates a new ramfs root, moves the original
-root to `/boot` and carries the configured mounts across an atomic `switch_root`.
-The default formal root contains `/boot`, `/system`, `/data` and `/tmp`, without
-root-level aliases. In ramfs deployment the switch also transfers the system
-subtree out of the old root, so `/boot/system` does not duplicate `/system`.
-These paths remain userspace deployment policy.
+The system payload is always independent of the boot archive. The removed
+`BOARD_SYSTEM_LAYOUT` selector is rejected. Both service graphs are validated
+together without pretending that formal executables live in the archive. The
+bootstrap loader is the only loader in the archive. The formal loader lives
+in the system filesystem with the ordinary executables and libraries. The kernel
+initially mounts the archive at `/`; stage-1 temporarily mounts the system volume
+at `/system`, then switches it to `/` before launching formal init. The image
+contains `/boot`, `/tmp` and `/data` mountpoint directories for the transition.
+`make rpi5-bringup` deliberately builds only static stage-1 recovery, without a
+formal payload. These paths remain userspace policy.
 
 System payload hashing checks for concurrent source changes during composition
 and stale system volumes during subsequent builds. The sidecar record is a

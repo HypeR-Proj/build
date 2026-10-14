@@ -72,52 +72,48 @@ def rust_documentation(api):
 
 
 def native_documentation(api):
-    """Document independent link graphs without pulling third-party crates in."""
+    """Keep independently owned, possibly same-name Native crates separate."""
     abi_packages = workspace_packages(ROOT / 'sdk/abi/Cargo.toml')
-    environment = {'RUSTC_BOOTSTRAP': '1'}
-    domains = [('app', 'dynamic'), ('bootstrap/stage1', 'static')]
-    applications = {name: workspace_packages(ROOT / name / 'Cargo.toml')
-                    for name, _ in domains}
+    domains = [('app', 'system', 'dynamic'), ('bootstrap/stage1', 'bootstrap', 'static')]
+    applications = {workspace: [package for package in workspace_packages(ROOT / workspace / 'Cargo.toml')
+                                if not Path(package['manifest_path']).is_relative_to(ROOT / 'tests')]
+                    for workspace, _, _ in domains}
     sdk_packages = workspace_packages(ROOT / 'stdlib/rust/Cargo.toml') + abi_packages
-    environment['RUSTDOCFLAGS'] = reference_doc_flags(
-        documented_crates([p for group in applications.values() for p in group] + sdk_packages), '..')
-    programs = {name: native_programs(packages) for name, packages in applications.items()}
     for architecture in ('aarch64', 'riscv64'):
         sdk = OUTPUT / 'sdk' / architecture
         run(['make', 'sdk', f'ARCH={architecture}', f'SDK_OUTPUT={sdk}'])
-        cargo_output = OUTPUT / 'cargo/native' / architecture
-        target = f'{architecture}-unknown-hyper'
-        documentation = cargo_output / target / 'doc'
-        clean(documentation)
-        def command(workspace):
-            return [str(sdk / 'bin/hyper-cargo'), 'doc', '--manifest-path',
-                    f'{workspace}/Cargo.toml', '--no-deps', '--document-private-items', '--locked']
-
-        # Both independently resolved domains publish into one Native API tree.
-        # All SDK crates occur in bootstrap's dependency graph; select them
-        # there explicitly so --no-deps excludes only third-party documentation.
-        for workspace, mode in domains:
-            selected = applications[workspace] + (sdk_packages if mode == 'static' else [])
+        for workspace, name, mode in domains:
+            # A formal provider and its bootstrap predecessor may expose the
+            # same crate name. Separate doc/cache trees prevent overwrite and
+            # keep links bound to the owning environment's implementation.
+            selected = applications[workspace] + sdk_packages
+            cargo_output = OUTPUT / 'cargo/native' / architecture / name
+            documentation = cargo_output / f'{architecture}-unknown-hyper/doc'
+            clean(documentation)
+            command = [str(sdk / 'bin/hyper-cargo'), 'doc', '--manifest-path',
+                       f'{workspace}/Cargo.toml', '--no-deps', '--document-private-items', '--locked']
+            environment = {
+                'RUSTC_BOOTSTRAP': '1', 'HYPER_LINK_MODE': mode,
+                'CARGO_TARGET_DIR': str(cargo_output),
+                'RUSTDOCFLAGS': reference_doc_flags(documented_crates(selected), '..'),
+            }
             packages = [arg for package in selected for arg in ('--package', package['name'])]
-            run(command(workspace) + packages,
-                env=environment | {'CARGO_TARGET_DIR': str(cargo_output), 'HYPER_LINK_MODE': mode})
-        library_view = api / 'native' / architecture
-        copy_rustdoc(documentation, library_view)
+            run(command + packages, env=environment)
+            library_view = api / 'native' / architecture / name
+            copy_rustdoc(documentation, library_view)
 
-        # Default cargo doc skips same-name binaries. Save the library view
-        # first, then explicitly select production binaries in a clean doc tree.
-        # Their library links point two levels up from each crate's HTML pages.
-        flags = program_doc_flags(library_view)
-        clean(documentation)
-        for workspace, mode in domains:
-            run(command(workspace) + ['--workspace']
-                + [arg for name in programs[workspace] for arg in ('--bin', name)],
-                env={'RUSTDOCFLAGS': flags, 'CARGO_TARGET_DIR': str(cargo_output),
-                     'HYPER_LINK_MODE': mode})
-        for name in (name for group in programs.values() for name in group):
-            if not (documentation / name.replace('-', '_') / 'index.html').is_file():
-                raise ValueError(f'missing executable documentation: {architecture}/{name}')
-        copy_rustdoc(documentation, library_view / 'programs')
+            # Default cargo doc skips same-name binaries. Preserve the library
+            # view before generating executable pages with links back to it.
+            programs = native_programs(applications[workspace])
+            clean(documentation)
+            run(command + ['--workspace']
+                + [arg for program in programs for arg in ('--bin', program)],
+                env=environment | {'RUSTDOCFLAGS': program_doc_flags(library_view)})
+            for program in programs:
+                if not (documentation / program.replace('-', '_') / 'index.html').is_file():
+                    raise ValueError(f'missing executable documentation: {architecture}/{name}/{program}')
+            copy_rustdoc(documentation, library_view / 'programs',
+                         source_roots=(library_view / 'src',))
 
 
 def workspace_packages(manifest):
@@ -159,11 +155,11 @@ def program_doc_flags(library_view):
     return reference_doc_flags(crates, '../..')
 
 
-def copy_rustdoc(source, destination):
+def copy_rustdoc(source, destination, *, source_roots=()):
     shutil.copytree(source, destination)
     for page in destination.rglob('*.html'):
         original = page.read_text()
-        updated = fix_rustdoc_links(original, page, destination)
+        updated = fix_rustdoc_links(original, page, destination, source_roots)
         if updated != original:
             page.write_text(updated)
     # Cargo doc does not create a workspace landing page by default, but the
@@ -198,26 +194,27 @@ def api_documentation(revision):
         'the installed SDK and ABI, built against the HypeR target and standard library.',
         'Third-party crates, the standard library and test-only features are excluded',
         'from the generated references.', '',
-        'Executable references have separate output from same-name libraries; their',
-        'type links return to the library view for the same architecture.', '',
+        'Bootstrap and formal Native references have independent output, including',
+        'when their crates share a name. Executable references are separate from',
+        'same-name libraries; links stay within their architecture and environment.', '',
         f'Source revision: `{revision}`.', '',
     ]
-    for area, architectures in (('kernel', TARGETS), ('native', ('aarch64', 'riscv64'))):
-        for architecture in architectures:
-            lines.extend([f'## {area.title()} — {architecture}', ''])
-            for crate in sorted((api / area / architecture).iterdir()):
-                if crate.name != 'programs' and (crate / 'index.html').is_file():
-                    link = f'{area}/{architecture}/{crate.name}/index.html'
-                    lines.append(f'- [{crate.name}]({link})')
+    views = [(f'Kernel — {arch}', f'kernel/{arch}') for arch in TARGETS]
+    views += [(f'Native {environment} — {arch}', f'native/{arch}/{environment}')
+              for arch in ('aarch64', 'riscv64') for environment in ('system', 'bootstrap')]
+    for title, relative in views:
+        lines.extend([f'## {title}', ''])
+        for crate in sorted((api / relative).iterdir()):
+            if crate.name != 'programs' and (crate / 'index.html').is_file():
+                lines.append(f'- [{crate.name}]({relative}/{crate.name}/index.html)')
+        lines.append('')
+        programs = api / relative / 'programs'
+        if programs.is_dir():
+            lines.extend(['### Executables', ''])
+            for crate in sorted(programs.iterdir()):
+                if (crate / 'index.html').is_file():
+                    lines.append(f'- [{crate.name}]({relative}/programs/{crate.name}/index.html)')
             lines.append('')
-            programs = api / area / architecture / 'programs'
-            if programs.is_dir():
-                lines.extend(['### Executables', ''])
-                for crate in sorted(programs.iterdir()):
-                    if (crate / 'index.html').is_file():
-                        link = f'{area}/{architecture}/programs/{crate.name}/index.html'
-                        lines.append(f'- [{crate.name}]({link})')
-                lines.append('')
     lines.extend(['## C SDK', '', '- [Documented C interfaces and source](c/index.html)', ''])
     (api / 'index.md').write_text('\n'.join(lines))
 

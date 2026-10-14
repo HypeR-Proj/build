@@ -138,7 +138,7 @@ def main():
         parser.error("duplicate etc/hyper/services.json entries")
     if manifests:
         subprocess.run([sys.executable, str(Path(__file__).with_name('check-service-manifest.py')),
-                        manifests[0], *args.entries[1::3]], check=True)
+                        manifests[0], '--bootstrap', *args.entries[1::3]], check=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     requested = inputs(args)
     if requested["entry_manifests"] != loaded_manifests:

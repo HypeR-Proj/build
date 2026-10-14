@@ -331,6 +331,45 @@ class DocumentationLinks(unittest.TestCase):
                      '<a class="src" href="../src/missing.rs.html">Source</a>'):
             self.assertEqual(fix_rustdoc_links(html, page, self.root / 'view'), html)
 
+    def test_program_reexport_source_uses_only_its_explicit_library_owner(self):
+        owner = self.root / 'bootstrap'
+        programs = owner / 'programs'
+        source = self.write('bootstrap/src/hyper_os/startup file.rs.html', 'source')
+        page = self.write('bootstrap/programs/tool/contracts/process/item.html', '')
+        href = '../../src/hyper_os/startup%20file.rs.html?mode=raw&lang=en#22-25'
+        html = '<a class="src" href="' + href.replace('&', '&amp;') + '">Source</a>'
+        # An unlisted parent source tree must not be discovered implicitly.
+        self.assertEqual(fix_rustdoc_links(html, page, programs), html)
+        roots = (owner / 'src',)
+        fixed = fix_rustdoc_links(html, page, programs, roots)
+        target, query = next(iter(References(fixed).links)).split('?', 1)
+        self.assertEqual((page.parent / target.replace('%20', ' ')).resolve(), source)
+        self.assertEqual(query, 'mode=raw&lang=en#22-25')
+        self.assertIn('&amp;lang=en', fixed)
+        self.assertEqual(fix_rustdoc_links(fixed, page, programs, roots), fixed)
+
+        self.write('system/src/hyper_os/formal.rs.html', 'different provider')
+        self.write('bootstrap/outside.rs.html', 'not source')
+        for href in ('https://example.org/src/hyper_os/startup.rs.html#22',
+                     '//example.org/src/hyper_os/startup.rs.html#22',
+                     '../../src/hyper_os/missing.rs.html#22',
+                     '../../src/hyper_os/formal.rs.html#22',
+                     '../../src/../outside.rs.html#22',
+                     '../../src/%2e%2e/outside.rs.html#22'):
+            html = f'<a class="src" href="{href}">Source</a>'
+            self.assertEqual(fix_rustdoc_links(html, page, programs, roots), html)
+
+    def test_source_resolution_prefers_the_executable_view_when_both_exist(self):
+        owner = self.root / 'bootstrap'
+        programs = owner / 'programs'
+        self.write('bootstrap/src/tool/lib.rs.html', 'library')
+        source = self.write('bootstrap/programs/src/tool/lib.rs.html', 'executable')
+        page = self.write('bootstrap/programs/tool/nested/item.html', '')
+        html = '<a class="src" href="../src/tool/lib.rs.html#1">Source</a>'
+        fixed = fix_rustdoc_links(html, page, programs, (owner / 'src',))
+        target = next(iter(References(fixed).links)).split('#', 1)[0]
+        self.assertEqual((page.parent / target).resolve(), source)
+
     def test_root_url_and_symlink_are_rejected(self):
         self.write('index.html', '<a href="/api/">Wrong base path</a>')
         (self.root / 'linked.html').symlink_to(self.root / 'index.html')

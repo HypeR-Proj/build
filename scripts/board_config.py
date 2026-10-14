@@ -37,8 +37,9 @@ def keys(value, required, optional=()):
         raise ValueError(f'invalid configuration keys: missing={sorted(missing)}, unknown={sorted(extra)}')
 
 
-def vm_configuration(value):
-    keys(value, ('memory-bytes', 'vcpus', 'bootargs'), ('affinity',))
+def vm_configuration(value, *, guest=False):
+    keys(value, ('memory-bytes', 'vcpus', 'bootargs'),
+         ('affinity', 'virtio-transport') if guest else ('affinity',))
     integer(value['vcpus'], 1, 8)
     memory = integer(value['memory-bytes'], 64 * MIB, 1 << 63)
     if memory & (memory - 1):
@@ -46,6 +47,8 @@ def vm_configuration(value):
     args = value['bootargs']
     if not isinstance(args, str) or len(args.encode()) > 2048 or '\0' in args:
         raise ValueError('VM bootargs must contain at most 2048 bytes and no NUL')
+    if value.get('virtio-transport', 'mmio') not in ('mmio', 'pci'):
+        raise ValueError('virtio-transport must be mmio or pci')
     affinity = value.get('affinity', [])
     if not isinstance(affinity, list) or len(affinity) > value['vcpus']:
         raise ValueError('VM affinity must be a list with at most one entry per vCPU')
@@ -199,18 +202,18 @@ class Board:
     disk_sectors: int
 
     @classmethod
-    def load(cls, path, *, layout=None):
+    def load(cls, path, *, recovery=False):
         with open(path, encoding='utf-8') as stream:
             document = stream.read(1024 * 1024 + 1)
         if len(document) > 1024 * 1024:
             raise ValueError('board configuration exceeds 1 MiB')
-        return cls.parse(json.loads(document, object_pairs_hook=unique_object), layout=layout)
+        return cls.parse(json.loads(document, object_pairs_hook=unique_object), recovery=recovery)
 
     @classmethod
-    def parse(cls, data, *, layout=None):
+    def parse(cls, data, *, recovery=False):
         # Canonicalize before deriving GPT, client manifests or bootstrap files:
         # reloading a generated snapshot must describe exactly the same volumes.
-        data = prepare(data, layout)
+        data = prepare(data, recovery=recovery)
         keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-vm'), ('native',))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
@@ -271,7 +274,7 @@ class Board:
         for vm in vms:
             keys(vm, ('name', 'image', 'autostart', 'configuration'),
                  ('disk', 'network'))
-            vm_configuration(vm['configuration'])
+            vm_configuration(vm['configuration'], guest=True)
             vm_name = name(vm['name'])
             if vm_name in seen:
                 raise ValueError('duplicate or reserved VM name')

@@ -75,11 +75,12 @@ def disk_partitions(disk):
     return entries
 
 
-def validate(value):
+def validate(value, *, recovery=False):
     if not isinstance(value, dict) or value.keys() - {'layout', 'volumes', 'boot-fstab', 'fstab'}:
         raise ValueError('invalid Native deployment fields')
-    if value.get('layout') not in ('split', 'ramfs'):
-        raise ValueError('Native layout must be split or ramfs')
+    expected = 'recovery' if recovery else 'split'
+    if value.get('layout') != expected:
+        raise ValueError(f'Native layout must be {expected}; system cannot be embedded in the boot archive')
     volumes = value.get('volumes', [])
     if not isinstance(volumes, list) or not 1 <= len(volumes) <= 8:
         raise ValueError('invalid Native volume count')
@@ -102,36 +103,32 @@ def fstab_field(value):
     return value.replace('\\', '\\134').replace(' ', '\\040').replace('\t', '\\011')
 
 
-def prepare(source, layout=None):
+def prepare(source, *, recovery=False):
     """Resolve build placement without projecting partition policy into Linux."""
-    if layout is not None and layout not in ('split', 'ramfs'):
-        raise ValueError('Native layout must be split or ramfs')
     if not isinstance(source, dict):
         raise ValueError('expected a board JSON object')
     result = copy.deepcopy(source)
     partitions = disk_partitions(result.get('disk'))
     if 'native' in result:
-        policy = validate(result['native'])
-        if layout is not None and policy['layout'] != layout:
-            raise ValueError('BOARD_SYSTEM_LAYOUT conflicts with the board Native layout')
+        policy = validate(result['native'], recovery=recovery)
     else:
-        layout = layout or 'split'
-        if layout == 'ramfs':
+        if recovery:
             partitions = [part for part in partitions if part.get('content') != 'system']
             result['disk']['partitions'] = partitions
         volumes = [{'source': 'PARTLABEL=' + part['label'], 'read-only': part['filesystem'] == 'erofs'}
                    for part in partitions if 'filesystem' in part]
         mounts = {'boot-fstab': [], 'fstab': []}
-        for content, target in [('system', '/system'), ('data', '/data')]:
+        for content, target in ([] if recovery else [('system', '/system'), ('data', '/data')]):
             part = next((part for part in partitions if part.get('content') == content), None)
             if part is not None:
                 option = 'ro' if part['filesystem'] == 'erofs' else 'rw'
                 table = 'boot-fstab' if content == 'system' else 'fstab'
                 mounts[table].append(f"{fstab_field('PARTLABEL=' + part['label'])} {target} auto {option} 0 0\n")
-        policy = validate({'layout': layout, 'volumes': volumes,
-                           **{name: ''.join(lines) for name, lines in mounts.items()}})
+        policy = validate({'layout': 'recovery' if recovery else 'split', 'volumes': volumes,
+                           **{name: ''.join(lines) for name, lines in mounts.items()}},
+                          recovery=recovery)
     has_system = any(part.get('content') == 'system' for part in partitions)
-    if has_system != (policy['layout'] == 'split'):
-        raise ValueError('system partition content must match split/ramfs deployment')
+    if has_system == recovery:
+        raise ValueError('normal deployment requires an independent system partition; recovery must omit it')
     result['native'] = policy
     return result

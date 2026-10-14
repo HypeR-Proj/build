@@ -43,6 +43,24 @@ class ManifestTests(unittest.TestCase):
                 result = self.check_manifest(path)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_boot_checker_rejects_formal_source_but_accepts_composed_core(self):
+        result = self.check_manifest(BASE, ['--bootstrap'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'service manifest: {BASE}:', result.stderr)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for board in ('qemu', 'rpi5'):
+                source = directory / 'source.json'
+                source.write_text(json.dumps(services(Board.load(ROOT / f'boards/{board}.json'), ROOT)))
+                core, system = SPLIT.services(source)
+                core_path, system_path = directory / 'core.json', directory / 'system.json'
+                core_path.write_text(json.dumps(core))
+                system_path.write_text(json.dumps(system))
+                result = self.check_manifest(core_path, ['--bootstrap'])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.check_manifest(system_path, ['--core', str(core_path)])
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_native_storage_graph_can_omit_business_vm_manager(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'services.json'
@@ -85,7 +103,7 @@ class ManifestTests(unittest.TestCase):
             source.write_text(json.dumps(graph))
             core, system = SPLIT.services(source)
             self.assertEqual([item['name'] for item in system['services']], ['session-manager', 'logger'])
-            self.assertEqual(system['services'][-1]['image'], '/system/svc/logger')
+            self.assertEqual(system['services'][-1]['image'], '/svc/logger')
             self.assertTrue(all(item['loader'] == 'bootstrap' for item in core['services']))
             for item in (graph['services'][0], graph['services'][-1]):
                 item['phase'] = 'system' if item.get('loader') == 'bootstrap' else 'boot'

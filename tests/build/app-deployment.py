@@ -32,6 +32,33 @@ elf_spec.loader.exec_module(elf_fixtures)
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_profile_filters_both_cargo_targets_and_installed_probes(self):
+        for profile, probe in [('system', False), ('development', True)]:
+            with self.subTest(profile=profile):
+                targets = subprocess.check_output([
+                    sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
+                    '--profile', profile, '--link-mode', 'dynamic'], text=True).split()
+                self.assertIn('hyper-echo', targets)
+                self.assertEqual('hyper-terminal-probe' in targets, probe)
+                self.assertNotIn('hyper-native-test-init', targets)
+                entries = [entry for entry in deployment.load(MANIFEST)
+                           if entry.get('staged') in ('echo', 'terminal-probe')]
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    manifest = root / 'components.json'
+                    manifest.write_text(json.dumps({'version': 1, 'entries': entries}))
+                    build, output = root / 'build', root / 'output'
+                    build.mkdir()
+                    (build / 'hyper-echo').write_bytes(b'ordinary app')
+                    if probe:
+                        (build / 'hyper-terminal-probe').write_bytes(b'test probe')
+                    subprocess.run([
+                        sys.executable, str(SCRIPT), 'install', '--manifest', str(manifest),
+                        '--profile', profile, '--build', str(build), '--output', str(output),
+                    ], check=True)
+                    self.assertEqual({path.name for path in output.iterdir()},
+                                     {'echo', 'terminal-probe'} if probe else {'echo'})
+
     def test_runtime_graphs_select_static_std_console_and_route_core_fixtures(self):
         outputs = {}
         for runtime in ('core', 'std'):
@@ -59,7 +86,7 @@ class DeploymentTests(unittest.TestCase):
                     entry['rust_runtime'] = 'core'
             manifest = root / 'core-fixture.json'
             manifest.write_text(json.dumps({'version': 1, 'entries': entries}))
-            (standard / 'hyper-init').write_bytes(elf_fixtures.elf())
+            (standard / 'hyper-bootstrap-stage1-init').write_bytes(elf_fixtures.elf())
             (standard / 'hyper-console-raw').write_bytes(b'stale std image')
             (core / 'hyper-console-raw').write_bytes(elf_fixtures.elf())
             subprocess.run([
@@ -75,13 +102,13 @@ class DeploymentTests(unittest.TestCase):
             sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
             *selection], text=True)
         self.assertEqual(result.split(), [
-            '--package', 'hyper-fallback-sh', '--package', 'hyper-init',
-            '--bin', 'hyper-fallback-sh', '--bin', 'hyper-init'])
+            '--package', 'hyper-bootstrap-stage1-init', '--package', 'hyper-fallback-sh',
+            '--bin', 'hyper-bootstrap-stage1-init', '--bin', 'hyper-fallback-sh'])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             build, output = root / 'build', root / 'output'
             build.mkdir()
-            for binary in ('hyper-init', 'hyper-fallback-sh'):
+            for binary in ('hyper-bootstrap-stage1-init', 'hyper-fallback-sh'):
                 (build / binary).write_bytes(elf_fixtures.elf())
             # No libraries or unrelated applications exist in this build tree.
             subprocess.run([
@@ -127,7 +154,7 @@ class DeploymentTests(unittest.TestCase):
             (output / 'init').write_bytes(b'previous image')
             for options in ({'interpreter': '/lib64/ld-hyper-aarch64.so'},
                             {'needed': ['libhyper.so']}, {'soname': 'libbad.so'}):
-                (build / 'hyper-init').write_bytes(elf_fixtures.elf())
+                (build / 'hyper-bootstrap-stage1-init').write_bytes(elf_fixtures.elf())
                 (build / 'hyper-fallback-sh').write_bytes(elf_fixtures.elf(**options))
                 result = subprocess.run([
                     sys.executable, str(SCRIPT), 'install', '--manifest', str(MANIFEST),
@@ -179,7 +206,7 @@ class DeploymentTests(unittest.TestCase):
         system_names = set(system[1::3])
         link = system.index('lib')
         self.assertEqual(system[link - 1:link + 2], ['symlink', 'lib', 'lib64'])
-        self.assertTrue({'init', 'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
+        self.assertTrue({'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
                          'lib', 'lib64/ld-hyper-riscv64.so',
                          'lib64/riscv64-hyper-hyper/libhyper.so'} <= system_names)
         # Rust libraries are selected from DT_NEEDED after executable overrides.
@@ -200,7 +227,8 @@ class DeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'manifest.json'
             for field, value in [('destination', '../escape'), ('mode', '0999'),
-                                 ('binary', 'bad;command'), ('profiles', ['typo'])]:
+                                 ('binary', 'bad;command'), ('profiles', ['typo']),
+                                 ('environment', 'invalid')]:
                 with self.subTest(field=field):
                     data = json.loads(json.dumps(original))
                     data['entries'][0][field] = value
@@ -276,7 +304,7 @@ class NativePayloadTests(unittest.TestCase):
             apps=self.root / 'apps', boot_apps=self.root / 'boot-apps',
             sdk=self.root / 'sdk', std=self.root / 'std', arch='aarch64',
             deployment=self.root / 'components.json', board=self.root / 'board.json',
-            extra_entries=[], profile='system', replace=[], boot_components=['init', 'fallback-sh', 'fs-fat'])
+            extra_entries=[], profile='system', replace=[], recovery_only=False, boot_components=['init', 'fallback-sh', 'fs-fat'])
         self.entries = []
         # ELF-shaped data exercises real dependency inspection without a host
         # cross compiler. Program headers are added in the dynamic-core case.
@@ -285,26 +313,30 @@ class NativePayloadTests(unittest.TestCase):
         struct.pack_into('<H', self.elf, 18, 183)
         struct.pack_into('<H', self.elf, 54, 56)
         for name, destination in [('init', 'init'), ('fallback-sh', 'svc/fallback-sh'), ('sh', 'bin/sh'),
-                                  ('fs-fat', 'svc/fs-fat'), ('ls', 'bin/ls'),
+                                  ('fs-fat', 'svc/fs-fat'), ('fs-fat-system', 'svc/fs-fat'), ('ls', 'bin/ls'),
                                   ('vm-manager', 'svc/vm-manager'),
                                   ('vm-runtime', 'svc/vm-runtime'),
-                                  ('init-system', 'svc/init-system')]:
-            self.entries.append({'binary': 'hyper-' + name, 'staged': name,
+                                  ('svc/init', 'svc/init')]:
+            binary = {'init': 'hyper-bootstrap-stage1-init',
+                      'svc/init': 'hyper-init'}.get(name, 'hyper-' + name)
+            self.entries.append({'binary': binary, 'staged': name,
                                  'destination': destination, 'mode': '0755',
-                                 'profiles': ['system']})
+                                 'profiles': ['system'],
+                                 'environment': 'boot' if name in ('init', 'fallback-sh', 'fs-fat') else 'system'})
             for directory in (self.args.apps, self.args.boot_apps):
-                directory.mkdir(exist_ok=True)
+                (directory / name).parent.mkdir(parents=True, exist_ok=True)
                 (directory / name).write_bytes(self.elf)
         for name in ('ld-hyper-aarch64.so', 'userspace-loader-hyper-aarch64'):
             source = self.args.sdk / 'lib64' / name
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(self.elf)
             self.entries.append({'source': str(source), 'destination': 'lib64/' + name,
-                                 'mode': '0755', 'profiles': ['system']})
+                                 'mode': '0755', 'profiles': ['system'],
+                                 'environment': 'boot' if name.startswith('userspace-loader') else 'system'})
         self.entries.append({'symlink': 'lib64', 'destination': 'lib',
                              'mode': '0777', 'profiles': ['system']})
         from native_deployment import prepare
-        self.board = prepare(json.loads((ROOT / 'boards/qemu.json').read_text()), 'split')
+        self.board = prepare(json.loads((ROOT / 'boards/qemu.json').read_text()))
 
     def compose(self):
         self.args.deployment.write_text(json.dumps({'version': 1, 'entries': self.entries}))
@@ -327,13 +359,14 @@ class NativePayloadTests(unittest.TestCase):
         boot_config = next(Path(source) for _, name, source in entries
                            if name == 'etc/hyper/init.json')
         self.assertEqual(json.loads(boot_config.read_text()),
-                         {'system-init': '/system/svc/init-system'})
+                         {'system-root': '/system', 'put-old': '/boot', 'system-init': '/svc/init'})
         system = self.args.output / 'system-root'
         self.assertEqual(json.loads((system / 'etc/hyper/init.json').read_text()), {
-            'services': '/system/etc/hyper/services.json',
-            'root-switch': split.root_switch_policy(self.board['native']),
+            'services': '/etc/hyper/services.json',
         })
         self.assertEqual((system / 'etc/fstab').read_text(), self.board['native']['fstab'])
+        self.assertEqual(json.loads((system / 'etc/hyper/filesystem.json').read_text()),
+                         {'worker_directories': [{'environment': 'svc'}]})
 
     def test_boot_is_static_and_keeps_system_services_separate(self):
         boot, disk, _ = self.compose()
@@ -348,9 +381,9 @@ class NativePayloadTests(unittest.TestCase):
                          'lib64/userspace-loader-hyper-aarch64')
         self.assertNotIn('lib64/ld-hyper-aarch64.so', {name for _, name, _ in boot})
         disk_names = {name for _, name, _ in disk}
-        self.assertTrue({'bin/sh', 'bin/ls', 'svc/init-system', 'svc/vm-manager',
+        self.assertTrue({'bin/sh', 'bin/ls', 'svc/init', 'svc/vm-manager',
                          'lib64/ld-hyper-aarch64.so'} <= disk_names)
-        self.assertTrue({'init', 'svc/fallback-sh', 'svc/fs-fat', 'lib64/userspace-loader-hyper-aarch64'}
+        self.assertTrue({'init', 'svc/fallback-sh', 'lib64/userspace-loader-hyper-aarch64'}
                         .isdisjoint(disk_names))
 
     def test_missing_erofs_worker_does_not_gate_an_erofs_system_build(self):
@@ -368,46 +401,33 @@ class NativePayloadTests(unittest.TestCase):
         self.assertNotIn('svc/fs-fat', {name for _, name, _ in boot})
         self.assertIn('svc/fs-fat', {name for _, name, _ in system})
 
-    def test_ramfs_uses_the_same_core_and_formal_payload_as_disk(self):
-        boot, disk, _ = self.compose()
-        ramfs = {'layout': 'ramfs', 'volumes': []}
-        ram_boot, ram_system, _ = split.compose_entries(self.args, ramfs)
-        self.assertEqual(ram_boot, boot)
-        self.assertEqual(ram_system, disk)
-        self.assertIn('svc/init-system', {name for _, name, _ in ram_system})
+    def test_removed_embedded_system_layout_is_rejected(self):
+        self.compose()
+        with self.assertRaisesRegex(ValueError, 'embedded system is unsupported'):
+            split.compose_entries(self.args, {'layout': 'ramfs', 'volumes': []})
 
-    def test_root_switch_keeps_disk_mounts_and_binds_ramfs_without_copying(self):
-        policy = split.root_switch_policy(self.board['native'])
-        self.assertEqual(policy['put-old'], '/boot')
-        self.assertEqual(policy.get('links', []), [])
-        self.assertEqual(policy['mounts'], [
-            {'source': '/system', 'target': '/system', 'ramfs': False},
-        ])
-        self.assertIn('/data', policy['directories'])
-        ramfs = {'layout': 'ramfs', 'boot-fstab': 'media /media/my\\040disk auto noauto 0 0\n'}
-        policy = split.root_switch_policy(ramfs)
-        self.assertTrue(policy['mounts'][0]['ramfs'])
-        self.assertIn({'source': '/media/my disk', 'target': '/media/my disk',
-                       'optional': True}, policy['mounts'])
+    def test_recovery_contains_only_static_bootstrap(self):
+        self.args.recovery_only = True
+        self.args.board = None
+        self.args.deployment.write_text(json.dumps({'version': 1, 'entries': self.entries}))
+        boot, system, checksums = split.compose_entries(self.args, {'layout': 'recovery'})
+        self.assertEqual(system, [])
+        self.assertEqual(checksums, {})
+        self.assertIn('init', {name for _, name, _ in boot})
+        self.assertNotIn('svc/init', {name for _, name, _ in boot})
+        self.assertNotIn('bin/sh', {name for _, name, _ in boot})
+        self.args.extra_entries = ['0755', 'system:bin/ls', str(self.args.apps / 'ls')]
+        with self.assertRaisesRegex(ValueError, 'cannot contain formal system'):
+            split.compose_entries(self.args, {'layout': 'recovery'})
 
-    def test_root_switch_preserves_literal_hashes_in_fstab_fields(self):
-        policy = split.root_switch_policy({
-            'layout': 'split',
-            'boot-fstab': ('# ignored comment\n'
-                      'PARTLABEL=archive#1 /archive auto rw 0 0 # comment\n'
-                      'PARTLABEL=archive2 /archive#2 auto rw 0 0\n'
-                      'PARTLABEL=archive3 /archive\\040#3 auto rw 0 0\n'),
-        })
-        for target in ('/archive', '/archive#2', '/archive #3'):
-            self.assertIn({'source': target, 'target': target, 'optional': True},
-                          policy['mounts'])
-        self.assertEqual(len(policy['mounts']), 4)
-
-    def test_formal_mount_policy_cannot_change_root_switch(self):
-        native = {'layout': 'split', 'boot-fstab': ''}
-        expected = split.root_switch_policy(native)
-        native['fstab'] = 'PARTLABEL=archive /boot/archive auto rw 0 0\n'
-        self.assertEqual(split.root_switch_policy(native), expected)
+    def test_system_mountpoints_are_directories_before_publication(self):
+        destination = self.root / 'system-root'
+        split.stage_system([], destination, 'unused-strip', {})
+        for name in ('boot', 'tmp', 'data'):
+            self.assertTrue((destination / name).is_dir())
+        with self.assertRaisesRegex(ValueError, 'mountpoint must be a directory'):
+            split.stage_system([['symlink', 'boot', 'tmp']], destination, 'unused-strip', {})
+        self.assertTrue((destination / 'boot').is_dir())
 
     def test_extra_data_stays_in_boot_and_extra_elf_uses_system(self):
         guest = self.root / 'guest.itb'
@@ -428,13 +448,56 @@ class NativePayloadTests(unittest.TestCase):
     def test_extra_core_override_is_packaged_once_and_validated(self):
         probe = self.root / 'replacement'
         probe.write_bytes(self.elf)
-        self.args.extra_entries = ['0755', 'svc/fs-fat', str(probe)]
+        self.args.extra_entries = ['0755', 'boot:svc/fs-fat', str(probe)]
         boot, system, _ = self.compose()
         self.assertEqual([entry for entry in boot if entry[1] == 'svc/fs-fat'],
                          [['0755', 'svc/fs-fat', str(probe)]])
-        self.assertNotIn('svc/fs-fat', {name for _, name, _ in system})
+        self.assertIn(['0755', 'svc/fs-fat', str(self.args.apps / 'fs-fat-system')], system)
         probe.write_bytes(elf_fixtures.elf(interpreter='/lib64/ld-hyper-aarch64.so'))
         with self.assertRaisesRegex(ValueError, 'must be a static ELF'):
+            self.compose()
+
+    def test_shared_destinations_require_explicit_override_environment(self):
+        probe = self.root / 'replacement'
+        probe.write_bytes(self.elf)
+        self.args.replace = [f'svc/fs-fat={probe}']
+        with self.assertRaisesRegex(ValueError, 'ambiguous deployment path'):
+            self.compose()
+        self.args.replace = [f'system:svc/fs-fat={probe}']
+        boot, system, _ = self.compose()
+        self.assertIn(['0755', 'svc/fs-fat', str(probe)], system)
+        self.assertIn(['0755', 'svc/fs-fat', str(self.args.boot_apps / 'fs-fat')], boot)
+        self.args.replace = []
+        self.args.extra_entries = ['0755', 'svc/fs-fat', str(probe)]
+        with self.assertRaisesRegex(ValueError, 'ambiguous deployment path'):
+            self.compose()
+        self.args.extra_entries = ['0755', 'boot:svc/fs-fat', str(probe),
+                                   '0755', 'system:svc/fs-fat', str(probe)]
+        boot, system, _ = self.compose()
+        self.assertIn(['0755', 'svc/fs-fat', str(probe)], boot)
+        self.assertIn(['0755', 'svc/fs-fat', str(probe)], system)
+
+    def test_explicit_boot_selection_is_independent_of_formal_profile(self):
+        for entry in self.entries:
+            if entry.get('staged') == 'fs-fat':
+                entry['profiles'] = ['io']
+        boot, system, _ = self.compose()
+        self.assertIn(['0755', 'svc/fs-fat', str(self.args.boot_apps / 'fs-fat')], boot)
+        self.assertIn(['0755', 'svc/fs-fat', str(self.args.apps / 'fs-fat-system')], system)
+
+    def test_formatted_paths_cannot_silently_replace_another_component(self):
+        self.entries.append({'source': str(self.args.apps / 'ls'),
+                             'destination': 'lib64/ld-hyper-{arch}.so',
+                             'mode': '0755', 'profiles': ['system']})
+        with self.assertRaisesRegex(ValueError, 'duplicate deployment destination'):
+            self.compose()
+
+    def test_omitted_boot_component_does_not_become_a_formal_service(self):
+        self.args.boot_components.remove('fallback-sh')
+        boot, system, _ = self.compose()
+        self.assertNotIn('svc/fallback-sh', {name for _, name, _ in boot + system})
+        self.args.boot_components.append('fs-fat-system')
+        with self.assertRaisesRegex(ValueError, 'boot component'):
             self.compose()
 
     def test_replacements_and_development_profile_keep_their_roles(self):
