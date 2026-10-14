@@ -130,12 +130,18 @@ def io_networks(value):
 
 
 def vm_network(value, networks):
-    keys(value, ('network', 'mac'))
+    keys(value, ('network', 'mac'), ('backend',))
     if name(value['network']) not in networks:
         raise ValueError('VM network must name a configured I/O VM network')
     mac = value['mac']
     if not isinstance(mac, str) or not _MAC.fullmatch(mac) or int(mac[:2], 16) & 3 != 2:
         raise ValueError('VM MAC must be a canonical locally administered unicast address')
+    backend = value.get('backend', {})
+    keys(backend, (), ('rx-backlog-packets', 'tx-buffer-bytes'))
+    integer(backend.get('rx-backlog-packets', 1000), 1, 65536)
+    tx = integer(backend.get('tx-buffer-bytes', 0), 0, 2147483647)
+    if tx and tx < 65536:
+        raise ValueError('network backend tx-buffer-bytes must be 0 (unlimited) or at least 65536')
     return mac
 
 
@@ -153,8 +159,8 @@ def io_vm(value):
             or any(part in ('', '.', '..') for part in image.split('/')[1:])):
         raise ValueError('I/O VM image must be a canonical /vm/ ITB path of at most 512 bytes')
     config = vm_configuration(value['configuration'])
-    if config['memory-bytes'] != 128 * MIB or config['vcpus'] != 1:
-        raise ValueError('resident I/O VM requires 128 MiB and one vCPU')
+    if config['memory-bytes'] != 64 * MIB or config['vcpus'] != 1:
+        raise ValueError('resident I/O VM requires 64 MiB and one vCPU')
     device_selector(value['io-device'], ('virtio-mmio-scsi', 'bcm2712-sdhci'))
     io_networks(value)
     return value
@@ -290,10 +296,17 @@ class Board:
                     raise ValueError('VM MAC addresses must be unique')
                 macs.add(mac)
             if 'disk' in vm:
-                keys(vm['disk'], ('source',), ('read-only',))
+                keys(vm['disk'], ('source',), ('read-only', 'backend'))
                 partition_source(vm['disk']['source'])
                 if type(vm['disk'].get('read-only', False)) is not bool:
                     raise ValueError('disk read-only must be boolean')
+                backend = vm['disk'].get('backend', {})
+                keys(backend, (), ('request-queues', 'sg-prealloc'))
+                for key, default, minimum, maximum in (
+                        ('request-queues', 4, 1, 4), ('sg-prealloc', 128, 2, 2048)):
+                    value = backend.get(key, default)
+                    if type(value) is not int or not minimum <= value <= maximum:
+                        raise ValueError(f'disk backend {key} must be {minimum}..{maximum}')
         end = partitions[-1].end + 1 + GPT_TABLE_SECTORS + 1
         total = (end + ALIGN_SECTORS - 1) // ALIGN_SECTORS * ALIGN_SECTORS
         return cls(data, tuple(partitions), disk_id, total)
@@ -310,7 +323,8 @@ class Board:
             if 'disk' in vm:
                 definition['disk'] = {'client': client, 'volume': vm['name']}
             if 'network' in vm:
-                definition['network'] = {'client': client, **vm['network']}
+                definition['network'] = {'client': client, 'network': vm['network']['network'],
+                                         'mac': vm['network']['mac']}
             definitions.append(definition)
         return {'format': 'hyper.vm-config', 'virtual-machines': definitions}
 
@@ -327,11 +341,17 @@ class Board:
         return '\n'.join(rows) + '\n'
 
     def backend_clients(self):
-        rows = ['hyper.clients.v3', '0 - -']
+        rows = ['hyper.clients.v5', '0 - - 4 128 1000 0']
         for line in self.bootstrap_clients().splitlines()[2:]:
             client, _volume, network, mac = line.split()
-            rows.append(f'{client} {network} {mac}')
-        rows.extend(f"{volume['client']} - -" for volume in self.native_volumes())
+            vm = self.source['virtual-machines'][int(client) - 1]
+            backend = vm.get('disk', {}).get('backend', {})
+            net_backend = vm.get('network', {}).get('backend', {})
+            rows.append(f"{client} {network} {mac} "
+                        f"{backend.get('request-queues', 4)} {backend.get('sg-prealloc', 128)} "
+                        f"{net_backend.get('rx-backlog-packets', 1000)} "
+                        f"{net_backend.get('tx-buffer-bytes', 0)}")
+        rows.extend(f"{volume['client']} - - 4 128 1000 0" for volume in self.native_volumes())
         return '\n'.join(rows) + '\n'
 
     def native_volumes(self):

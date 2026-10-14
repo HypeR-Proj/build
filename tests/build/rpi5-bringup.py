@@ -95,7 +95,7 @@ class BringupTests(unittest.TestCase):
                         patch.object(board_bootstrap, 'stage') as stage, \
                         patch.object(board_bootstrap, 'linux_overlay', return_value=b'overlay') as overlay:
                     images.main()
-                    payloads.assert_called_once_with(root, 'qemu')
+                    payloads.assert_called_once_with(root, 'qemu', require_client_resources=mode == 'storage')
                     self.assertEqual(stage.call_count, int(mode == 'storage'))
                     self.assertEqual(overlay.call_count, int(mode == 'storage'))
                     self.assertEqual(len(pack.call_args.args[0]), 7)

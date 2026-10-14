@@ -59,7 +59,7 @@ class BoardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Board.parse(invalid)
         invalid = copy.deepcopy(changed)
-        invalid['io-vm']['configuration']['memory-bytes'] = 64 * 1024 * 1024
+        invalid['io-vm']['configuration']['memory-bytes'] = 128 * 1024 * 1024
         with self.assertRaises(ValueError):
             Board.parse(invalid)
 
@@ -87,7 +87,7 @@ class BoardTests(unittest.TestCase):
             board = Board.load(ROOT / f'boards/{profile}.json')
             resident = board.source['io-vm']
             self.assertEqual(resident['runtime'], 'io-runtime')
-            self.assertEqual(resident['configuration']['memory-bytes'], 128 * 1024 * 1024)
+            self.assertEqual(resident['configuration']['memory-bytes'], 64 * 1024 * 1024)
             self.assertEqual(resident['configuration']['vcpus'], 1)
             self.assertNotIn('io-device', board.source)
             self.assertNotIn(resident['name'], [vm['name'] for vm in board.vms()['virtual-machines']])
@@ -107,10 +107,10 @@ class BoardTests(unittest.TestCase):
             del invalid['io-vm'][field]
             with self.subTest(missing=field), self.assertRaises(ValueError):
                 Board.parse(invalid)
-        for field, value in [('memory-bytes', 64 * 1024 * 1024), ('vcpus', 2)]:
+        for field, value in [('memory-bytes', 128 * 1024 * 1024), ('vcpus', 2)]:
             invalid = copy.deepcopy(self.source)
             invalid['io-vm']['configuration'][field] = value
-            with self.assertRaisesRegex(ValueError, '128 MiB and one vCPU'):
+            with self.assertRaisesRegex(ValueError, '64 MiB and one vCPU'):
                 Board.parse(invalid)
         invalid = copy.deepcopy(self.source)
         invalid['io-device'] = invalid['io-vm']['io-device']
@@ -291,7 +291,7 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(board.native_volumes(), [
             {'client': 8, 'source': 'PARTLABEL=hyper-data', 'read_only': False},
             {'client': 7, 'source': 'PARTLABEL=hyper-system', 'read_only': True}])
-        self.assertEqual(board.backend_clients().splitlines()[-2:], ['8 - -', '7 - -'])
+        self.assertEqual(board.backend_clients().splitlines()[-2:], ['8 - - 4 128 1000 0', '7 - - 4 128 1000 0'])
         self.assertIn('1 alpine ', board.bootstrap_clients())
         self.assertTrue(board.source['native']['boot-fstab'].startswith('PARTLABEL=hyper-system /system'))
         self.assertNotIn('/data', board.source['native']['boot-fstab'])
@@ -436,7 +436,7 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(board.bootstrap_clients(),
                          'hyper.clients.v3\n0 - - -\n1 alpine - -\n')
         self.assertEqual(board.backend_clients(),
-                         'hyper.clients.v3\n0 - -\n1 - -\n8 - -\n7 - -\n')
+                         'hyper.clients.v5\n0 - - 4 128 1000 0\n1 - - 4 128 1000 0\n8 - - 4 128 1000 0\n7 - - 4 128 1000 0\n')
         self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\n')
         self.assertEqual(board.vms()['virtual-machines'][0]['disk'],
                          {'client': 1, 'volume': 'alpine'})
@@ -446,6 +446,44 @@ class BoardTests(unittest.TestCase):
             self.assertNotIn('PARTLABEL', emitted)
             for partition in board.partitions:
                 self.assertNotIn(str(partition.identifier), emitted)
+
+    def test_per_vm_scsi_resources(self):
+        source = copy.deepcopy(self.source)
+        source['virtual-machines'][0]['disk']['backend'] = {
+            'request-queues': 1, 'sg-prealloc': 32}
+        board = Board.parse(source)
+        self.assertEqual(board.backend_clients().splitlines()[2].split()[3:5], ['1', '32'])
+        self.assertEqual(board.backend_clients().splitlines()[-1].split()[3:5], ['4', '128'])
+        for backend in ({'request-queues': 0}, {'request-queues': 5},
+                        {'request-queues': True}, {'sg-prealloc': 1},
+                        {'sg-prealloc': 2049}, {'sg-prealloc': '128'},
+                        {'unknown': 1}):
+            with self.subTest(backend=backend):
+                source['virtual-machines'][0]['disk']['backend'] = backend
+                with self.assertRaises(ValueError):
+                    Board.parse(source)
+
+    def test_per_vm_network_resources(self):
+        source = self.network_fixture()
+        source['virtual-machines'][0]['network']['backend'] = {
+            'rx-backlog-packets': 256, 'tx-buffer-bytes': 1048576}
+        board = Board.parse(source)
+        self.assertEqual(board.backend_clients().splitlines()[2].split()[-2:], ['256', '1048576'])
+        self.assertEqual(board.backend_clients().splitlines()[3].split()[-2:], ['1000', '0'])
+        self.assertNotIn('backend', board.vms()['virtual-machines'][0]['network'])
+        for backend in ({'rx-backlog-packets': 0}, {'rx-backlog-packets': 65537},
+                        {'rx-backlog-packets': True}, {'rx-backlog-packets': '1000'},
+                        {'tx-buffer-bytes': -1}, {'tx-buffer-bytes': 65535},
+                        {'tx-buffer-bytes': 2147483648}, {'tx-buffer-bytes': False},
+                        {'tx-buffer-bytes': 1048576.5}, {'unknown': 1}, None):
+            with self.subTest(backend=backend):
+                source['virtual-machines'][0]['network']['backend'] = backend
+                with self.assertRaises(ValueError):
+                    Board.parse(source)
+        for backend in ({}, {'rx-backlog-packets': 1}, {'rx-backlog-packets': 65536},
+                        {'tx-buffer-bytes': 65536}, {'tx-buffer-bytes': 2147483647}):
+            source['virtual-machines'][0]['network']['backend'] = backend
+            Board.parse(source)
 
     def test_network_projection_shares_client_and_preserves_native_reservation(self):
         self.assertEqual(len(Board.load(ROOT / 'boards/qemu.json').vms()['virtual-machines']), 1)

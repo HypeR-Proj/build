@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("fetch_io_vm", ROOT / "scripts/fetch-io-vm.py")
 FETCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FETCH)
+SPEC = importlib.util.spec_from_file_location("io_images", ROOT / "scripts/io-vm-images.py")
+IMAGES = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(IMAGES)
 
 
 class ImportTests(unittest.TestCase):
@@ -80,6 +83,21 @@ class ImportTests(unittest.TestCase):
             pi = FETCH.fetch(self.reference, 'rpi5', self.output)
         self.assertEqual(pi, qemu)
         self.assertEqual(len(self.calls), 3)
+
+    def test_storage_deployment_requires_appliance_resource_support(self):
+        for version in (None, '3', '4', '5'):
+            with self.subTest(version=version):
+                if version is not None:
+                    self.manifest['annotations']['org.hyper.client-table-version'] = version
+                self.pin()
+                with patch.object(FETCH.subprocess, 'run', side_effect=self.registry):
+                    package = self.fetch()
+                if version == '5':
+                    self.assertEqual(IMAGES.package_payloads(package, require_client_resources=True),
+                                     (package / 'Image', package / 'initramfs.cpio.gz'))
+                else:
+                    with self.assertRaisesRegex(ValueError, 'hyper.clients.v5'):
+                        IMAGES.package_payloads(package, require_client_resources=True)
 
     def test_malformed_common_capabilities_are_rejected(self):
         for capabilities in ('[]', '["rpi5"]', '["qemu","qemu"]',

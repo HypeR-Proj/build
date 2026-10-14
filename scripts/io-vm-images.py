@@ -24,7 +24,7 @@ def bounded_read(path, limit):
     return data
 
 
-def package_payloads(package, platform='qemu'):
+def package_payloads(package, platform='qemu', *, require_client_resources=False):
     """Accept a complete external boot generation or a verified OCI import."""
     boot = package / 'boot-artifacts.json'
     if boot.exists():
@@ -33,6 +33,7 @@ def package_payloads(package, platform='qemu'):
             raise ValueError('unsupported boot artifact format or architecture')
         if metadata.get('platform', 'qemu') != platform:
             raise ValueError('boot artifact platform mismatch')
+        clients_version = metadata.get('client_table_version', 3)
         paths = []
         for field, pattern, limit in (
                 ('kernel', r'Image-([0-9a-f]{64})', 32 * MIB),
@@ -56,7 +57,12 @@ def package_payloads(package, platform='qemu'):
         layers = importer.validate_manifest(package / 'oci-manifest.json',
                                             'sha256:' + package.name, platform)
         importer.validate_runtime(package, layers)
+        metadata = json.loads(bounded_read(package / 'oci-manifest.json', MIB))
+        clients_version = metadata.get('annotations', {}).get('org.hyper.client-table-version', '3')
         image, initramfs = package / 'Image', package / 'initramfs.cpio.gz'
+    if require_client_resources and str(clients_version) != '5':
+        raise ValueError('I/O VM package lacks hyper.clients.v5 per-client SCSI/network resources; '
+                         'update the pinned appliance or set IO_VM_PACKAGE to a compatible build')
     if bounded_read(image, 32 * MIB)[56:60] != b'ARM\x64':
         raise ValueError('not an AArch64 Linux Image')
     decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -119,7 +125,8 @@ def main():
     args = parser.parse_args()
     board = deployment_board(Board.load(args.board), args.mode)
     platform = 'rpi5' if board.source['boot'] == 'rpi5-firmware' else 'qemu'
-    image, initramfs = package_payloads(args.package, platform)
+    image, initramfs = package_payloads(args.package, platform,
+                                      require_client_resources=args.mode == 'storage')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.mode == 'storage':
         stage(board, Path(__file__).resolve().parents[1], args.output.parent / 'board')
