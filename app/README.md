@@ -320,6 +320,11 @@ definition. Both change only the running manager's inventory, without editing
 deployment configuration or deleting guest images. The resident I/O VM is
 observable through `list` and `status`; its read-only authority does not permit
 lifecycle or console operations through `vmm`, regardless of its configured name.
+For the I/O VM, guest-agent statistics show Linux CPU busy/I/O wait and memory
+used, available, free and cache accounting separately from allocated VM backing.
+Memory used means `MemTotal - MemAvailable`; CPU is normalized across all guest
+vCPUs. Samples refresh every five seconds. An unavailable, unsupported or stale
+agent is shown explicitly; the first CPU observation is marked `sampling`.
 See [named VMs](../docs/applications.md#named-virtual-machines) and
 [console and storage visibility](../docs/applications.md#console-and-storage-visibility).
 
