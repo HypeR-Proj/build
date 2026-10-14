@@ -238,6 +238,27 @@ test-board-network: app image
 
 # Fault injection is compiled into a separate output tree; normal app artifacts
 # and subsequent make run images never inherit the test features.
+.PHONY: test-io-console-hotplug
+test-io-console-hotplug: image
+	@test "$(ARCH)" = aarch64 || { echo "console hotplug acceptance requires aarch64" >&2; exit 2; }
+	@test -n "$(IO_VM_PACKAGE)" -a -d "$(IO_VM_PACKAGE)" || { echo "set IO_VM_PACKAGE to an appliance with PCIe hotplug and virtio-console support" >&2; exit 2; }
+	@test -n "$(CONSOLE_HOTPLUG_PROBE)" -a -f "$(CONSOLE_HOTPLUG_PROBE)" || { echo "set CONSOLE_HOTPLUG_PROBE to the statically linked AArch64 Linux tests/qemu/guest/console-hotplug.c executable" >&2; exit 2; }
+	$(MAKE) app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/console-apps" \
+		APP_FEATURES=hyper-io-runtime-system/console-test
+	mkdir -p "$(BOARD_TEST_OUTPUT)"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/console-hotplug.XXXXXX") && \
+	python3 -B tests/qemu/verify-console-hotplug.py prepare --package "$(IO_VM_PACKAGE)" \
+		--probe "$(CONSOLE_HOTPLUG_PROBE)" --board "$(CURDIR)/boards/qemu.json" \
+		--output "$$fixture/prepared" && \
+	$(MAKE) -o image -o app board-image BOARD=qemu IO_VM_PACKAGE="$$fixture/prepared/package" \
+		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/console-apps" APP_FEATURES=hyper-io-runtime-system/console-test \
+		BOARD_CONFIG="$$fixture/prepared/config.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_IMAGE="$$fixture/disk.img" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-console-hotplug.py run \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/prepared/config.json" \
+		--log "$$fixture/accept.log"
+
 .PHONY: test-board-broker
 test-board-broker: app image fit-pack
 	@test "$(ARCH)" = aarch64 || { echo "broker acceptance requires aarch64" >&2; exit 2; }
