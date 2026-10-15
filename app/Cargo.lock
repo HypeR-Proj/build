@@ -328,6 +328,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-memstat"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "hyper-clap-shared",
+ "hyper-os",
+ "hyper-rt",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hyper-mkdir"
 version = "0.0.0"
 dependencies = [

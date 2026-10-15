@@ -177,7 +177,7 @@ manager; `vmm --help` does not require a running manager.
 app/
   Cargo.toml          App discovery, shared dependency versions, lints and profiles
   Cargo.lock          Locked dependencies for the application and Rust DSO set
-  cat/ chmod/ cp/ echo/ free/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
+  cat/ chmod/ cp/ echo/ free/ memstat/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
   init/ console-raw/ io-runtime/ fs-backend/ fs-fat/ fs-erofs/ mount/ umount/
   session-manager/ terminal-service/ vm-manager/ vm-runtime/ vmm/
 bootstrap/stage1/
@@ -446,6 +446,18 @@ for the identities, overlap rules and estimation limits.
 immediately. Sampling is finite and defaults to one snapshot; `-s` alone does
 not request continuous monitoring.
 
+### `memstat`: allocation and cache diagnostics
+
+[memstat](memstat/) reports allocator traffic, page ownership, buddy orders and
+file-cache index/metadata occupancy. `memstat --save /tmp/before.json` saves a
+baseline; `memstat --diff /tmp/before.json` shows changes after a workload in the
+same boot. `--json` exports the full sample. `--classes` includes per-pool slab
+sizes and large allocations when `CONFIG_HEAP_PROFILING=y` (default off).
+Reads never flush or reclaim memory. These overlapping observations distinguish
+allocation churn, live objects and retained cache slots; growth is not itself a
+leak diagnosis. See [memory diagnostics](../docs/memory-diagnostics.md) for
+accounting boundaries, configuration costs and sampling limitations.
+
 ### `top`: live CPU and process activity
 
 [top](top/) samples CPU runtime counters, physical memory and per-process thread
@@ -494,7 +506,7 @@ The session delegates process-construction authority to the shell. Commands
 inherit attenuated root and cwd Directory capabilities, standard streams and
 authorized process resources; path traversal is bounded by the delegated root,
 not the initial cwd. Inspector delegation depends on the resolved executable
-path: `/bin/ps` receives task inspection, `/bin/free` memory
+path: `/bin/ps` receives task inspection, `/bin/free` and `/bin/memstat` memory
 inspection, and `/bin/top` task, memory and CPU inspection.
 `/bin/handle` receives object
 inspection including privileged details, plus task inspection for process
@@ -558,7 +570,7 @@ Native SDK calls remain where their semantics are required:
 
 - VM construction, guest VMO writes, virtual serial and VM lifecycle;
 - capability transfer, resource domains, scoped process construction and
-  inspection (`ps`, `handle`, `free`, `top`);
+  inspection (`ps`, `handle`, `free`, `memstat`, `top`);
 - terminal leases, request-sized streams and multi-object waits, including the
   shell's foreground input handoff and `vmm console` multiplexing;
 - absolute Native deadlines supplied to those waits and service protocols.
