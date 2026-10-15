@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validate services.json with init's parser, capability policy and supervisor."""
+"""Validate bootstrap manifests or formal components with their production parser."""
 import json
 import os
 from pathlib import Path
@@ -25,7 +25,7 @@ def includes_formal_services(path):
 
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit('usage: check-service-manifest.py MANIFEST [--bootstrap | --core MANIFEST] [ARCHIVE_PATH ...]')
+        raise SystemExit('usage: check-service-manifest.py PATH [--components] [--bootstrap | --core MANIFEST] [ARCHIVE_PATH ...]')
     root = Path(__file__).resolve().parent.parent
     version = subprocess.check_output(['rustc', '-vV'], text=True)
     host = next(line.removeprefix('host: ') for line in version.splitlines()
@@ -44,10 +44,10 @@ def main():
     environment = dict(os.environ)
     environment.setdefault('CARGO_TARGET_DIR', str(root / 'target/app-host-tests'))
     # Source deployments may mix boot and formal services. Their composition
-    # belongs to formal init; the published core graph uses bootstrap policy.
-    system = not bootstrap and ('--core' in arguments or includes_formal_services(Path(sys.argv[1])))
+    # belongs to formal service management; the core graph uses bootstrap policy.
+    system = not bootstrap and ('--components' in arguments or '--core' in arguments or includes_formal_services(Path(sys.argv[1])))
     workspace = 'app' if system else 'bootstrap/stage1'
-    package = 'hyper-init' if system else 'hyper-bootstrap-stage1-init'
+    package = 'hyper-system-startup' if system else 'hyper-bootstrap-stage1-init'
     result = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--target', host,
         '-p', package, '--example', 'check-services', '--',

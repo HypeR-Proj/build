@@ -16,6 +16,7 @@ import tempfile
 
 from board_config import Board, unique_object
 from native_libraries import add_dependencies, read_image, validate as validate_libraries
+import component_composition
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -217,16 +218,18 @@ def compose(args, native, service_path):
     metadata.mkdir(exist_ok=True)
     core, system = services(service_path)
     manifest_path = metadata / 'services.json'
-    system_manifest_path = metadata / 'system-services.json'
     write_json(manifest_path, core)
-    write_json(system_manifest_path, system)
+    components, startup_policy = component_composition.compose(core, system)
     init_path = metadata / 'init.json'
     write_json(init_path, {'system-root': '/system', 'put-old': '/boot',
-                          'system-init': '/svc/init'})
+                          'system-init': '/svc/component-manager'})
     filesystem_path = metadata / 'system-filesystem.json'
     write_json(filesystem_path, {'worker_directories': [{'environment': 'svc'}]})
-    system_init_path = metadata / 'system-init.json'
-    write_json(system_init_path, {'services': '/etc/hyper/services.json'})
+    component_config = metadata / 'components.json'
+    write_json(component_config, {'configuration_directory': '/etc/components',
+                                 'root': 'root', 'startup': '/startup'})
+    startup_path = metadata / 'startup.json'
+    write_json(startup_path, startup_policy)
     placeholder = metadata / 'empty'
     placeholder.touch()
     boot.extend([
@@ -242,12 +245,22 @@ def compose(args, native, service_path):
     formal_fstab.write_text(native.get('fstab', ''))
     disk.append(['0644', 'etc/fstab', str(formal_fstab.resolve())])
     checksums[str(formal_fstab.resolve())] = archive.digest(formal_fstab)
-    disk.append(['0644', 'etc/hyper/services.json', str(system_manifest_path.resolve())])
-    checksums[str(system_manifest_path.resolve())] = archive.digest(system_manifest_path)
+    component_directory = metadata / 'components'
+    component_directory.mkdir(exist_ok=True)
+    for stale in component_directory.glob('*.json'):
+        stale.unlink()
+    for name, declaration in sorted(components.items()):
+        path = component_directory / f'{name}.json'
+        write_json(path, declaration)
+        disk.append(['0644', f'etc/components/{name}.json', str(path.resolve())])
+        checksums[str(path.resolve())] = archive.digest(path)
     disk.append(['0644', 'etc/hyper/filesystem.json', str(filesystem_path.resolve())])
     checksums[str(filesystem_path.resolve())] = archive.digest(filesystem_path)
-    disk.append(['0644', 'etc/hyper/init.json', str(system_init_path.resolve())])
-    checksums[str(system_init_path.resolve())] = archive.digest(system_init_path)
+    disk.append(['0644', 'etc/hyper/components.json', str(component_config.resolve())])
+    checksums[str(component_config.resolve())] = archive.digest(component_config)
+
+    disk.append(['0644', 'etc/hyper/startup.json', str(startup_path.resolve())])
+    checksums[str(startup_path.resolve())] = archive.digest(startup_path)
 
     images = [name for mode, name, source in boot
               if mode != 'symlink' and read_image(source) is not None]
@@ -257,7 +270,7 @@ def compose(args, native, service_path):
                     str(manifest_path), '--bootstrap', *images], check=True)
     if not args.recovery_only:
         subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
-                        str(system_manifest_path), '--core', str(manifest_path), *images], check=True)
+                        str(component_directory), '--components', '--startup', str(startup_path), '--core', str(manifest_path), *images], check=True)
     archive.validate_entries([field for record in boot for field in record])
     archive.validate_entries([field for record in disk for field in record])
     # Publish checked staging first. A failed composition must not make an old

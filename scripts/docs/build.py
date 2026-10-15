@@ -235,7 +235,7 @@ def prepare_site(revision):
     shutil.copytree(api, source / 'api')
     files = public_files()
     groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Native substrate',
-                                   'Libraries', 'Applications', 'Tests', 'Project')}
+                                   'Libraries', 'Applications', 'Services', 'Tests', 'Project')}
     for name in files:
         path = Path(name)
         if path.suffix.lower() not in ('.md', '.png', '.svg', '.jpg', '.jpeg', '.gif'):
@@ -252,7 +252,7 @@ def prepare_site(revision):
             group = 'Tests'
         else:
             group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK', 'lib': 'Libraries', 'stdlib': 'Native substrate',
-                     'app': 'Applications'}.get(path.parts[0], 'Project')
+                     'app': 'Applications', 'svc': 'Services'}.get(path.parts[0], 'Project')
         groups[group].append({page_title(ROOT / path): name})
     assets = source / 'assets'
     assets.mkdir()

@@ -6,9 +6,15 @@ resolver = "3"
 # Formal system programs and their implementation libraries.
 members = [
     "*",
+    "../svc/*",
     "../tests/app/*",
     "../lib/clap",
     "../lib/service",
+    "../lib/service-ipc",
+    "../lib/component-config",
+    "../lib/component",
+    "../lib/bootstrap-handoff",
+    "../lib/journal",
     "../lib/terminal",
     "../lib/block",
     "../lib/fs-service",
@@ -42,6 +48,11 @@ hyper-filesystem = "=0.0.0"
 hyper-fs-service = { path = "../lib/fs-service" }
 hyper-rt = { version = "=0.0.0", features = ["std"] }
 hyper-service = { path = "../lib/service" }
+hyper-service-ipc = { path = "../lib/service-ipc" }
+hyper-journal = { path = "../lib/journal" }
+hyper-component-config = { path = "../lib/component-config" }
+hyper-component = { path = "../lib/component" }
+hyper-bootstrap-handoff = { path = "../lib/bootstrap-handoff" }
 hyper-terminal = { path = "../lib/terminal" }
 hyper-vm-image = { path = "../lib/vm-image" }
 hyper-vm-policy = { path = "../lib/vm-policy" }

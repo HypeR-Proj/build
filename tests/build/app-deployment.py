@@ -316,9 +316,9 @@ class NativePayloadTests(unittest.TestCase):
                                   ('fs-fat', 'svc/fs-fat'), ('fs-fat-system', 'svc/fs-fat'), ('ls', 'bin/ls'),
                                   ('vm-manager', 'svc/vm-manager'),
                                   ('vm-runtime', 'svc/vm-runtime'),
-                                  ('svc/init', 'svc/init')]:
+                                  ('component-manager', 'svc/component-manager'), ('system-startup', 'svc/system-startup')]:
             binary = {'init': 'hyper-bootstrap-stage1-init',
-                      'svc/init': 'hyper-init'}.get(name, 'hyper-' + name)
+                      'component-manager': 'hyper-component-manager'}.get(name, 'hyper-' + name)
             self.entries.append({'binary': binary, 'staged': name,
                                  'destination': destination, 'mode': '0755',
                                  'profiles': ['system'],
@@ -359,10 +359,10 @@ class NativePayloadTests(unittest.TestCase):
         boot_config = next(Path(source) for _, name, source in entries
                            if name == 'etc/hyper/init.json')
         self.assertEqual(json.loads(boot_config.read_text()),
-                         {'system-root': '/system', 'put-old': '/boot', 'system-init': '/svc/init'})
+                         {'system-root': '/system', 'put-old': '/boot', 'system-init': '/svc/component-manager'})
         system = self.args.output / 'system-root'
-        self.assertEqual(json.loads((system / 'etc/hyper/init.json').read_text()), {
-            'services': '/etc/hyper/services.json',
+        self.assertEqual(json.loads((system / 'etc/hyper/components.json').read_text()), {
+            'configuration_directory': '/etc/components', 'root': 'root', 'startup': '/startup',
         })
         self.assertEqual((system / 'etc/fstab').read_text(), self.board['native']['fstab'])
         self.assertEqual(json.loads((system / 'etc/hyper/filesystem.json').read_text()),
@@ -381,7 +381,7 @@ class NativePayloadTests(unittest.TestCase):
                          'lib64/userspace-loader-hyper-aarch64')
         self.assertNotIn('lib64/ld-hyper-aarch64.so', {name for _, name, _ in boot})
         disk_names = {name for _, name, _ in disk}
-        self.assertTrue({'bin/sh', 'bin/ls', 'svc/init', 'svc/vm-manager',
+        self.assertTrue({'bin/sh', 'bin/ls', 'svc/component-manager', 'svc/vm-manager',
                          'lib64/ld-hyper-aarch64.so'} <= disk_names)
         self.assertTrue({'init', 'svc/fallback-sh', 'lib64/userspace-loader-hyper-aarch64'}
                         .isdisjoint(disk_names))
@@ -414,7 +414,7 @@ class NativePayloadTests(unittest.TestCase):
         self.assertEqual(system, [])
         self.assertEqual(checksums, {})
         self.assertIn('init', {name for _, name, _ in boot})
-        self.assertNotIn('svc/init', {name for _, name, _ in boot})
+        self.assertNotIn('svc/component-manager', {name for _, name, _ in boot})
         self.assertNotIn('bin/sh', {name for _, name, _ in boot})
         self.args.extra_entries = ['0755', 'system:bin/ls', str(self.args.apps / 'ls')]
         with self.assertRaisesRegex(ValueError, 'cannot contain formal system'):

@@ -325,9 +325,9 @@ class EntrypointTests(unittest.TestCase):
                 (cwd / 'src').mkdir()
                 (cwd / 'src/lib.rs').write_text('')
             (root / 'app/Cargo.toml').write_text(
-                '[workspace]\nmembers=["cmd", "init", "fs-backend", "io-runtime", "../tests/app/*", "../lib/args", "../lib/args/shared"]\n')
-            for member, owner in [('app/cmd', '..'), ('app/init', '..'),
-                                  ('app/io-runtime', '..'), ('app/fs-backend', '..'),
+                '[workspace]\nmembers=["cmd", "../svc/*", "../tests/app/*", "../lib/args", "../lib/args/shared"]\n')
+            for member, owner in [('app/cmd', '..'), ('svc/system-startup', '../../app'),
+                                  ('svc/io-runtime', '../../app'), ('svc/fs-backend', '../../app'),
                                   ('tests/app/probe', '../../../app'), ('lib/args', '../../app'),
                                   ('lib/args/shared', '../../../app'),
                                   ('bootstrap/stage1/init', '..')]:
@@ -344,7 +344,7 @@ class EntrypointTests(unittest.TestCase):
             for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src',
                               'bootstrap/stage1/init/src', 'bootstrap/stage1/contracts',
                               'bootstrap/stage1/init/src/manifest', 'tests/app/probe/src',
-                              'app/init/src', 'app/io-runtime/src', 'app/fs-backend/src'):
+                              'svc/system-startup/src', 'svc/io-runtime/src', 'svc/fs-backend/src'):
                 cwd = root / workspace
                 subprocess.run(['sh', str(script)], cwd=cwd, env=env, check=True)
                 result = json.loads(output.read_text())

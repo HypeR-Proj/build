@@ -5,7 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # HypeR Native applications
 
-This directory contains ordinary Native tools and system services.
+This directory contains foreground Native tools. Background programs live in
+[`svc/`](../svc/README.md), with independent service policy and logging.
 The RAM-resident boot and recovery programs live in
 [`bootstrap/stage1`](../bootstrap/stage1/README.md), an independent static-link
 workspace with its own lockfile and executable-owned implementations. The workspace here owns
@@ -52,8 +53,8 @@ field and escape rejection); its bounded collections now use Vec storage.
 ## Current scope
 
 - Rust std applications with ordinary `main`, built as Native dynamic PIE;
-- a bounded, declarative service manifest loaded by `init` through a root
-  `Directory` capability;
+- a root component manager, finite startup coordinator and independent journal,
+  with static instance trees, scoped capability routes and demand activation;
 - a byte-only physical Console service, a separate formal terminal service,
   and a session manager that supervises terminal and shell lifetimes;
 - a bounded interactive shell which launches commands with explicit process
@@ -74,16 +75,17 @@ transactional `ProcessBuilder` ABI. Normal bytes currently follow this route:
 physical Console <-> console-raw <-> terminal-service <-> shell / foreground command
                          ^                ^
                          | logs           | supervision
-                  background services   session-manager
+                  journal <--- services  session-manager
 ```
 
-The active init retains management authority. Bootstrap runs from the initial RAM
+Bootstrap init retains management authority until handoff. It runs from the initial RAM
 archive, mounts the independent system volume at `/system`, then switches it to
-`/` before starting `init`. The candidate adopts core supervision through
-one atomic capability transfer. Pre-commit failure rolls back to stage-1 recovery.
-After commitment, formal init owns failure handling and retirement timing. It
-adopts the running I/O VM and mounted filesystems into independent providers from
-`app/`, starts formal services and stops predecessors before detaching the archive.
+`/` before starting formal `component-manager`. The manager validates the instance
+tree and prepares `system-startup` to validate resource migration before accepting
+one atomic capability transfer. Precommit failure rolls back to stage-1 recovery.
+After commitment, the manager owns new component supervisors; system-startup adopts
+the running I/O VM and mounted filesystems into independent providers from `svc/`.
+The coordinator submits bootstrap-retire to stop predecessors and detach the archive.
 The I/O VM does not reboot. An unsuccessful provider handoff retains the resources
 still needed by that provider.
 
@@ -105,9 +107,9 @@ to a command with unredirected terminal stdin; in a pipeline this is the first
 stage. Process exit restores the preceding lease's settings. Bootstrap
 recovery uses raw transport directly and never starts a terminal service.
 
-Background services receive independent log channels for stdout/stderr, without
-stdin or ordinary physical Console write authority. The raw service continues
-mirroring these bounded channels after terminal takeover. Terminal flow control
+Background services receive stdin at EOF and independent stdout/stderr writers
+registered with the journal. They receive no ordinary physical Console authority.
+The journal mirrors bounded log traffic to raw console after terminal takeover. Terminal flow control
 does not pause logs. Overflow is counted per source; this is not persistent log
 storage. Kernel logging is unchanged, and either kind of log can still disturb an
 interactive display. VM-manager delegates its log stream to its VM runtimes.
@@ -242,16 +244,19 @@ configuration and workers, separately from the live root namespace capability.
 | Installed executable | Source | Responsibility |
 | --- | --- | --- |
 | `/init` | [init](../bootstrap/stage1/init) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
-| `/svc/console-raw` in each environment | [bootstrap](../bootstrap/stage1/console-raw), [formal](console-raw/) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
-| `/svc/session-manager` | [session-manager](session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
-| `/svc/terminal-service` | [terminal-service](terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
-| `/svc/io-runtime` in each environment | [bootstrap](../bootstrap/stage1/io-runtime), [formal](io-runtime/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
-| `/svc/vm-manager` | [vm-manager](vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
-| `/svc/fs-backend` in each environment | [bootstrap](../bootstrap/stage1/fs-backend), [formal](fs-backend/) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
-| `/svc/fs-fat` in each environment | [bootstrap](../bootstrap/stage1/fs-fat), [formal](fs-fat/) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by the manager in its own environment; the formal worker takes over existing FAT mounts before bootstrap retirement. |
-| `/svc/fs-erofs` in each environment | [bootstrap](../bootstrap/stage1/fs-erofs), [formal](fs-erofs/) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend; the formal worker takes over the mounted system volume. |
-| `/svc/init` | [init](init/) | Validate the combined service graph, atomically adopt existing core supervisors, replace core providers, start system services, and retire bootstrap when ready. Retain predecessor resources when adoption fails. Starts after stage-1 switches to the independent system root. |
-| `/svc/vm-runtime` | [vm-runtime](vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
+| `/svc/console-raw` in each environment | [bootstrap](../bootstrap/stage1/console-raw), [formal](../svc/console-raw/) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
+| `/svc/session-manager` | [session-manager](../svc/session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
+| `/svc/terminal-service` | [terminal-service](../svc/terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
+| `/svc/io-runtime` in each environment | [bootstrap](../bootstrap/stage1/io-runtime), [formal](../svc/io-runtime/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
+| `/svc/vm-manager` | [vm-manager](../svc/vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
+| `/svc/fs-backend` in each environment | [bootstrap](../bootstrap/stage1/fs-backend), [formal](../svc/fs-backend/) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
+| `/svc/fs-fat` in each environment | [bootstrap](../bootstrap/stage1/fs-fat), [formal](../svc/fs-fat/) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by the manager in its own environment; the formal worker takes over existing FAT mounts before bootstrap retirement. |
+| `/svc/fs-erofs` in each environment | [bootstrap](../bootstrap/stage1/fs-erofs), [formal](../svc/fs-erofs/) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend; the formal worker takes over the mounted system volume. |
+| `/svc/component-manager` | [component-manager](../svc/component-manager/) | Act as formal root, validate instance trees and capability routes, activate providers on demand and own component lifetimes. |
+| `/svc/system-startup` | [system-startup](../svc/system-startup/) | Perform finite bootstrap adoption, formal mounts and initial VM provisioning. Submit prepared processes to the manager and arrange retirement, then exit. |
+| `/svc/journal` | [journal](../svc/journal/) | Capture attributed service streams, retain bounded volatile records, mirror serial output and answer queries. |
+| `/svc/bootstrap-retire` | [bootstrap-retire](../svc/bootstrap-retire/) | Stop and join transferred predecessors, drain console output and normally unmount the boot archive. |
+| `/svc/vm-runtime` | [vm-runtime](../svc/vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
 
 The resident Linux I/O VM runs physical device drivers. `io-runtime` is the
 Native service that manages that VM; `vm-runtime` manages an individual business
@@ -592,3 +597,11 @@ wiring are not yet implemented; the current deployment has one physical console.
 
 Licensed under the Apache License, Version 2.0. See
 [the project license](../LICENSE).
+
+## Service administration
+
+`componentctl` lists component state and supports status, route inspection,
+start, stop and restart. `journalctl` reads bounded volatile logs, with
+`-c COMPONENT_PATH`, `-n COUNT` and `-f`. The trusted shell delegates separate
+control and query capabilities to these commands. See
+[component management](../docs/services.md) for routes, activation and ownership limits.

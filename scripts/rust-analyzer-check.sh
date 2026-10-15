@@ -10,7 +10,7 @@ root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
 PATH="$PATH:$HOME/.cargo/bin"
 
 # Resolve ownership, not directory ancestry: bootstrap/stage1 owns its static workspace;
-# system libraries and tests/app belong to app/, while Native bindings own stdlib/rust/.
+# svc, system libraries and tests/app belong to app/, while Native bindings own stdlib/rust/.
 # External members do not inherit app/.cargo/config.toml from their directory.
 # A direct invocation from the product root checks its Native workspace.
 if [ "$(pwd -P)" = "$root" ]; then

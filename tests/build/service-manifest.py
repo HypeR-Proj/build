@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from board_config import Board
 from board_bootstrap import services
+import component_composition
 
 CHECK = ROOT / 'scripts/check-service-manifest.py'
 BASE = ROOT / 'bootstrap/stage1/init/config/services-console-only.json'
@@ -35,6 +36,7 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = self.check_manifest(path)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'services.json'
             for board in ('qemu', 'rpi5'):
@@ -42,6 +44,38 @@ class ManifestTests(unittest.TestCase):
                 path.write_text(json.dumps(services(Board.parse(source), ROOT)))
                 result = self.check_manifest(path)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_generated_components_use_the_production_parser_and_check_adapter_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for board in ('qemu', 'rpi5'):
+                source = directory / 'source.json'
+                source.write_text(json.dumps(services(Board.load(ROOT / f'boards/{board}.json'), ROOT)))
+                core, formal = SPLIT.services(source)
+                core_path = directory / 'core.json'
+                core_path.write_text(json.dumps(core))
+                units, startup = component_composition.compose(core, formal)
+                policy = directory / board
+                policy.mkdir()
+                for name, unit in units.items():
+                    (policy / f'{name}.json').write_text(json.dumps(unit))
+                startup_path = directory / 'startup.json'
+                startup_path.write_text(json.dumps(startup))
+                args = ['--components', '--startup', str(startup_path), '--core', str(core_path)]
+                result = self.check_manifest(policy, args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                images = [unit['program']['image'] for unit in units.values() if 'program' in unit]
+                images += [unit['image'] for unit in core['services']]
+                result = self.check_manifest(policy, args + images)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.check_manifest(policy, args + [p for p in images if p != '/svc/journal'])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('image /svc/journal is absent', result.stderr)
+                units['root']['offer'].append({'name':'missing','to':'journal','from':'self','source':'missing','kind':{'type':'protocol','protocol':'hyper.test.Missing'}})
+                (policy / 'root.json').write_text(json.dumps(units['root']))
+                result = self.check_manifest(policy, args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('capability missing is not declared', result.stderr)
 
     def test_boot_checker_rejects_formal_source_but_accepts_composed_core(self):
         result = self.check_manifest(BASE, ['--bootstrap'])
@@ -156,6 +190,21 @@ class ManifestTests(unittest.TestCase):
             result = self.check_manifest(BASE, ['bin/nonexistent'])
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('absent from the archive', result.stderr)
+
+    def test_component_composition_rejects_overwrites_and_filename_traversal(self):
+        core, formal = SPLIT.services(BASE)
+        for name in ('journal', 'console-raw', 'bootstrap-retire', 'session-manager'):
+            with self.subTest(name=name):
+                candidate = copy.deepcopy(formal)
+                candidate['services'].append({'name': name, 'image': '/svc/custom'})
+                with self.assertRaisesRegex(ValueError, 'invalid or duplicate component name'):
+                    component_composition.compose(core, candidate)
+        for name in ('../../escape', '/tmp/escape', 'a' * 64, 'bad\nname'):
+            with self.subTest(name=name):
+                candidate = copy.deepcopy(formal)
+                candidate['services'].append({'name': name, 'image': '/svc/custom'})
+                with self.assertRaisesRegex(ValueError, 'invalid or duplicate component name'):
+                    component_composition.compose(core, candidate)
 
     def test_packer_rejects_before_publication(self):
         with tempfile.TemporaryDirectory() as temporary:

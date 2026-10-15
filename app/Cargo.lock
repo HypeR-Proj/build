@@ -136,6 +136,28 @@ name = "hyper-block"
 version = "0.0.0"
 
 [[package]]
+name = "hyper-bootstrap-handoff"
+version = "0.0.0"
+dependencies = [
+ "hyper-component",
+ "hyper-os",
+ "hyper-service-ipc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-bootstrap-retire"
+version = "0.0.0"
+dependencies = [
+ "hyper-bootstrap-handoff",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service-ipc",
+ "serde_json",
+]
+
+[[package]]
 name = "hyper-cat"
 version = "0.0.0"
 dependencies = [
@@ -157,6 +179,51 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "hyper-rust-std",
+]
+
+[[package]]
+name = "hyper-component"
+version = "0.0.0"
+dependencies = [
+ "hyper-component-config",
+ "hyper-os",
+ "hyper-service-ipc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-component-config"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-component-manager"
+version = "0.0.0"
+dependencies = [
+ "hyper-bootstrap-handoff",
+ "hyper-component",
+ "hyper-component-config",
+ "hyper-journal",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+ "hyper-service-ipc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-componentctl"
+version = "0.0.0"
+dependencies = [
+ "hyper-component",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service-ipc",
 ]
 
 [[package]]
@@ -278,19 +345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-init"
-version = "0.0.0"
-dependencies = [
- "hyper-os",
- "hyper-rt",
- "hyper-service",
- "hyper-vm-policy",
- "hyper-vm-policy-shared",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "hyper-io-runtime-system"
 version = "0.0.0"
 dependencies = [
@@ -300,6 +354,40 @@ dependencies = [
  "hyper-vm-image",
  "hyper-vm-support",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-journal"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service-ipc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-journalctl"
+version = "0.0.0"
+dependencies = [
+ "hyper-journal",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service-ipc",
+]
+
+[[package]]
+name = "hyper-journald"
+version = "0.0.0"
+dependencies = [
+ "hyper-component",
+ "hyper-journal",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+ "hyper-service-ipc",
  "serde_json",
 ]
 
@@ -417,17 +505,42 @@ name = "hyper-service"
 version = "0.0.0"
 dependencies = [
  "hyper-block",
+ "hyper-component",
+ "hyper-journal",
+ "hyper-os",
+ "hyper-service-ipc",
+ "serde",
+]
+
+[[package]]
+name = "hyper-service-ipc"
+version = "0.0.0"
+dependencies = [
  "hyper-os",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "hyper-service-probe"
+version = "0.0.0"
+dependencies = [
+ "hyper-component",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service-ipc",
 ]
 
 [[package]]
 name = "hyper-session-manager"
 version = "0.0.0"
 dependencies = [
+ "hyper-component",
+ "hyper-journal",
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+ "hyper-service-ipc",
  "hyper-terminal",
  "serde",
  "serde_json",
@@ -439,9 +552,12 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "hyper-clap-shared",
+ "hyper-component",
+ "hyper-journal",
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+ "hyper-service-ipc",
  "hyper-terminal",
  "serde",
  "serde_json",
@@ -454,6 +570,24 @@ name = "hyper-sys"
 version = "0.0.0"
 dependencies = [
  "hyper-abi",
+]
+
+[[package]]
+name = "hyper-system-startup"
+version = "0.0.0"
+dependencies = [
+ "hyper-bootstrap-handoff",
+ "hyper-component",
+ "hyper-component-config",
+ "hyper-journal",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+ "hyper-service-ipc",
+ "hyper-vm-policy",
+ "hyper-vm-policy-shared",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -537,9 +671,12 @@ dependencies = [
 name = "hyper-vm-manager"
 version = "0.0.0"
 dependencies = [
+ "hyper-component",
+ "hyper-journal",
  "hyper-os",
  "hyper-rt",
  "hyper-service",
+ "hyper-service-ipc",
  "hyper-vm-policy",
  "hyper-vm-policy-shared",
 ]

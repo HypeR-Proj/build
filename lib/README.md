@@ -29,8 +29,11 @@ the bootstrap or formal loader explicitly through an executable capability.
 | --- | --- | --- |
 | `hyper-clap-shared` | All clap-based Native tools | Own the common clap parser, validation and help code; applications retain their argument types and derive expansions. |
 | `hyper-tool-args` | `handle`, `ps`, `top`, `free` | Parse complete generation-bearing IDs and sampling intervals; combine process-ID and name selectors. Shared argument types live here; command-specific clap declarations remain in each tool. |
-| `hyper-vm-policy` | System `init`, `vmm`, VM manager and runtime | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
+| `hyper-vm-policy` | System-startup, `vmm`, VM manager and runtime | VM resource limits, fleet configuration/control records, affinity policy and image validation. |
 | `hyper-vm-support` | Formal VM runtime | Guest-image copying, virtual-device state, backend-control protocols and I/O guest construction. Process supervision remains in the services. |
+| `hyper-component`, `hyper-service-ipc`, `hyper-journal` | Formal managers and administration tools | Bounded lifecycle/query wire types and journal registration; no service graph or domain implementation. |
+| `hyper-component-config` | Component manager and startup coordinator | Bounded instance declarations, realm routing and rights attenuation validation, with no kernel bindings. |
+| `hyper-bootstrap-handoff` | Formal component manager, startup coordinator and retirement job | Formal-side bootstrap ownership inventory and retirement wire contract; stage1 keeps its independent implementation. |
 | `hyper-terminal` | Terminal service, session manager, shell and interactive tools | Native terminal settings/control, bounded line discipline, foreground leases and events. Bootstrap and stdlib do not depend on it. |
 | `hyper-rust-std` (in `stdlib/`) | The Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. |
 
@@ -49,7 +52,7 @@ the existing Native interpreter resolves these names through its Directory
 capability. Libraries acquire no capabilities or service authority of their own.
 
 The terminal library remains an rlib. Formal service supervision belongs to
-`app/init`; bootstrap owns separate supervisor and filesystem-worker implementations. The handoff contract
+`svc/component-manager`; bootstrap owns separate supervisor and filesystem-worker implementations. The handoff contract
 is exercised by the boot-system acceptance tests.
 
 The clap delivery crate re-exports the unmodified upstream API and shares the

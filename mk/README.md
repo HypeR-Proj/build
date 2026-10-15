@@ -143,8 +143,9 @@ its payload must not contain symlinks other than the optional `lib` alias which
 the packer can omit.
 
 The system payload is always independent of the boot archive. The removed
-`BOARD_SYSTEM_LAYOUT` selector is rejected. Both service graphs are validated
-together without pretending that formal executables live in the archive. The
+`BOARD_SYSTEM_LAYOUT` selector is rejected. The bootstrap manifest and generated
+formal units are validated with their production parsers and capability policy,
+without pretending that formal executables live in the archive. The
 bootstrap loader is the only loader in the archive. The formal loader lives
 in the system filesystem with the ordinary executables and libraries. The kernel
 initially mounts the archive at `/`; stage-1 temporarily mounts the system volume

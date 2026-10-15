@@ -5,7 +5,7 @@
 # Invoke from the repository root; component templates only register metadata.
 include mk/components/rust.mk
 include mk/components/files.mk
-include $(sort $(wildcard app/*/component.mk tests/app/*/component.mk bootstrap/stage1/*/component.mk lib/*/component.mk stdlib/*/component.mk))
+include $(sort $(wildcard app/*/component.mk svc/*/component.mk tests/app/*/component.mk bootstrap/stage1/*/component.mk lib/*/component.mk stdlib/*/component.mk))
 include tests/native/component.mk
 
 $(eval $(call native-symlink,lib64,lib,system development))

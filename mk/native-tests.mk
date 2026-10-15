@@ -251,3 +251,19 @@ test-guest-smp: image guest-smp-initramfs
 	$(NATIVE_QEMU_ENV) GUEST_CPUS="$$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["virtual-machines"][0]["configuration"]["vcpus"])' "$(NATIVE_SMP_VM_CONFIG)")" \
 		python3 tests/qemu/verify-guest-smp.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_SMP_INITRAMFS)" "$(APP_OUTPUT)/guest-smp.log"
+
+.PHONY: test-services
+test-services: image native-initramfs
+	@fixture=$$(mktemp -d "$(APP_OUTPUT)/services.XXXXXX") && \
+	python3 -B tests/qemu/verify-services.py prepare \
+		--composition "$(NATIVE_INITRAMFS).deployment" --output "$$fixture/prepared" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-services.py run \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--initramfs "$$fixture/prepared/services.cpio" --log "$$fixture/services.log" && \
+	python3 -B tests/qemu/verify-services.py prepare-rejected-console \
+		--composition "$(NATIVE_INITRAMFS).deployment" --output "$$fixture/rejected-console" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-services.py run-rejected-console \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--initramfs "$$fixture/rejected-console/services.cpio" --log "$$fixture/rejected-console.log"
