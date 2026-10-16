@@ -179,7 +179,7 @@ manager; `vmm --help` does not require a running manager.
 app/
   Cargo.toml          App discovery, shared dependency versions, lints and profiles
   Cargo.lock          Locked dependencies for the application and Rust DSO set
-  cat/ chmod/ cp/ echo/ editor/ free/ grep/ handle/ ldd/ ln/ ls/
+  cat/ chmod/ cp/ echo/ editor/ free/ grep/ handle/ ldd/ less/ ln/ ls/
   memstat/ mkdir/ mount/ mv/ ps/ rm/ rmdir/ shell/ top/ touch/ umount/ vmm/
   componentctl/ journalctl/
 svc/
@@ -492,6 +492,15 @@ changes. Arrows, Home/End and Page Up/Page Down move through the document.
 It belongs to the formal system image and uses terminal-service through the
 shared `hyper-text-ui` library. See [editor](../docs/editor.md) for bounds,
 filesystem save behavior and verification commands.
+
+### `less`: interactive paging
+
+`less FILE` and `cat FILE | less` provide a read-only pager. Page Up/Page Down,
+Space/b and arrows navigate; g/G jump to the beginning/end, `/` searches, `n`
+finds the next match and `q` exits. Pipe data and terminal keystrokes use separate
+connections, so a producer can finish before the user finishes paging. Redirected
+stdout copies the input without display formatting. See [less](../docs/less.md)
+for input bounds and verification commands.
 
 ### `sh`: the foreground Native shell
 

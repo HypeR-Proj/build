@@ -35,7 +35,7 @@ the bootstrap or formal loader explicitly through an executable capability.
 | `hyper-component-config` | Component manager and startup coordinator | Bounded instance declarations, realm routing and rights attenuation validation, with no kernel bindings. |
 | `hyper-bootstrap-handoff` | Formal component manager, startup coordinator and retirement job | Formal-side bootstrap ownership inventory and retirement wire contract; stage1 keeps its independent implementation. |
 | `hyper-terminal` | Terminal service, session manager, shell and interactive tools | Terminal client API and wire contract: settings/control, foreground leases and events. Line discipline and queues are private to `svc/terminal-service`. Ordinary stdin/stdout/stderr users, bootstrap and stdlib do not depend on this library. |
-| `hyper-text-ui` | `editor` | Application-side fullscreen session, VT key decoding and safe UTF-8 cell rendering. Native apps use the shared delivery library; it contains no line discipline. |
+| `hyper-text-ui` | `editor`, `less` | Application-side fullscreen session, VT key decoding and safe UTF-8 cell rendering. Native apps use the shared delivery library; it contains no line discipline. |
 | `hyper-rust-std` (in `stdlib/`) | The Rust shared libraries | Own one copy of Rust std and its dependencies so independent DSOs can be linked into the same process. |
 
 `make app` builds the libraries and installs their `.so` artifacts under

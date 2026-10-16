@@ -412,6 +412,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-less"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "hyper-clap-shared",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-text-ui",
+ "hyper-text-ui-shared",
+]
+
+[[package]]
 name = "hyper-ln"
 version = "0.0.0"
 dependencies = [
