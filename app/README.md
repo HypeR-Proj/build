@@ -179,9 +179,13 @@ manager; `vmm --help` does not require a running manager.
 app/
   Cargo.toml          App discovery, shared dependency versions, lints and profiles
   Cargo.lock          Locked dependencies for the application and Rust DSO set
-  cat/ chmod/ cp/ echo/ free/ memstat/ grep/ handle/ ldd/ ln/ ls/ mkdir/ mv/ ps/ rm/ rmdir/ top/ touch/
-  init/ console-raw/ io-runtime/ fs-backend/ fs-fat/ fs-erofs/ mount/ umount/
-  session-manager/ terminal-service/ vm-manager/ vm-runtime/ vmm/
+  cat/ chmod/ cp/ echo/ editor/ free/ grep/ handle/ ldd/ ln/ ls/
+  memstat/ mkdir/ mount/ mv/ ps/ rm/ rmdir/ shell/ top/ touch/ umount/ vmm/
+  componentctl/ journalctl/
+svc/
+  component-manager/ system-startup/ bootstrap-retire/ journal/
+  console-raw/ session-manager/ terminal-service/
+  io-runtime/ fs-backend/ fs-fat/ fs-erofs/ vm-manager/ vm-runtime/
 bootstrap/stage1/
   init/               Initial service graph and supervision handoff
     config/           Service manifests for VM-enabled and console-only startup
@@ -194,7 +198,8 @@ lib/                  Shared application libraries, in the app Cargo workspace
   tool-args/          Argument parsing and process selection for system tools
   vm-policy/          VM fleet configuration, resource policy and image validation
   vm-support/         Guest loading, virtual devices and I/O backend protocols
-  terminal/           Formal terminal client, settings and line discipline
+  terminal/           Formal terminal client and wire contract
+  text-ui/            Shared fullscreen input/display helpers for interactive text tools
   dynamic-loader/     Formal executable loader and runtime linker
 stdlib/rust-std/      Common Rust standard-library DSO
 tests/app/            Standalone Native acceptance programs
@@ -477,6 +482,16 @@ to descending CPU usage; `--sort name` or `--sort koid` changes the order.
 `-p KOID[,KOID...]` and `--name TEXT` filter rows, and `--limit 10` bounds the
 number displayed. CPU percentages use the total runtime across all host CPUs;
 the summary remains system-wide even when process rows are filtered.
+
+### `editor`: interactive text editing
+
+`editor FILE` opens UTF-8 text for multiline editing. Ctrl-S saves, Ctrl-O chooses
+a save path, Ctrl-F searches, and Ctrl-Q exits with confirmation for unsaved
+changes. Arrows, Home/End and Page Up/Page Down move through the document.
+
+It belongs to the formal system image and uses terminal-service through the
+shared `hyper-text-ui` library. See [editor](../docs/editor.md) for bounds,
+filesystem save behavior and verification commands.
 
 ### `sh`: the foreground Native shell
 

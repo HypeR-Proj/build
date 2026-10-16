@@ -16,6 +16,8 @@ members = [
     "../lib/bootstrap-handoff",
     "../lib/journal",
     "../lib/terminal",
+    "../lib/text-ui",
+    "../lib/text-ui/shared",
     "../lib/block",
     "../lib/fs-service",
     "../lib/vm-image",
@@ -54,6 +56,8 @@ hyper-component-config = { path = "../lib/component-config" }
 hyper-component = { path = "../lib/component" }
 hyper-bootstrap-handoff = { path = "../lib/bootstrap-handoff" }
 hyper-terminal = { path = "../lib/terminal" }
+hyper-text-ui = { path = "../lib/text-ui" }
+hyper-text-ui-shared = { path = "../lib/text-ui/shared" }
 hyper-vm-image = { path = "../lib/vm-image" }
 hyper-vm-policy = { path = "../lib/vm-policy" }
 hyper-vm-policy-shared = { path = "../lib/vm-policy/shared" }
