@@ -195,6 +195,7 @@ test-runtime-crash: image native-initramfs
 		--isolation-only
 
 .PHONY: test-storage-failure
+test-storage-failure: APP_BUILD_PROFILE = development
 test-storage-failure: image app app-boot native-fixture-init $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "storage recovery acceptance requires aarch64" >&2; exit 2; }
 	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \

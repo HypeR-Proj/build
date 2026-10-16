@@ -388,6 +388,7 @@ dependencies = [
  "hyper-os",
  "hyper-rt",
  "hyper-service-ipc",
+ "serde_json",
 ]
 
 [[package]]
@@ -638,6 +639,10 @@ dependencies = [
  "hyper-rt",
  "hyper-terminal",
 ]
+
+[[package]]
+name = "hyper-test-report"
+version = "0.0.0"
 
 [[package]]
 name = "hyper-text-ui"
