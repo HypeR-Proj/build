@@ -166,6 +166,7 @@ test-board-storage: app image
 # Formal-root and recovery acceptance own a disposable disk and reuse only
 # their bootstrap archive for the controller-free boot.
 .PHONY: test-boot-system
+test-boot-system: APP_EXTRA_BINS += hyper-fs-worker-probe hyper-test-report
 test-boot-system: app image
 	@test "$(ARCH)" = aarch64 || { echo "boot/system acceptance requires aarch64" >&2; exit 2; }
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
@@ -198,6 +199,18 @@ test-boot-system: app image
 			--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 			--disk "$$fixture/$$case/disk.img" --board "$$fixture/deployment.json" \
 			--provider-case "$$case" --log "$$fixture/$$case/accept.log" || exit $$?; \
+	done && \
+	python3 -B tests/qemu/verify-fs-worker-supervision.py prepare \
+		--system-root "$$fixture/system-root" --board "$$fixture/deployment.json" \
+		--output "$$fixture/worker-failure" --mkfs-erofs "$(EROFS_MKFS)" \
+		--worker "$(APP_OUTPUT)/fs-worker-probe" --reporter "$(APP_OUTPUT)/test-report" \
+		--artifact "alpine=$$fixture/alpine.itb" \
+		--artifact "alpine-rootfs=$$fixture/alpine.ext4" && \
+	for case in exit fault stop-fault; do \
+		$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-fs-worker-supervision.py run \
+			--case "$$case" --qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+			--initramfs "$$fixture/bootstrap.cpio" --disk "$$fixture/worker-failure/disk.img" \
+			--board "$$fixture/deployment.json" --log "$$fixture/worker-failure/$$case.log" || exit $$?; \
 	done
 
 .PHONY: test-board-business

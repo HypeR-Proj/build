@@ -284,6 +284,7 @@ name = "hyper-fs-backend-system"
 version = "0.0.0"
 dependencies = [
  "hyper-block",
+ "hyper-component",
  "hyper-filesystem",
  "hyper-os",
  "hyper-rt",
@@ -332,6 +333,17 @@ version = "0.0.0"
 dependencies = [
  "hyper-filesystem",
  "hyper-os",
+ "hyper-service",
+]
+
+[[package]]
+name = "hyper-fs-worker-probe"
+version = "0.0.0"
+dependencies = [
+ "hyper-filesystem",
+ "hyper-fs-service",
+ "hyper-os",
+ "hyper-rt",
  "hyper-service",
 ]
 

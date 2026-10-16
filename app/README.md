@@ -290,6 +290,11 @@ the existing mount. It has no forced or lazy mode. A clean shutdown returns the
 worker's exclusive block owner to the manager for a later mount; a crashed
 worker is not silently reactivated.
 
+The formal manager reports unexpected worker exits through its journal stream.
+`componentctl status /fs-backend` shows the failure summary; `mount` includes
+each worker's process KOID and terminal reason. A failed volume does not stop
+the manager or its other workers.
+
 Both commands need filesystem control authority, not raw device access. The
 formal session manager passes it to its shell, which delegates only WAIT|WRITE
 to `/bin/mount` and `/bin/umount`. Independent static recovery
@@ -553,7 +558,7 @@ The normal profile installs these independent std/clap applications under
 
 | Command | Supported operations |
 | --- | --- |
-| `ls [-ad1rtS] [--bytes] PATH...` | List entries or directory operands (`-d`), sort by name/size/modification time, and show permissions, sizes and symlink targets (`name@ -> target`, including dangling links). `-1` omits metadata and targets but retains type suffixes. |
+| `ls [-ad1rtS] [--bytes] PATH...` | List entries or directory operands (`-d`), sort by name/size/modification time, and show permissions, sizes and symlink targets (`name@ -> target`, including dangling links). `-1` omits metadata and targets but retains known type suffixes. Unreadable child attributes appear as `?`; healthy entries remain visible, the failed path is reported on stderr, and the command returns failure. |
 | `cat [-nbs] FILE...` | Stream files or stdin; number all/nonblank lines and squeeze repeated blank lines. State continues across inputs. |
 | `grep [-ix] [-m NUM] PATTERN FILE...` | Filter text; `-m NUM` limits selected lines per input, `-x` requires a whole-line match, and `--line-buffered` flushes selected lines. See [text filtering](../docs/shell.md#grep). |
 | `echo [-n] [-e\|-E] TEXT...` | Print arguments, optionally omit the newline or interpret backslash escapes. `--` ends option parsing. |
