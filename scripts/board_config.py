@@ -161,7 +161,9 @@ def io_vm(value):
     config = vm_configuration(value['configuration'])
     if config['memory-bytes'] != 64 * MIB or config['vcpus'] != 1:
         raise ValueError('resident I/O VM requires 64 MiB and one vCPU')
-    device_selector(value['io-device'], ('virtio-mmio-scsi', 'bcm2712-sdhci'))
+    device_selector(value['io-device'], ('virtio-mmio-scsi', 'bcm2712-sdhci', 'pci-function'))
+    if value['io-device']['profile'] == 'pci-function' and value['io-device']['pci-id'] != '1af4:1048':
+        raise ValueError('PCI storage requires a modern virtio-scsi function (1af4:1048)')
     io_networks(value)
     return value
 
@@ -228,10 +230,15 @@ class Board:
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
         if 'network-device' in resident:
-            expected = {'qemu-direct': 'virtio-mmio-net',
-                        'rpi5-firmware': 'pci-function'}[data['boot']]
-            if resident['network-device']['profile'] != expected:
+            network = resident['network-device']
+            expected = ({'virtio-mmio-net', 'pci-function'} if data['boot'] == 'qemu-direct'
+                        else {'pci-function'})
+            if network['profile'] not in expected:
                 raise ValueError('network controller does not match the board boot profile')
+            if network['profile'] == 'pci-function':
+                identity = '1af4:1041' if data['boot'] == 'qemu-direct' else '1de4:0001'
+                if network['pci-id'] != identity:
+                    raise ValueError('PCI network identity does not match the board boot profile')
         disk_id = uuid.UUID(data['disk']['uuid'])
         partitions = []
         start = ALIGN_SECTORS

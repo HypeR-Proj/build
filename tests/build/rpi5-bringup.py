@@ -147,6 +147,8 @@ class BringupTests(unittest.TestCase):
         self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 1024)
         self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
         qemu = bringup.Board.load(ROOT / 'boards/qemu.json')
+        # QEMU exercises PCI by default; RPi5 retains the qualified MMIO guest.
+        self.assertEqual(qemu.source['virtual-machines'][0]['configuration'].pop('virtio-transport'), 'pci')
         self.assertEqual(board.source['virtual-machines'], qemu.source['virtual-machines'])
         self.assertEqual(board.source['files']['vm/alpine.itb'], 'alpine')
         manifest = services(board, ROOT)

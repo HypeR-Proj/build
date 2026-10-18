@@ -32,8 +32,38 @@ def network_arguments(board):
     """Expose only an explicitly assigned QEMU uplink; Linux owns guest TAPs."""
     if board is None or 'network-device' not in board.source['io-vm']:
         return []
+    pci = board.source['io-vm']['network-device']['profile'] == 'pci-function'
+    # Direct kernel boot needs no PXE option ROM or distribution firmware package.
+    model = 'virtio-net-pci,addr=2.0,disable-legacy=on,romfile=' if pci else 'virtio-net-device'
     return ['-netdev', 'user,id=physicalnet', '-device',
-            'virtio-net-device,id=physicalnet,netdev=physicalnet,iommu_platform=on']
+            model + ',id=physicalnet,netdev=physicalnet,iommu_platform=on']
+
+
+def storage_controller(board):
+    pci = board is not None and board.source['io-vm']['io-device']['profile'] == 'pci-function'
+    model = 'virtio-scsi-pci,addr=1.0,disable-legacy=on' if pci else 'virtio-scsi-device'
+    return model + ',id=physicalscsi,iommu_platform=on'
+
+
+def machine_arguments(board, machine):
+    pci = board is not None and any(device.get('profile') == 'pci-function'
+                                   for key in ('io-device', 'network-device')
+                                   if (device := board.source['io-vm'].get(key)))
+    if not pci:
+        return machine
+    options = machine.split(',')
+    # Never allow an environment override to silently remove the isolation
+    # boundary required by the selected physical PCI deployment.
+    for option in options:
+        if option.startswith('iommu=') and option != 'iommu=smmuv3':
+            raise ValueError('physical PCI assignment requires iommu=smmuv3')
+        if option.startswith('default-bus-bypass-iommu=') and option != 'default-bus-bypass-iommu=off':
+            raise ValueError('physical PCI assignment forbids IOMMU bypass')
+    if 'iommu=smmuv3' not in options:
+        options.append('iommu=smmuv3')
+    if 'default-bus-bypass-iommu=off' not in options:
+        options.append('default-bus-bypass-iommu=off')
+    return ','.join(options)
 
 
 def prepare_disk(path, size):
@@ -65,7 +95,8 @@ def main():
     else:
         if args.disk.stat().st_size < 8 * 1024 * 1024:
             parser.error('I/O VM disk must be at least 8 MiB')
-    command = [args.qemu, '-machine', os.environ.get('QEMU_MACHINE', 'virt,virtualization=on,gic-version=3'),
+    machine = machine_arguments(board, os.environ.get('QEMU_MACHINE', 'virt,virtualization=on,gic-version=3'))
+    command = [args.qemu, '-machine', machine,
                '-cpu', os.environ.get('QEMU_CPU', 'max'), '-smp', os.environ.get('QEMU_CPUS', '4'),
                '-m', os.environ.get('QEMU_MEMORY', '1G'), '-nodefaults', '-display', 'none',
                '-nic', 'none', '-no-reboot',
@@ -74,7 +105,7 @@ def main():
                '-global', 'virtio-mmio.force-legacy=false',
                '-drive', 'if=none,id=physicaldisk,format=raw,file='
                + str(args.disk.resolve()).replace(',', ',,') + ',cache=writeback',
-               '-device', 'virtio-scsi-device,id=physicalscsi,iommu_platform=on',
+               '-device', storage_controller(board),
                '-device', 'scsi-hd,drive=physicaldisk,bus=physicalscsi.0,scsi-id=0,lun=0']
     command.extend(network_arguments(board))
     # The monitor's escape processing belongs to interactive terminals. Keep

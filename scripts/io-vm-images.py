@@ -104,6 +104,12 @@ def deployment_board(board, mode):
         # Their reduced snapshot must not inherit a production uplink claim.
         source['io-vm'].pop('network-device', None)
         source['io-vm'].pop('networks', None)
+        if source['boot'] == 'qemu-direct':
+            # The standalone standby runner uses the MMIO compatibility path;
+            # production board boots retain their selected PCI or MMIO device.
+            source['io-vm']['io-device'] = {
+                'profile': 'virtio-mmio-scsi', 'compatible': 'virtio,mmio',
+            }
         for vm in source['virtual-machines']:
             vm.pop('network', None)
         arguments = re.sub(r'(?<!\S)hyper\.(?:mode|volumes)=\S+\s*', '', config['bootargs'])

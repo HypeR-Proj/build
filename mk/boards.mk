@@ -240,7 +240,8 @@ test-board-network: app image
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/network.XXXXXX") && \
 	python3 -B tests/qemu/verify-network.py prepare \
 		--board "$(CURDIR)/boards/qemu.json" --output "$$fixture/config.json" \
-		--virtio-transport "$(or $(NETWORK_VIRTIO_TRANSPORT),mmio)" && \
+		--virtio-transport "$(or $(NETWORK_VIRTIO_TRANSPORT),pci)" \
+		--physical-transport "$(or $(NETWORK_PHYSICAL_TRANSPORT),pci)" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" && \
@@ -248,6 +249,12 @@ test-board-network: app image
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/network.log" \
 		$(if $(NETWORK_TX_OFFLOAD),--expect-tx-offload "$(NETWORK_TX_OFFLOAD)")
+
+# Dedicated legacy transport coverage: real physical MMIO block/network,
+# bootstrap handoff, guest I/O, endpoint reset and repeated grant retirement.
+.PHONY: test-board-mmio
+test-board-mmio:
+	$(MAKE) test-board-network NETWORK_PHYSICAL_TRANSPORT=mmio NETWORK_VIRTIO_TRANSPORT=mmio
 
 # Fault injection is compiled into a separate output tree; normal app artifacts
 # and subsequent make run images never inherit the test features.

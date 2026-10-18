@@ -543,7 +543,9 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(board.source['io-vm']['io-device']['profile'], 'bcm2712-sdhci')
         self.assertEqual(board.bootstrap_clients(), qemu.bootstrap_clients())
         self.assertEqual(board.bootstrap_networks(), qemu.bootstrap_networks())
-        self.assertEqual(board.vms(), qemu.vms())
+        qemu_fleet = copy.deepcopy(qemu.vms())
+        self.assertEqual(qemu_fleet['virtual-machines'][0]['configuration'].pop('virtio-transport'), 'pci')
+        self.assertEqual(board.vms(), qemu_fleet)
         self.assertEqual(len(board.source['virtual-machines']), 1)
 
         for source, controller in ((board.source, qemu.source['io-vm']['network-device']),
