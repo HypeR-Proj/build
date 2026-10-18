@@ -328,7 +328,8 @@ operation; inspect `vmm status` before retrying. `running` means vCPU execution
 has started, not that guest userspace or networking is ready. Ctrl-] opens the
 console detach menu. Only one client may attach to a VM's console at a time.
 The affinity example allows vCPU 0 to run on host CPUs 1 or 3; CPU numbers are
-zero-based, and the allowed set does not enable automatic load balancing.
+zero-based. Automatic Fair balancing can move a Ready vCPU within this set.
+Select one CPU to keep the vCPU on that host CPU.
 
 `create` reads a definition from a configuration file; `delete` removes a stopped
 definition. Both change only the running manager's inventory, without editing
@@ -431,8 +432,14 @@ No runtime load addresses are invented for files that have not been executed.
 [ps](ps/) lists visible Native processes with their KOIDs, immutable service
 names, lifecycle states and active/pending thread counts. `ps -T` also groups
 threads beneath their process and includes unowned kernel threads; per-CPU idle
-threads are labelled `idle/CPU`. `ps --name vm-runtime` filters by a name
-substring. `ps -p 0x100000001,0x100000002` selects multiple processes; IDs accept
+and timer threads are labelled `idle/CPU` and `ktimer/CPU`. Native workers show
+service-assigned names such as `journal-admit`, `terminal-recovery`, and
+`console-input-admit`; the userspace thread cleanup worker is `thread-reaper`.
+Applications assign these through `std::thread::Builder::name` or rename their
+current thread with `hyper_os::thread::set_current_name`. Names are diagnostic
+labels; use KOIDs to distinguish threads with the same role.
+`ps --name vm-runtime` filters by a name substring.
+`ps -p 0x100000001,0x100000002` selects multiple processes; IDs accept
 decimal or hexadecimal and print as full-width hexadecimal, matching `handle`.
 Name and ID filters intersect. `--no-headers` emits rows for pipelines. The IDs are
 kernel-object identities, not Unix PIDs. Use `handle` for a thread's scheduler
