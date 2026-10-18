@@ -179,6 +179,24 @@ class BoardTests(unittest.TestCase):
                 packer.image_tool('/missing/mkfs.fat', 'mkfs.fat', 'dosfstools')
             run.assert_not_called()
 
+    def test_missing_ext4_tools_use_private_build(self):
+        with patch.object(packer, '_find_executable', return_value=None), \
+                patch.object(packer.shutil, 'which', return_value=None), \
+                patch.object(packer, 'ensure_e2fsprogs', return_value=Path('/private/sbin')) as build:
+            for tool in ('mke2fs', 'debugfs'):
+                self.assertEqual(packer.image_tool(tool, tool, 'e2fsprogs'), f'/private/sbin/{tool}')
+            self.assertEqual(build.call_count, 2)
+
+    def test_ext4_tool_override_and_path_remain_authoritative(self):
+        with patch.object(packer, 'ensure_e2fsprogs') as build:
+            with patch.object(packer, '_find_executable', return_value='/tools/mke2fs'):
+                self.assertEqual(packer.image_tool('mke2fs', 'mke2fs', 'e2fsprogs'), '/tools/mke2fs')
+            with patch.object(packer, '_find_executable', return_value=None), \
+                    patch.object(packer.shutil, 'which', return_value=None):
+                with self.assertRaisesRegex(ValueError, 'was not found'):
+                    packer.image_tool('/missing/mke2fs', 'mke2fs', 'e2fsprogs')
+            build.assert_not_called()
+
     def test_build_defaults_follow_custom_board_and_explicit_inputs_stay_strict(self):
         source = copy.deepcopy(self.source)
         source['files']['vm/alpine.itb'] = 'custom'

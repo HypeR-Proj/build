@@ -199,6 +199,10 @@ $(KERNEL_TARGETS):
 
 include mk/sdk-app.mk
 
+.PHONY: host-e2fsprogs
+host-e2fsprogs:
+	HOST_CC="$(HOST_CC)" python3 -B scripts/host_e2fsprogs.py
+
 $(NEWC_PACK): tools/newc-pack.c
 	mkdir -p "$(dir $(NEWC_PACK))"
 	"$(HOST_CC)" -std=c17 -Wall -Wextra -Werror "$<" -o "$@"

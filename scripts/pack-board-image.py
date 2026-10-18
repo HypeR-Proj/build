@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 
 from board_config import Board, GPT_ENTRIES, GPT_ENTRY_BYTES, GPT_TABLE_SECTORS, SECTOR
+from host_e2fsprogs import ensure_e2fsprogs
 
 
 def gpt(board):
@@ -315,6 +316,11 @@ def image_tool(program, default, formula):
             subprocess.TimeoutExpired,
         ):
             pass
+
+    # MacPorts' e2fsprogs pulls in ossp-uuid, which conflicts with the libuuid
+    # required by erofs-utils. Build only our ext4 tools with private libraries.
+    if program == default and formula == 'e2fsprogs' and program in ('mke2fs', 'debugfs'):
+        return str(ensure_e2fsprogs() / program)
 
     raise ValueError(
         f"{program} was not found; install {formula} "
