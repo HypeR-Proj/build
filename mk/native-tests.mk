@@ -278,3 +278,39 @@ test-services: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-services.py run-rejected-console \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
 		--initramfs "$$fixture/rejected-console/services.cpio" --log "$$fixture/rejected-console.log"
+
+.PHONY: test-service-failure
+.PHONY: test-process-retirement
+test-process-retirement: image native-initramfs
+	@fixture=$$(mktemp -d "$(APP_OUTPUT)/retirement.XXXXXX") && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-process-retirement.py \
+		--composition "$(NATIVE_INITRAMFS).deployment" --output "$$fixture/prepared" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)"
+
+test-service-failure: image
+	$(MAKE) native-initramfs ARCH="$(ARCH)" \
+		APP_OUTPUT="$(APP_OUTPUT)/service-failure-apps" \
+		APP_FEATURES=hyper-component-manager/test-service-failure,hyper-session-manager/test-service-failure \
+		NATIVE_INITRAMFS="$(APP_OUTPUT)/service-failure.cpio"
+	@fixture=$$(mktemp -d "$(APP_OUTPUT)/service-failure.XXXXXX") && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-service-failure.py \
+		--composition "$(APP_OUTPUT)/service-failure.cpio.deployment" --output "$$fixture" \
+		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)"
+
+# Separate real-storage fault fixtures keep the normal disk and Native image intact.
+.PHONY: test-service-provider-failure
+test-service-provider-failure: image
+	@test "$(ARCH)" = aarch64 || { echo "provider failure tests require aarch64" >&2; exit 2; }
+	@mkdir -p "$(APP_OUTPUT)"
+	@fixture=$$(mktemp -d "$(APP_OUTPUT)/service-provider-failure.XXXXXX") && \
+	$(MAKE) board-initramfs board-guest-images BOARD=qemu \
+		BOARD_CONFIG="$(CURDIR)/boards/qemu.json" BOARD_OUTPUT="$$fixture" \
+		APP_OUTPUT="$(APP_OUTPUT)/service-failure-apps" \
+		APP_FEATURES=hyper-component-manager/test-service-failure,hyper-session-manager/test-service-failure && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-service-failure.py \
+		--composition "$$fixture" --output "$$fixture/failures" \
+		--board "$$fixture/deployment.json" --apps "$(APP_OUTPUT)/service-failure-apps" \
+		--mkfs-erofs "$(EROFS_MKFS)" --packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)"

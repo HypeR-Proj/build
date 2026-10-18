@@ -509,6 +509,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-retirement-probe"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+]
+
+[[package]]
 name = "hyper-rm"
 version = "0.0.0"
 dependencies = [

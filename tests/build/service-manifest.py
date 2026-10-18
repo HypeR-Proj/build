@@ -55,6 +55,9 @@ class ManifestTests(unittest.TestCase):
                 core_path = directory / 'core.json'
                 core_path.write_text(json.dumps(core))
                 units, startup = component_composition.compose(core, formal)
+                for name in ('console-raw', 'io-runtime', 'fs-backend', 'journal', 'session-manager'):
+                    self.assertTrue(units[name]['program']['critical'], name)
+                self.assertFalse(units['vm-manager']['program']['critical'])
                 policy = directory / board
                 policy.mkdir()
                 for name, unit in units.items():
