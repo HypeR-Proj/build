@@ -256,6 +256,34 @@ test-board-network: app image
 test-board-mmio:
 	$(MAKE) test-board-network NETWORK_PHYSICAL_TRANSPORT=mmio NETWORK_VIRTIO_TRANSPORT=mmio
 
+# Revoke a live physical NIC RX page in a disposable, unmodified Linux I/O VM.
+# The test hook is absent from production images and exposes no Native control API.
+.PHONY: test-board-dma-revoke
+test-board-dma-revoke:
+	@test "$(ARCH)" = aarch64 || { echo "DMA revocation acceptance requires aarch64" >&2; exit 2; }
+	$(CARGO) test --manifest-path kernel/tests/host/Cargo.toml \
+		--features io-dma-revoke-test test_revocation
+	mkdir -p "$(BOARD_TEST_OUTPUT)"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/dma-revoke.XXXXXX") && \
+	build="$(abspath $(BOARD_TEST_OUTPUT))/dma-revoke-kernel" && \
+	CARGO_TARGET_DIR="$$build" $(MAKE) -C "$(KERNEL_DIRECTORY)" image \
+		CONFIG_FILE="$(abspath $(or $(CONFIG_FILE),kernel/configs/qemu_aarch64_defconfig))" \
+		KERNEL_OUTPUT="$$build/$(KERNEL_TARGET)/$(KERNEL_PROFILE)" \
+		KALLSYMS_SEED_TARGET="$$build/kallsyms-seed" \
+		CARGO_FEATURES='--features io-dma-revoke-test' \
+		&& cp "$$build/$(KERNEL_TARGET)/$(KERNEL_PROFILE)/hyper.img" "$$fixture/hyper.img" && \
+	$(MAKE) -o image board-image BOARD=qemu APP_EXTRA_BINS=hyper-test-report \
+		KERNEL_IMAGE="$$fixture/hyper.img" \
+		BOARD_CONFIG="$(CURDIR)/boards/qemu.json" BOARD_OUTPUT="$$fixture" \
+		APP_OUTPUT="$$fixture/apps" BOARD_IMAGE="$$fixture/disk.img" \
+		BOARD_EXTRA_ENTRIES="0755 system:bin/test-report $$fixture/apps/test-report" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-io-dma-revoke.py \
+		--qemu "$(QEMU)" --image "$$fixture/hyper.img" --initramfs "$$fixture/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/deployment.json" --log "$$fixture/accept.log" && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-io-dma-revoke.py --before-adoption \
+		--qemu "$(QEMU)" --image "$$fixture/hyper.img" --initramfs "$$fixture/bootstrap.cpio" \
+		--disk "$$fixture/disk.img" --board "$$fixture/deployment.json" --log "$$fixture/before-adoption.log"
+
 # Fault injection is compiled into a separate output tree; normal app artifacts
 # and subsequent make run images never inherit the test features.
 .PHONY: test-io-console-hotplug
