@@ -437,6 +437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-lifecycle-stress"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+]
+
+[[package]]
 name = "hyper-ln"
 version = "0.0.0"
 dependencies = [

@@ -40,6 +40,7 @@ class DeploymentTests(unittest.TestCase):
                     '--profile', profile, '--link-mode', 'dynamic'], text=True).split()
                 self.assertIn('hyper-echo', targets)
                 self.assertEqual('hyper-terminal-probe' in targets, probe)
+                self.assertEqual('hyper-lifecycle-stress' in targets, probe)
                 self.assertNotIn('hyper-native-test-init', targets)
                 entries = [entry for entry in deployment.load(MANIFEST)
                            if entry.get('staged') in ('echo', 'terminal-probe')]

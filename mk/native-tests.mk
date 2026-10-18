@@ -94,6 +94,16 @@ test-less: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-less.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/less.log"
 
+# Correctness workloads only; hardware throughput benchmarks remain manual.
+STRESS_SEED ?= 175
+STRESS_ROUNDS ?= 12
+STRESS_LOG ?= $(APP_OUTPUT)/lifecycle-stress-$(QEMU_CPUS).log
+.PHONY: test-lifecycle-stress
+test-lifecycle-stress: image native-initramfs
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-lifecycle-stress.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(NATIVE_INITRAMFS)" \
+		--log "$(STRESS_LOG)" --seed "$(STRESS_SEED)" --rounds "$(STRESS_ROUNDS)"
+
 # Native authority fixture boots as /init, independently of product services.
 test-vm-smoke: image app-fetch $(NEWC_PACK)
 	@test "$(ARCH)" = riscv64 -o "$(ARCH)" = aarch64 || { echo "VM smoke fixture requires aarch64 or riscv64" >&2; exit 2; }
