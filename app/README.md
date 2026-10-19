@@ -457,8 +457,16 @@ backing and reclaimable slab, including file pages currently pinned or loading.
 A guest's backend aliases do not count the same backing again. This is host
 physical accounting, not the guest Linux view of free RAM.
 
-`Cache` distinguishes reclaimable file and slab pages. `Ramfs` reports logical
-payload capacity within kernel memory; it is not discardable cache or another
+`Cache` distinguishes reclaimable file and slab pages and explicitly reports
+non-reclaimable payloads (pinned/loading pages). File reclaimability includes
+shrinker-managed index/header backing, so warming the cache does not inflate
+`used` by its disposable metadata. It is an estimate: live pins may retain a
+minimum metadata set, and `available` is not an allocation guarantee.
+Non-reclaimable payloads are included in both `buffered/cached` and `used`:
+`used = reserved + kernel + user + guest + non-reclaimable cache + other`.
+Use `free --bytes` to reconcile exact totals without display rounding.
+`Ramfs` reports logical payload capacity within kernel memory; it is not
+discardable cache or another
 physical pool. Unknown censuses appear as `—` in dependent fields without hiding
 valid physical totals. See [memory cache reporting](../docs/applications.md#memory-cache-reporting)
 for the identities, overlap rules and estimation limits.
