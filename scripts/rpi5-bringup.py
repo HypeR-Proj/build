@@ -57,6 +57,8 @@ def main():
     parser.add_argument('--recovery', action='store_true',
                         help='stage1-only recovery image; no formal system is included')
     parser.add_argument('--artifact', action='append', default=[], metavar='NAME=PATH')
+    parser.add_argument('--default-artifact', action='append', default=[], metavar='NAME=PATH',
+                        help='optional build input, used only when selected by the board')
     parser.add_argument('--board', type=Path, default=ROOT / 'boards/rpi5-native.json')
     parser.add_argument('--mkfs-erofs', default='mkfs.erofs')
     parser.add_argument('--system-root', type=Path,
@@ -76,7 +78,8 @@ def main():
         if board.source['boot'] != 'rpi5-firmware':
             raise ValueError('Pi 5 image requires the firmware boot profile')
         artifacts = packer.artifact_inputs(
-            board, [f'{name}={path}' for name, path in artifacts.items()], args.artifact)
+            board, [f'{name}={path}' for name, path in artifacts.items()] + args.default_artifact,
+            args.artifact)
         packer.build(board, artifacts, args.output, replace=args.replace,
                      system_root=args.system_root, mkfs_erofs=args.mkfs_erofs)
         print(f'Pi 5 image: {args.output}')

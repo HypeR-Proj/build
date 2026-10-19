@@ -40,6 +40,7 @@ recovery-initramfs: app-boot $(NEWC_PACK)
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(NATIVE_INITRAMFS).deployment" --initramfs "$(NATIVE_INITRAMFS)" \
 		--deployment "$(APP_DEPLOYMENT)" --profile system \
+		$(SYSTEM_CONFIG_ARGS) \
 		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
 		--std "$(NATIVE_STD_TEST_OUTPUT)" --arch "$(NATIVE_ARCH)" \
 		--boot-components $(APP_BOOT_COMPONENTS) \
@@ -69,8 +70,8 @@ rpi5-sd: image
 		--initramfs "$(RPI5_BRINGUP_OUTPUT)/bootstrap.cpio" \
 		--output "$(RPI5_BRINGUP_OUTPUT)/disk.img" $(BOARD_IMAGE_REPLACE) \
 		--system-root "$(RPI5_BRINGUP_OUTPUT)/system-root" --mkfs-erofs "$(EROFS_MKFS)" \
-		--artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
-		--artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
+		--default-artifact "alpine=$(RPI5_BRINGUP_OUTPUT)/alpine.itb" \
+		--default-artifact "alpine-rootfs=$(RPI5_BRINGUP_OUTPUT)/alpine.ext4" $(BOARD_ARTIFACTS)
 
 .PHONY: board-deployment
 board-deployment:
@@ -93,6 +94,7 @@ board-initramfs: board-deployment app app-boot fit-pack $(NEWC_PACK)
 	python3 -B scripts/pack-native-system.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--deployment "$(APP_DEPLOYMENT)" --arch "$(NATIVE_ARCH)" \
+		$(SYSTEM_CONFIG_ARGS) \
 		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" \
 		--sdk "$(SDK_OUTPUT)" --std "$(NATIVE_STD_TEST_OUTPUT)" \
 		--boot-components $(APP_BOOT_COMPONENTS) \
@@ -112,9 +114,14 @@ board-rebuild: image board-initramfs board-guest-images
 	@echo "Rebuilding $(BOARD_IMAGE): disk data will be reset after successful packing."
 	$(MAKE) -o image -o board-initramfs -o board-guest-images board-image BOARD_IMAGE_REPLACE=--replace
 
-board-guest-images: board-deployment guest-itb
+board-guest-images: board-deployment
+	@artifacts=$$(python3 -B scripts/prepare-native-layout.py --board "$(BOARD_DEPLOYMENT)" --artifacts) || exit $$?; \
+	case " $$artifacts " in *' alpine '*|*' alpine-rootfs '*) ;; *) exit 0 ;; esac; \
+	$(MAKE) guest-itb && \
 	python3 -B scripts/pack-guest-disk.py --board "$(BOARD_DEPLOYMENT)" \
 		--rootfs "$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/rootfs.tar" --output "$(BOARD_OUTPUT)/alpine.ext4"
+	@artifacts=$$(python3 -B scripts/prepare-native-layout.py --board "$(BOARD_DEPLOYMENT)" --artifacts) || exit $$?; \
+	case " $$artifacts " in *' alpine '*) ;; *) exit 0 ;; esac; \
 	"$(FIT_PACK)" "$(BOARD_OUTPUT)/alpine.itb" "$(NATIVE_GUEST_ARCH)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/Image" "$(NATIVE_GUEST_LOAD)" "$(NATIVE_GUEST_LOAD)" \
 		"$(KERNEL_DIRECTORY)/target/guest/$(ARCH)/initramfs.cpio.gz"
@@ -144,6 +151,23 @@ board-run: board-check-system
 	$(NATIVE_QEMU_ENV) python3 -B scripts/run-io-vm.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(BOARD_OUTPUT)/bootstrap.cpio" \
 		--disk "$(BOARD_IMAGE)" --board "$(BOARD_DEPLOYMENT)"
+
+# Keep the command reporter in a test-only product selection. The ordinary
+# minimal product never deploys acceptance programs or kernel test hooks.
+.PHONY: test-product-config test-product-config-run
+test-product-config:
+	python3 -B tests/qemu/verify-product-config.py prepare \
+		--output "$(BOARD_TEST_OUTPUT)/product-config/product.json"
+	$(MAKE) test-product-config-run BOARD=qemu \
+		SYSTEM_CONFIG="$(abspath $(BOARD_TEST_OUTPUT))/product-config/product.json" \
+		BOARD_CONFIG="$(CURDIR)/boards/qemu-minimal.json" \
+		BOARD_OUTPUT="$(abspath $(BOARD_TEST_OUTPUT))/product-config"
+
+test-product-config-run: board-build
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-product-config.py run \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(BOARD_OUTPUT)/bootstrap.cpio" \
+		--disk "$(BOARD_IMAGE)" --board "$(BOARD_DEPLOYMENT)" \
+		--system-config "$(SYSTEM_CONFIG)" --log "$(BOARD_OUTPUT)/accept.log"
 
 .PHONY: test-board-storage
 test-board-storage: app image
@@ -262,15 +286,17 @@ test-board-mmio:
 test-board-dma-revoke:
 	@test "$(ARCH)" = aarch64 || { echo "DMA revocation acceptance requires aarch64" >&2; exit 2; }
 	$(CARGO) test --manifest-path kernel/tests/host/Cargo.toml \
-		--features io-dma-revoke-test test_revocation
+		--features kernel-test,io-dma-revoke-test test_revocation
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/dma-revoke.XXXXXX") && \
 	build="$(abspath $(BOARD_TEST_OUTPUT))/dma-revoke-kernel" && \
 	CARGO_TARGET_DIR="$$build" $(MAKE) -C "$(KERNEL_DIRECTORY)" image \
+		$(SYSTEM_KERNEL_ARGS) \
+		KERNEL_BUILD_ROOT="$$build" \
 		CONFIG_FILE="$(abspath $(or $(CONFIG_FILE),kernel/configs/qemu_aarch64_defconfig))" \
 		KERNEL_OUTPUT="$$build/$(KERNEL_TARGET)/$(KERNEL_PROFILE)" \
 		KALLSYMS_SEED_TARGET="$$build/kallsyms-seed" \
-		CARGO_FEATURES='--features io-dma-revoke-test' \
+		CARGO_FEATURES='--features kernel-test,io-dma-revoke-test' \
 		&& cp "$$build/$(KERNEL_TARGET)/$(KERNEL_PROFILE)/hyper.img" "$$fixture/hyper.img" && \
 	$(MAKE) -o image board-image BOARD=qemu APP_EXTRA_BINS=hyper-test-report \
 		KERNEL_IMAGE="$$fixture/hyper.img" \

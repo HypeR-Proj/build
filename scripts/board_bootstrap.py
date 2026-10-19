@@ -36,7 +36,7 @@ def linux_overlay(board, original):
 
 def services(board, root):
     manifest = json.loads((root / 'bootstrap/stage1/init/config/services-with-vms.json').read_bytes())
-    manifest['virtual-machines']['config'] = '/data/vms.json'
+    manifest['virtual-machines']['config'] = board.vm_config_path
     manifest['services'].append(filesystem_service())
     for service in manifest['services']:
         if service['name'] == 'session-manager':

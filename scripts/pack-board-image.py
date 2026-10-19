@@ -376,8 +376,9 @@ def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=F
           system_root=None, mkfs_erofs='mkfs.erofs'):
     if not replace and (output.exists() or output.is_symlink()):
         raise ValueError('refusing to overwrite an existing image; choose a new output path')
-    mkfs = image_tool(mkfs, 'mkfs.fat', 'dosfstools')
-    mcopy = image_tool(mcopy, 'mcopy', 'mtools')
+    if any(part.filesystem == 'fat' and not part.image for part in board.partitions):
+        mkfs = image_tool(mkfs, 'mkfs.fat', 'dosfstools')
+        mcopy = image_tool(mcopy, 'mcopy', 'mtools')
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.board-image-', dir=output.parent) as temporary:
         staging = Path(temporary)

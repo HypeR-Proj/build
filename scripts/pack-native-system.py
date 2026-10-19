@@ -17,6 +17,7 @@ import tempfile
 from board_config import Board, unique_object
 from native_libraries import add_dependencies, read_image, validate as validate_libraries
 import component_composition
+import system_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +43,7 @@ def write_json(path, value):
         path.write_text(data)
 
 
-def services(path):
+def services(path, system_images=None):
     source = json.loads(path.read_text(), object_pairs_hook=unique_object)
     core = {key: value for key, value in source.items()
             if key not in ('virtual-machines', 'services')}
@@ -61,6 +62,17 @@ def services(path):
         if not service['image'].startswith('/'):
             raise ValueError(f"service {service['name']} image must be absolute")
         (core if phase == 'boot' else system)['services'].append(service)
+    if system_images is not None:
+        system['services'] = [service for service in system['services']
+                              if service['image'] in system_images]
+        if not any(Path(service['image']).name == 'vm-manager' for service in system['services']):
+            system.pop('virtual-machines', None)
+            for service in system['services']:
+                service['capabilities'] = [grant for grant in service.get('capabilities', [])
+                                           if grant['source'] != 'bootstrap.vm-client-connection-channel']
+        names = {service['name'] for service in core['services'] + system['services']}
+        for service in system['services']:
+            service['after'] = [name for name in service.get('after', []) if name in names]
     return core, system
 
 
@@ -80,15 +92,25 @@ def scoped_path(value, selected):
 
 def compose_entries(args, native):
     """Compose independent boot and formal components, including scoped overrides."""
+    directories = [args.boot_apps] if args.recovery_only else [args.apps, args.boot_apps]
+    for directory in directories:
+        deployment.require_complete_install(directory)
     expected = 'recovery' if args.recovery_only else 'split'
     if native.get('layout') != expected:
         raise ValueError(f'composition requires {expected} layout; embedded system is unsupported')
     roots = {key: str(getattr(args, key)) for key in ('apps', 'sdk', 'std', 'arch')}
     declarations = deployment.load(args.deployment)
+    product_path = getattr(args, 'system_config', None)
+    product = system_config.load(product_path) if product_path else None
+    boot_components = args.boot_components
+    if product is not None:
+        declarations = product.select(declarations, args.profile, args.boot_components)
+        boot_components = [entry['staged'] for entry in declarations
+                           if 'binary' in entry and entry.get('environment') == 'boot']
     components = {entry['staged']: entry for entry in declarations if 'binary' in entry}
     if len(set(args.boot_components)) != len(args.boot_components):
         raise ValueError('duplicate boot component')
-    for name in args.boot_components:
+    for name in boot_components:
         item = components.get(name)
         if item is None or item.get('environment', 'system') != 'boot':
             raise ValueError(f'unknown boot component: {name}')
@@ -102,9 +124,9 @@ def compose_entries(args, native):
         if args.recovery_only and environment == 'system':
             continue
         if environment == 'boot' and 'binary' in item:
-            if item['staged'] not in args.boot_components:
+            if item['staged'] not in boot_components:
                 continue
-        elif args.profile not in item['profiles']:
+        elif args.profile not in item['profiles'] and not (product is not None and 'binary' in item):
             continue
         name = deployment.archive_path(item['destination'].format_map(roots))
         if environment == 'boot' and 'binary' in item:
@@ -216,10 +238,31 @@ def compose(args, native, service_path):
     boot, disk, checksums = compose_entries(args, native)
     metadata = args.output / 'native-system'
     metadata.mkdir(exist_ok=True)
-    core, system = services(service_path)
+    product_path = getattr(args, 'system_config', None)
+    system_images = {'/' + name for mode, name, _ in disk if mode != 'symlink'}
+    core, system = services(service_path, system_images if product_path else None)
     manifest_path = metadata / 'services.json'
     write_json(manifest_path, core)
-    components, startup_policy = component_composition.compose(core, system)
+    components, startup_policy = component_composition.compose(
+        core, system, mounts=not product_path or bool(native.get('fstab', '').strip()))
+    if product_path:
+        boot_images = {'/' + name for mode, name, _ in boot if mode != 'symlink'}
+        if '/init' not in boot_images:
+            raise ValueError('bootstrap entry requires deployed boot component init')
+        for service in core['services']:
+            if service['image'] not in boot_images:
+                raise ValueError(f"bootstrap service {service['name']} requires deployed image {service['image']}")
+        if not args.recovery_only:
+            if '/svc/component-manager' not in system_images:
+                raise ValueError('system handoff requires deployed component component-manager')
+            for name, declaration in components.items():
+                program = declaration.get('program')
+                if program is not None and program['image'] not in system_images:
+                    raise ValueError(f"startup component {name} requires deployed image {program['image']}")
+        write_json(metadata / 'product.json', {
+            'configuration': system_config.load(product_path).value,
+            'boot': sorted(boot_images), 'system': sorted(system_images),
+        })
     init_path = metadata / 'init.json'
     write_json(init_path, {'system-root': '/system', 'put-old': '/boot',
                           'system-init': '/svc/component-manager'})
@@ -298,6 +341,7 @@ def main():
     parser.add_argument('--recovery-only', action='store_true',
                         help='compose static stage1 recovery only, without a formal system payload')
     parser.add_argument('--deployment', type=Path, required=True)
+    parser.add_argument('--system-config', type=Path, help='product component selection')
     for name in ('apps', 'sdk', 'std', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--boot-apps', type=Path, help='static boot artifacts; defaults to --apps')
@@ -342,6 +386,9 @@ def main():
             args.entries_from.insert(0, args.output / 'io.entries.json')
             args.extra_entries.extend(['0644', 'etc/hyper/io-clients.conf',
                                        str(args.board_output / 'io-clients.conf')])
+            if board.vm_config_path != '/data/vms.json':
+                args.extra_entries.extend(['0644', 'system:' + board.vm_config_path[1:],
+                                           str(args.board_output / 'vms.json')])
         for path in args.entries_from:
             imported, _ = archive.load_entries(path)
             args.extra_entries.extend(imported)

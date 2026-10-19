@@ -254,6 +254,10 @@ class Board:
             start += size
         if not isinstance(data['files'], dict):
             raise ValueError('files must map destination paths to artifact names')
+        has_data = any(part.content == 'data' for part in partitions)
+        if not has_data and (data['files'] or data['virtual-machines']
+                             or data['boot'] == 'rpi5-firmware'):
+            raise ValueError('file payloads, guest images and Pi firmware require a data partition')
         required_files = {'hyper.img'} if data['boot'] == 'rpi5-firmware' else set()
         if data['boot'] == 'rpi5-firmware':
             required_files |= {'bootstrap.cpio', 'bcm2712-rpi-5-b.dtb',
@@ -334,6 +338,12 @@ class Board:
                                          'mac': vm['network']['mac']}
             definitions.append(definition)
         return {'format': 'hyper.vm-config', 'virtual-machines': definitions}
+
+    @property
+    def vm_config_path(self):
+        """Keep editable fleets on data; a system-only board has an empty fleet."""
+        return ('/data/vms.json' if any(part.content == 'data' for part in self.partitions)
+                else '/etc/hyper/vms.json')
 
     def bootstrap_clients(self):
         """HypeR broker identities; no partition policy crosses into Linux."""

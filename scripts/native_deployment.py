@@ -70,8 +70,6 @@ def disk_partitions(disk):
         if 'image' in entry and (not isinstance(entry['image'], str)
                                 or not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', entry['image'])):
             raise ValueError('invalid partition artifact name')
-    if 'data' not in contents:
-        raise ValueError('one partition must carry the generated data payload')
     return entries
 
 

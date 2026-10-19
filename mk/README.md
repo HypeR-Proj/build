@@ -10,8 +10,15 @@ resolution, CMake owns native compilation, and the component registry owns
 delivery metadata. `make app-manifest` prints the expanded registry without
 building an SDK or changing any files.
 
+`SYSTEM_CONFIG=path/to/product.json` selects the deployed executables and,
+optionally, the kernel's production features. See
+[product configuration](../docs/configuration.md) for the JSON schema and a
+minimal QEMU product. `make app-manifest SYSTEM_CONFIG=...` prints the selected
+registry. The registry remains the source of component names and dependencies;
+product files select from it rather than duplicating Cargo package definitions.
+
 Each Native program and shared library declares delivery in its own
-`component.mk`. `mk/components.mk` discovers `app/*/component.mk`,
+`component.mk`. `mk/components.mk` discovers `app/*/component.mk`, `svc/*/component.mk`,
 `tests/app/*/component.mk`, `bootstrap/stage1/*/component.mk`, `lib/*/component.mk` and
 `stdlib/*/component.mk`, then applies the
 shared templates under `mk/components/`.
@@ -24,6 +31,11 @@ $(eval $(call native-rust-app,app/echo,hyper-echo,echo,bin/echo,system developme
 # source directory, library filename; the template supplies the library layout
 $(eval $(call native-rust-shared,lib/clap,libhyper_clap_shared.so))
 ```
+
+`native-rust-app` also accepts an optional sixth argument (`std` or `core`) and
+a seventh argument listing staged names of child programs it must be able to
+launch. These runtime requirements are checked against the product selection;
+they do not add Cargo dependencies or silently include omitted executables.
 
 The registry checks each declaration against its Cargo manifest and workspace
 membership. Cargo package names are read from those manifests. Dependencies,
@@ -61,7 +73,19 @@ ordinary applications and shared libraries. The
 component registry derives this policy from source ownership. Package-qualified
 `APP_FEATURES` and optional probe binaries are routed to their owning graph;
 bootstrap features cannot be unified with shared-library consumers. Installation
-stages the combined application/library set. Each link graph also separates
+stages the combined application/library set. Compilation selects executable
+roots and lets Cargo build their shared-library dependencies; unrelated dylibs
+are not unconditional Cargo roots. An explicitly requested shared-library
+`APP_FEATURES` entry adds that provider as a build root; a feature for an omitted
+application is rejected instead of silently adding the application back.
+Installation uses Cargo's compiler-artifact
+records from the completed build to identify library providers, instead of
+scanning a directory that may contain stale libraries. The recorded install set
+also retires artifacts from a previous selection in an explicitly reused output
+directory. Installation records its managed paths before replacing files. If it
+fails or is interrupted, packaging rejects the incomplete staging tree; rerunning
+the application build finishes installation and removes unselected artifacts,
+including files copied by the interrupted attempt. Each link graph also separates
 components declared with the optional sixth `native-rust-app` argument `core`
 from the default `std` components. Freestanding components use the SDK's
 `no_std` target directory independently of std feature unification. `make app-check` checks the same component graphs.
@@ -74,8 +98,11 @@ with their `hyper-` prefix removed.
 
 `APP_FEATURES` and `APP_EXTRA_BINS` automatically select a deterministic variant
 subdirectory under both `target/app/<arch>/` and `target/app-cargo/<arch>/`.
-The empty/default configuration retains the ordinary output paths. Feature and
-binary ordering does not affect variant identity. Explicit `APP_OUTPUT` and
+The empty/default configuration retains the ordinary output paths. A
+`SYSTEM_CONFIG` adds its normalized content identity before the feature-variant
+subdirectory; changing the file in place therefore changes both compile and
+staging outputs. Feature, binary and component-set ordering does not affect
+variant identity. Explicit `APP_OUTPUT` and
 `APP_CARGO_OUTPUT` overrides remain available for external test orchestration.
 Architecture is part of the path; the SDK's link/std fingerprints and Rust
 compiler configuration remain Cargo inputs. Do not mix artifacts from separate
@@ -88,7 +115,7 @@ fs-erofs, fs-fat, mount and umount, using their staged names from the same
 component registry. The init, shell and I/O runtime packages use implementation
 rlibs and have no shared-delivery feature. `fs-fat` is compiled statically and
 packaged in boot RAM by default. Omitting a boot component removes it from the
-boot payload. Formal providers are separate components from `app/`, with distinct
+boot payload. Formal providers are separate components from `svc/`, with distinct
 staged names such as `fs-fat-system`; they are selected independently. Both may
 install as `svc/fs-fat` inside their respective environment. Fstab determines
 the mount phase independently of worker placement.
@@ -109,7 +136,12 @@ explicit dynamic builds through `hyper-cargo` fail. Static linking checks the
 final ELF as well as the requested flags.
 
 Image composition selects boot executables through `APP_BOOT_COMPONENTS` and
-formal programs through image-profile membership, independently. Explicit boot
+formal programs through image-profile membership, independently. When
+`SYSTEM_CONFIG` is selected, its per-environment allowlist/exclusions filter both
+graphs and packaging. Generated formal service declarations follow the selected
+executables. A required runtime child or bootstrap/adoption program cannot be
+silently omitted; a missing filesystem format worker remains a runtime mount
+error. Explicit boot
 files such as the loader also declare their image profiles. Rust components derive their environment from their
 source directory. Duplicate destinations within one environment are errors; a
 boot and formal provider can share a relative path. `--replace boot:svc/fs-fat=...`
@@ -162,7 +194,9 @@ it validates GPT, stages a replacement and publishes atomically. Unchanged
 payloads do not rewrite the disk. `board-run` remains validation-only. Resetting
 persistent volumes remains explicit through `make rebuild` or `make board-rebuild`. Default QEMU
 outputs remain under `target/board/qemu/`, and Pi 5 uses
-`target/board/rpi5-native/`; ramfs outputs append `-ramfs`. See [boot layout](../docs/boot-layout.md) for deployment policy,
+`target/board/rpi5-native/`. Custom products append their configuration identity
+to the board output, keeping their disks separate from the default product.
+See [boot layout](../docs/boot-layout.md) for deployment policy,
 artifacts, recovery behavior and build commands.
 
 ## SDK component cache

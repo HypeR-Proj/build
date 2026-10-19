@@ -8,14 +8,16 @@ APP_HOST_EXCLUDES = $(shell python3 -B scripts/app-deployment.py host-excludes -
 
 # Bootstrap programs are built independently: a workspace-wide Cargo build can
 # unify shared-library features back into these otherwise static consumers.
-APP_BOOT_COMPONENTS ?= init console-raw fallback-sh io-runtime fs-backend fs-erofs fs-fat mount umount
+ifeq ($(origin APP_BOOT_COMPONENTS),undefined)
+APP_BOOT_COMPONENTS := $(shell python3 -B scripts/app-deployment.py boot-components --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS))
+endif
 APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
 APP_BOOT_CARGO_OUTPUT ?= $(APP_CARGO_OUTPUT)/boot-static
 APP_BOOT_SELECTION = $(addprefix --component ,$(APP_BOOT_COMPONENTS))
 
 .PHONY: app-manifest
 app-manifest:
-	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)"
+	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS)
 
 sdk:
 	cd "$(SDK_ABI_SOURCE)" && \
@@ -92,13 +94,15 @@ app-fetch: sdk
 	done
 
 app: app-fetch
-	mkdir -p "$(APP_OUTPUT)"
+	mkdir -p "$(APP_OUTPUT)" "$(APP_CARGO_OUTPUT)"
 	@set -e; for link_mode in static dynamic; do for rust_runtime in core std; do \
 	workspace=app; build_directory="$(APP_CARGO_OUTPUT)"; \
 	if test "$$link_mode" = static; then workspace=bootstrap/stage1; build_directory="$(APP_BOOT_CARGO_OUTPUT)"; fi; \
 	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
+	record="$(APP_CARGO_OUTPUT)/artifacts-$$link_mode-$$rust_runtime.jsonl"; : > "$$record"; \
 	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
 		--manifest "$(APP_DEPLOYMENT)" --profile "$(APP_BUILD_PROFILE)" \
+		$(SYSTEM_CONFIG_ARGS) --executable-roots \
 		--link-mode "$$link_mode" --rust-runtime "$$rust_runtime" \
 		--features "$(APP_FEATURES)" \
 		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))) || exit $$?; \
@@ -107,10 +111,13 @@ app: app-fetch
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		HYPER_RUST_STD="$$rust_std" "$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "$$workspace/Cargo.toml" --release --locked --offline $$app_targets; \
+		--manifest-path "$$workspace/Cargo.toml" --release --locked --offline \
+		--message-format=json-render-diagnostics $$app_targets > "$$record"; \
 	done; done
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
+		$(SYSTEM_CONFIG_ARGS) \
 		--profile "$(APP_BUILD_PROFILE)" \
+		$(foreach mode,static dynamic,$(foreach runtime,core std,--cargo-artifacts "$(APP_CARGO_OUTPUT)/artifacts-$(mode)-$(runtime).jsonl")) \
 		--build "$(APP_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" --output "$(APP_OUTPUT)" \
 		--static-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" \
 		--core-build "$(APP_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
@@ -125,6 +132,7 @@ app-boot: app-fetch
 	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
 	boot_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
 		--manifest "$(APP_DEPLOYMENT)" --link-mode static $(APP_BOOT_SELECTION) \
+		$(SYSTEM_CONFIG_ARGS) \
 		--rust-runtime "$$rust_runtime" --features "$(APP_FEATURES)") || exit $$?; \
 	test -n "$$boot_targets" || continue; \
 	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" \
@@ -135,6 +143,7 @@ app-boot: app-fetch
 		--no-default-features $$boot_targets; \
 	done
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
+		$(SYSTEM_CONFIG_ARGS) \
 		--build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release" \
 		--static-core-build "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_FREESTANDING_TARGET)/release" \
 		--output "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" --link-mode static \
@@ -167,7 +176,8 @@ app-check: app-fetch
 	workspace=app; if test "$$link_mode" = static; then workspace=bootstrap/stage1; fi; \
 	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
 	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
-		--manifest "$(APP_DEPLOYMENT)" --link-mode "$$link_mode" --rust-runtime "$$rust_runtime") || exit $$?; \
+		--manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS) --executable-roots \
+		--link-mode "$$link_mode" --rust-runtime "$$rust_runtime") || exit $$?; \
 	test -n "$$app_targets" || continue; \
 	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_LINK_MODE="$$link_mode" \
 		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \

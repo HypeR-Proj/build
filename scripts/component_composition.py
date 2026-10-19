@@ -26,7 +26,7 @@ DESCRIPTIONS = {
 }
 
 
-def compose(core, formal):
+def compose(core, formal, *, mounts=True):
     declarations = {}
     children = []
 
@@ -51,7 +51,7 @@ def compose(core, formal):
             path = add(name, '/svc/' + name, prepared=True, resident=True, critical=True)
             policy['providers'].append({'role': role, 'component': path})
     add('journal', '/svc/journal', prepared=True, critical=True)
-    if any(p['role'] == 'filesystem' for p in policy['providers']):
+    if mounts and any(p['role'] == 'filesystem' for p in policy['providers']):
         policy['mounts'] = add('mounts', '/bin/mount', arguments=['-a'], prepared=True)
     add('bootstrap-retire', '/svc/bootstrap-retire', prepared=True)
     for entry in formal['services']:

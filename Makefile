@@ -20,8 +20,9 @@ KERNEL_TARGET := $(KERNEL_TARGET_$(ARCH))
 ifeq ($(KERNEL_TARGET),)
 $(error unsupported ARCH '$(ARCH)')
 endif
-KERNEL_OUTPUT := $(KERNEL_DIRECTORY)/target/$(KERNEL_TARGET)/$(KERNEL_PROFILE)
-KERNEL_IMAGE := $(KERNEL_OUTPUT)/hyper.img
+KERNEL_BUILD_ROOT ?= $(KERNEL_DIRECTORY)/target$(if $(SYSTEM_CONFIG_ID),/products/$(SYSTEM_CONFIG_ID))
+KERNEL_OUTPUT = $(abspath $(KERNEL_BUILD_ROOT))/$(KERNEL_TARGET)/$(KERNEL_PROFILE)
+KERNEL_IMAGE = $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/stdlib/hyper
@@ -36,10 +37,27 @@ SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/stdlib/hyper-tests
 APP_FEATURES ?=
 APP_EXTRA_BINS ?=
-APP_VARIANT := $(if $(strip $(APP_FEATURES) $(APP_EXTRA_BINS)),/$(shell python3 -B scripts/app-variant.py --features '$(APP_FEATURES)' --bins '$(APP_EXTRA_BINS)'))
+APP_DEPLOYMENT := $(CURDIR)/mk/components.mk
+SYSTEM_CONFIG ?=
+SYSTEM_CONFIG_ARGS := $(if $(strip $(SYSTEM_CONFIG)),--system-config "$(SYSTEM_CONFIG)")
+SYSTEM_CONFIG_ID :=
+ifneq ($(strip $(SYSTEM_CONFIG)),)
+SYSTEM_CONFIG_ID := $(shell python3 -B scripts/app-deployment.py config-id --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS) || printf INVALID)
+ifeq ($(SYSTEM_CONFIG_ID),INVALID)
+$(error invalid SYSTEM_CONFIG '$(SYSTEM_CONFIG)')
+endif
+SYSTEM_KERNEL_FEATURES := $(shell python3 -B scripts/app-deployment.py kernel-features --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS))
+ifneq ($(SYSTEM_KERNEL_FEATURES),default)
+ifneq ($(origin KERNEL_FEATURES),undefined)
+$(error select kernel features in SYSTEM_CONFIG or KERNEL_FEATURES, not both)
+endif
+SYSTEM_KERNEL_ARGS := KERNEL_FEATURES="$(SYSTEM_KERNEL_FEATURES)"
+endif
+endif
+SYSTEM_KERNEL_ARGS += KERNEL_BUILD_ROOT="$(abspath $(KERNEL_BUILD_ROOT))"
+APP_VARIANT := $(if $(SYSTEM_CONFIG_ID),/$(SYSTEM_CONFIG_ID))$(if $(strip $(APP_FEATURES) $(APP_EXTRA_BINS)),/$(shell python3 -B scripts/app-variant.py --features '$(APP_FEATURES)' --bins '$(APP_EXTRA_BINS)'))
 APP_OUTPUT ?= $(CURDIR)/target/app/$(NATIVE_ARCH)$(APP_VARIANT)
 APP_CARGO_OUTPUT ?= $(CURDIR)/target/app-cargo/$(NATIVE_ARCH)$(APP_VARIANT)
-APP_DEPLOYMENT := $(CURDIR)/mk/components.mk
 APP_BUILD_PROFILE ?= system
 NATIVE_IMAGE_PROFILE ?= development
 ifeq ($(filter $(NATIVE_IMAGE_PROFILE),development system),)
@@ -88,7 +106,7 @@ ifneq ($(origin BOARD_SYSTEM_LAYOUT),undefined)
 $(error BOARD_SYSTEM_LAYOUT was removed; system requires independent storage)
 endif
 BOARD_CONFIG ?= $(CURDIR)/boards/$(BOARD).json
-BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)
+BOARD_OUTPUT ?= $(CURDIR)/target/board/$(BOARD)$(if $(SYSTEM_CONFIG_ID),/$(SYSTEM_CONFIG_ID))
 BOARD_DEPLOYMENT = $(BOARD_OUTPUT)/deployment.json
 EROFS_MKFS ?= $(if $(wildcard $(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs),$(CURDIR)/target/host-tools/erofs/bin/mkfs.erofs,mkfs.erofs)
 BOARD_IMAGE ?= $(BOARD_OUTPUT)/disk.img
@@ -100,7 +118,7 @@ RPI5_BOOT_PACKAGE ?=
 # Honor explicitly selected board policy, while the bare Pi target still uses
 # the Pi firmware profile instead of the general QEMU default.
 RPI5_BOARD_CONFIG ?= $(if $(filter undefined default file,$(origin BOARD_CONFIG)),$(CURDIR)/boards/rpi5.json,$(BOARD_CONFIG))
-RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native
+RPI5_BRINGUP_OUTPUT ?= $(CURDIR)/target/board/rpi5-native$(if $(SYSTEM_CONFIG_ID),/$(SYSTEM_CONFIG_ID))
 
 BOARD_TEST_OUTPUT ?= $(CURDIR)/target/board-tests
 
@@ -188,14 +206,14 @@ stack-initramfs:
 		NATIVE_PS_IMAGE="$(NATIVE_STD_TEST_OUTPUT)/std-dynamic"
 
 test-stack: stack-initramfs
-	$(MAKE) image CARGO_FEATURES="--features kernel-stack-audit"
+	$(MAKE) image CARGO_FEATURES="--features kernel-test,kernel-stack-audit"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-stack.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(STACK_OUTPUT)/initramfs.cpio" \
 		"$(STACK_OUTPUT)/qemu.log" --minimum-remaining "$(STACK_MINIMUM_REMAINING)" \
 		--maximum-used "$(STACK_MAXIMUM_USED)"
 
 $(KERNEL_TARGETS):
-	$(MAKE) -C "$(KERNEL_DIRECTORY)" $@ $(if $(filter undefined,$(origin CONFIG_FILE)),,CONFIG_FILE="$(abspath $(CONFIG_FILE))")
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" $@ $(SYSTEM_KERNEL_ARGS) $(if $(filter undefined,$(origin CONFIG_FILE)),,CONFIG_FILE="$(abspath $(CONFIG_FILE))")
 
 include mk/sdk-app.mk
 
@@ -229,11 +247,11 @@ else ifeq ($(RUN_PROFILE),io)
 		--initramfs "$(abspath $(INITRAMFS))" --disk "$(IO_VM_DISK)"
 else
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" run \
-		ARCH="$(ARCH)" INITRAMFS="$(abspath $(INITRAMFS))"
+		$(SYSTEM_KERNEL_ARGS) ARCH="$(ARCH)" INITRAMFS="$(abspath $(INITRAMFS))"
 endif
 
 clean:
-	$(MAKE) -C "$(KERNEL_DIRECTORY)" clean
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" clean $(SYSTEM_KERNEL_ARGS)
 	rm -rf "$(CURDIR)/target"
 
 # GICv2 host and Linux guest coverage with the standard Native service profile.

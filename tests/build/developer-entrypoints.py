@@ -81,6 +81,79 @@ class EntrypointTests(unittest.TestCase):
         for column in (0, 1):
             self.assertEqual(len({ordinary[column], first[column], other[column], probe[column]}), 4)
 
+    def test_product_identity_separates_compilation_and_persistent_image_paths(self):
+        def outputs(path):
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.mk') as probe:
+                probe.write('__product_outputs:\n\t@printf "%s\\n" "$(APP_OUTPUT)" '
+                            '"$(APP_CARGO_OUTPUT)" "$(BOARD_OUTPUT)" "$(KERNEL_IMAGE)" '
+                            '"$(APP_BOOT_COMPONENTS)"\n')
+                probe.flush()
+                arguments = [] if path is None else [f'SYSTEM_CONFIG={path}']
+                return subprocess.check_output(
+                    ['make', '--no-print-directory', '-s', '-f', 'Makefile', '-f',
+                     probe.name, '__product_outputs', *arguments], cwd=ROOT, text=True).splitlines()
+        ordinary = outputs(None)
+        with tempfile.TemporaryDirectory(prefix='hyper product identity ') as directory:
+            path = Path(directory) / 'product.json'
+            value = {'version': 1, 'boot': {'exclude': ['fs-fat']},
+                     'system': {'exclude': ['editor', 'less']}}
+            path.write_text(json.dumps(value))
+            selected = outputs(path)
+            value['system']['exclude'].reverse()
+            path.write_text(json.dumps(value))
+            self.assertEqual(outputs(path), selected)
+            value['system']['exclude'].append('grep')
+            path.write_text(json.dumps(value))
+            changed = outputs(path)
+        for column in range(4):
+            self.assertEqual(len({ordinary[column], selected[column], changed[column]}), 3)
+        self.assertIn('fs-fat', ordinary[4].split())
+        self.assertNotIn('fs-fat', selected[4].split())
+
+    def test_product_kernel_features_reach_kernel_and_reject_competing_overrides(self):
+        arguments = ['make', '-n', 'image', 'ARCH=aarch64',
+                     'SYSTEM_CONFIG=configs/minimal.json']
+        result = subprocess.run(arguments, cwd=ROOT, check=True, capture_output=True, text=True)
+        self.assertIn('KERNEL_FEATURES="runtime-symbols"', result.stdout)
+        self.assertIn('--no-default-features', result.stdout)
+        result = subprocess.run([*arguments, 'KERNEL_FEATURES=rtc'], cwd=ROOT,
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('not both', result.stderr)
+
+    def test_product_build_run_clean_use_the_same_kernel_path(self):
+        for arch in ('aarch64', 'riscv64'):
+            for build_root in (None, 'target/custom-kernel'):
+                with self.subTest(arch=arch, build_root=build_root):
+                    arguments = [f'ARCH={arch}', 'RUN_PROFILE=native',
+                                 'SYSTEM_CONFIG=configs/minimal.json']
+                    if build_root:
+                        arguments.append(f'KERNEL_BUILD_ROOT={build_root}')
+                    planned = subprocess.check_output(
+                        ['make', '--no-print-directory', '-n', 'image', *arguments],
+                        cwd=ROOT, text=True)
+                    kernel_root = re.search(r'KERNEL_BUILD_ROOT="([^"]+)"', planned).group(1)
+                    self.assertTrue(Path(kernel_root).is_absolute())
+                    if build_root:
+                        self.assertEqual(Path(kernel_root), ROOT / build_root)
+                    else:
+                        self.assertIn('/products/', kernel_root)
+                    output = subprocess.check_output(
+                        ['make', '--no-print-directory', '-n', 'run', *arguments],
+                        cwd=ROOT, text=True)
+                    command = shlex.split(output.replace('\\\n', ''))
+                    image = command[command.index('-kernel') + 1]
+                    self.assertTrue(image.startswith(kernel_root + '/'), output)
+                    self.assertIn('KERNEL_FEATURES="runtime-symbols"', output)
+                    clean = subprocess.check_output(
+                        ['make', '--no-print-directory', '-n', 'clean', *arguments],
+                        cwd=ROOT, text=True)
+                    commands = [shlex.split(line) for line in clean.splitlines()]
+                    cargo_clean = next(command for command in commands
+                                       if len(command) > 2 and command[-1] == 'clean'
+                                       and Path(command[-2]).name == 'cargo')
+                    self.assertEqual(cargo_clean[0], 'CARGO_TARGET_DIR=' + kernel_root)
+
     def test_make_composition_preserves_disk_policy(self):
         for arch in ('aarch64', 'riscv64', 'x86_64'):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.mk') as probe:

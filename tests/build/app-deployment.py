@@ -58,7 +58,8 @@ class DeploymentTests(unittest.TestCase):
                         '--profile', profile, '--build', str(build), '--output', str(output),
                     ], check=True)
                     self.assertEqual({path.name for path in output.iterdir()},
-                                     {'echo', 'terminal-probe'} if probe else {'echo'})
+                                     {'build-manifest.json', 'echo', 'terminal-probe'} if probe
+                                     else {'build-manifest.json', 'echo'})
 
     def test_runtime_graphs_select_static_std_console_and_route_core_fixtures(self):
         outputs = {}
@@ -115,7 +116,8 @@ class DeploymentTests(unittest.TestCase):
             subprocess.run([
                 sys.executable, str(SCRIPT), 'install', '--manifest', str(MANIFEST),
                 '--build', str(build), '--output', str(output), *selection], check=True)
-            self.assertEqual({path.name for path in output.iterdir()}, {'init', 'fallback-sh'})
+            self.assertEqual({path.name for path in output.iterdir()},
+                             {'init', 'fallback-sh', 'build-manifest.json'})
         entries = deployment.load(MANIFEST)
         for components in (['missing'], ['lib/libhyper_rust_std.so']):
             with self.subTest(components=components), self.assertRaises(ValueError):
@@ -145,6 +147,30 @@ class DeploymentTests(unittest.TestCase):
             '--link-mode', 'dynamic', '--component', 'init'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('required link mode', result.stderr)
+
+    def test_executable_roots_preserve_explicit_shared_library_features(self):
+        arguments = [sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
+                     '--executable-roots', '--features',
+                     'hyper-vm-support-shared/startup-profile']
+        result = subprocess.check_output([
+            *arguments, '--link-mode', 'dynamic', '--component', 'echo'], text=True).split()
+        self.assertIn('hyper-echo', result)
+        self.assertIn('hyper-vm-support-shared', result)
+        self.assertIn('--lib', result)
+        self.assertIn('hyper-vm-support-shared/startup-profile', result)
+        static = subprocess.check_output([
+            *arguments, '--link-mode', 'static', '--component', 'init'], text=True).split()
+        self.assertNotIn('hyper-vm-support-shared', static)
+        self.assertNotIn('--lib', static)
+        self.assertNotIn('--features', static)
+
+    def test_executable_roots_reject_features_for_an_omitted_application(self):
+        result = subprocess.run([
+            sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
+            '--executable-roots', '--link-mode', 'dynamic', '--component', 'echo',
+            '--features', 'hyper-vm-runtime/broker-test'], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('feature selects an undeployed application', result.stderr)
 
     def test_bootstrap_install_rejects_dynamic_artifacts_before_replacing_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -264,6 +290,13 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual((output / 'sh').stat().st_mode & 0o777, 0o755)
             self.assertEqual((output / 'lib/libhyper_tool_args_shared.so').read_text(),
                              'libhyper_tool_args_shared.so')
+            # Direct installs also own their successful outputs, even without
+            # an SDK or Cargo message log, so later selections can shrink.
+            subprocess.run([*command, '--component', 'echo'], check=True)
+            self.assertFalse((output / 'init').exists())
+            self.assertFalse((output / 'lib/libhyper_tool_args_shared.so').exists())
+            self.assertEqual(set(json.loads((output / 'build-manifest.json').read_text())['artifacts']),
+                             {'echo'})
 
     def test_library_artifacts_require_exact_safe_names_and_unique_sources(self):
         original = {'version': 1, 'entries': deployment.load(MANIFEST)}
@@ -294,6 +327,126 @@ class DeploymentTests(unittest.TestCase):
                 path.write_text(json.dumps(data))
                 with self.subTest(target=target), self.assertRaises(ValueError):
                     deployment.load(path)
+
+    def test_recorded_cargo_libraries_exclude_stale_outputs_and_retire_previous_payload(self):
+        with tempfile.TemporaryDirectory(prefix='hyper recorded artifacts ') as directory:
+            root = Path(directory)
+            build, output = root / 'build', root / 'output'
+            (build / 'deps').mkdir(parents=True)
+            entries = [entry for entry in deployment.load(MANIFEST)
+                       if entry.get('staged') in ('echo', 'cat')]
+            for library in ('selected', 'unused'):
+                entries.append({'library': f'lib{library}.so', 'staged': f'lib/lib{library}.so',
+                                'destination': f'lib64/aarch64-hyper-hyper/lib{library}.so',
+                                'profiles': ['system'], 'mode': '0755'})
+                (build / 'deps' / f'lib{library}.so').write_bytes(elf_fixtures.elf())
+            for binary in ('hyper-echo', 'hyper-cat'):
+                (build / binary).write_bytes(elf_fixtures.elf())
+            manifest, records = root / 'manifest.json', root / 'cargo.jsonl'
+            manifest.write_text(json.dumps({'version': 1, 'entries': entries}))
+
+            def install(libraries, selection=()):
+                records.write_text('\n'.join(json.dumps({
+                    'reason': 'compiler-artifact',
+                    'target': {'name': name, 'crate_types': ['dylib']},
+                    'filenames': [str(build / 'deps' / f'lib{name}.so')],
+                }) for name in libraries) + '\n')
+                subprocess.run([sys.executable, str(SCRIPT), 'install', '--manifest', str(manifest),
+                                '--build', str(build), '--output', str(output),
+                                '--cargo-artifacts', str(records), *selection], check=True)
+
+            install(['selected', 'unused'])
+            self.assertTrue((output / 'lib/libunused.so').is_file())
+            (output / 'operator-notes').write_text('not a managed artifact')
+            install(['selected'], ('--component', 'echo'))
+            self.assertTrue((output / 'echo').is_file())
+            self.assertTrue((output / 'lib/libselected.so').is_file())
+            self.assertFalse((output / 'cat').exists())
+            self.assertFalse((output / 'lib/libunused.so').exists())
+            self.assertTrue((build / 'deps/libunused.so').is_file())
+            self.assertEqual((output / 'operator-notes').read_text(), 'not a managed artifact')
+            provenance = json.loads((output / 'build-manifest.json').read_text())
+            self.assertEqual(set(provenance['artifacts']), {'echo', 'lib/libselected.so'})
+
+    def test_cargo_library_evidence_rejects_foreign_paths_and_unknown_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / 'cargo.jsonl'
+            entries = [{'library': 'libselected.so', 'staged': 'lib/libselected.so'}]
+            for target, path in [('selected', root / 'other/libselected.so'),
+                                 ('unknown', root / 'build/deps/libunknown.so')]:
+                records.write_text(json.dumps({
+                    'reason': 'compiler-artifact',
+                    'target': {'name': target, 'crate_types': ['dylib']},
+                    'filenames': [str(path)],
+                }) + '\n')
+                with self.subTest(target=target), self.assertRaises(ValueError):
+                    deployment.cargo_libraries(entries, [records], root / 'build')
+
+    def test_failed_install_retires_unrecorded_libraries_on_retry(self):
+        with tempfile.TemporaryDirectory(prefix='hyper interrupted artifacts ') as directory:
+            root = Path(directory)
+            build, output = root / 'build', root / 'output'
+            build.mkdir()
+            entries = [entry for entry in deployment.load(MANIFEST)
+                       if entry.get('staged') in ('echo', 'cat')]
+            entries.append({'library': 'libnew.so', 'staged': 'lib/libnew.so',
+                            'destination': 'lib64/aarch64-hyper-hyper/libnew.so',
+                            'profiles': ['system'], 'mode': '0755'})
+            for name in ('hyper-echo', 'hyper-cat', 'libnew.so'):
+                (build / name).write_bytes(elf_fixtures.elf())
+            manifest, messages = root / 'manifest.json', root / 'cargo.jsonl'
+            manifest.write_text(json.dumps({'version': 1, 'entries': entries}))
+            messages.write_text('')
+            command = [str(SCRIPT), 'install', '--manifest', str(manifest),
+                       '--build', str(build), '--output', str(output),
+                       '--cargo-artifacts', str(messages)]
+            subprocess.run([sys.executable, *command, '--component', 'echo'], check=True)
+            previous = (output / 'build-manifest.json').read_bytes()
+            (output / 'operator-notes').write_text('preserve unrelated files')
+            messages.write_text(json.dumps({
+                'reason': 'compiler-artifact', 'target': {'name': 'new', 'crate_types': ['dylib']},
+                'filenames': [str(build / 'libnew.so')],
+            }) + '\n')
+            real_run = subprocess.run
+
+            def fail_copy(arguments, *args, **kwargs):
+                if arguments[0] == 'sh' and arguments[-1] == str(output / 'cat'):
+                    raise subprocess.CalledProcessError(1, arguments, stderr='injected copy failure')
+                return real_run(arguments, *args, **kwargs)
+
+            with patch.object(sys, 'argv', command), patch.object(deployment.subprocess, 'run', fail_copy):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    deployment.main()
+            self.assertTrue((output / 'lib/libnew.so').is_file())
+            self.assertEqual((output / 'build-manifest.json').read_bytes(), previous)
+            with self.assertRaisesRegex(ValueError, 'installation is incomplete'):
+                deployment.require_complete_install(output)
+            messages.write_text('')
+            subprocess.run([sys.executable, *command, '--component', 'echo'], check=True)
+            deployment.require_complete_install(output)
+            self.assertFalse((output / 'lib/libnew.so').exists())
+            self.assertFalse((output / 'cat').exists())
+            self.assertEqual((output / 'operator-notes').read_text(), 'preserve unrelated files')
+            self.assertEqual(set(json.loads((output / 'build-manifest.json').read_text())['artifacts']),
+                             {'echo'})
+
+    def test_install_preflights_all_sources_before_replacing_existing_images(self):
+        with tempfile.TemporaryDirectory(prefix='hyper missing artifact ') as directory:
+            root = Path(directory)
+            build, output = root / 'build', root / 'output'
+            build.mkdir()
+            output.mkdir()
+            (output / 'cat').write_text('previous cat')
+            (build / 'hyper-cat').write_bytes(elf_fixtures.elf())
+            result = subprocess.run([
+                sys.executable, str(SCRIPT), 'install', '--manifest', str(MANIFEST),
+                '--build', str(build), '--output', str(output),
+                '--component', 'cat', '--component', 'echo'], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('artifact is missing', result.stderr)
+            self.assertEqual((output / 'cat').read_text(), 'previous cat')
+            self.assertFalse((output / deployment.INSTALL_PENDING).exists())
 
 
 class NativePayloadTests(unittest.TestCase):
@@ -343,6 +496,16 @@ class NativePayloadTests(unittest.TestCase):
         self.args.deployment.write_text(json.dumps({'version': 1, 'entries': self.entries}))
         self.args.board.write_text(json.dumps(self.board))
         return split.compose_entries(self.args, self.board['native'])
+
+    def test_packaging_rejects_an_interrupted_boot_or_system_install(self):
+        for directory in (self.args.apps, self.args.boot_apps):
+            with self.subTest(directory=directory):
+                pending = directory / deployment.INSTALL_PENDING
+                pending.write_text(json.dumps({'version': 1, 'artifacts': []}))
+                with self.assertRaisesRegex(ValueError, 'installation is incomplete'):
+                    self.compose()
+                pending.unlink()
+        self.compose()
 
     def test_init_policies_are_packaged_in_their_own_environments(self):
         self.args.output = self.root / 'output'
@@ -401,6 +564,19 @@ class NativePayloadTests(unittest.TestCase):
         boot, system, _ = self.compose()
         self.assertNotIn('svc/fs-fat', {name for _, name, _ in boot})
         self.assertIn('svc/fs-fat', {name for _, name, _ in system})
+
+    def test_product_exclusion_ignores_preexisting_boot_and_formal_artifacts(self):
+        self.args.system_config = self.root / 'product.json'
+        self.args.system_config.write_text(json.dumps({
+            'version': 1, 'boot': {'exclude': ['fs-fat']},
+            'system': {'exclude': ['fs-fat-system', 'vm-manager', 'vm-runtime']},
+        }))
+        boot, system, _ = self.compose()
+        self.assertTrue((self.args.boot_apps / 'fs-fat').is_file())
+        self.assertTrue((self.args.apps / 'fs-fat-system').is_file())
+        self.assertNotIn('svc/fs-fat', {name for _, name, _ in boot + system})
+        self.assertNotIn('svc/vm-manager', {name for _, name, _ in system})
+        self.assertIn('bin/sh', {name for _, name, _ in system})
 
     def test_removed_embedded_system_layout_is_rejected(self):
         self.compose()

@@ -29,6 +29,30 @@ class BoardTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads((ROOT / 'boards/qemu.json').read_text())
 
+    def test_system_only_board_needs_no_fat_partition_or_guest_artifacts(self):
+        board = Board.load(ROOT / 'boards/qemu-minimal.json')
+        self.assertEqual([part.content for part in board.partitions], ['system'])
+        self.assertEqual(board.source['native']['fstab'], '')
+        self.assertEqual(board.source['native']['boot-fstab'],
+                         'PARTLABEL=hyper-system /system auto ro 0 0\n')
+        self.assertEqual(board.vms()['virtual-machines'], [])
+        self.assertEqual(board.vm_config_path, '/etc/hyper/vms.json')
+        self.assertEqual(packer.artifact_inputs(board, [], []), {})
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts/prepare-native-layout.py'),
+             '--board', str(ROOT / 'boards/qemu-minimal.json'), '--artifacts'],
+            check=True, capture_output=True, text=True)
+        self.assertEqual(result.stdout.strip(), '')
+
+    def test_data_board_keeps_its_persistent_fleet_configuration(self):
+        self.assertEqual(Board.parse(self.source).vm_config_path, '/data/vms.json')
+
+    def test_board_cannot_discard_configured_file_payloads_without_data(self):
+        self.source['disk']['partitions'] = [part for part in self.source['disk']['partitions']
+                                            if part.get('content') == 'system']
+        with self.assertRaisesRegex(ValueError, 'require a data partition'):
+            Board.parse(self.source)
+
     def network_fixture(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'network.json'
