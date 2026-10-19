@@ -179,7 +179,7 @@ INITRAMFS ?=
 endif
 
 KERNEL_TARGETS := prepare-config config defconfig olddefconfig guest-assets \
-	clean-guest-assets build image release check test test-image test-timer \
+	clean-guest-assets build image release check test test-image \
 	test-qemu test-vhe-required test-smmuv3 verify verify-runtime verify-image verify-boot verify-smp
 
 .PHONY: all $(KERNEL_TARGETS) sdk sdk-check sdk-test app app-fetch app-check app-test \

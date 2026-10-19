@@ -54,7 +54,7 @@ NATIVE_QEMU_ENV = QEMU_MACHINE="$(QEMU_MACHINE)" QEMU_CPU="$(QEMU_CPU)" \
 	QEMU_BOOTARGS="$(QEMU_BOOTARGS)" HYPER_TEST_VM="$(NATIVE_TEST_VM)"
 
 test-native: image native-initramfs
-	$(NATIVE_QEMU_ENV) sh tests/qemu/verify-native-init.sh \
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-native-init.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
 		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
 
