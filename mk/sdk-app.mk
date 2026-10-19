@@ -72,7 +72,7 @@ sdk-check: sdk
 		SMOKE_SOURCE="$(SDK_LIB_SOURCE)/test-app/main.c"
 
 sdk-test:
-	CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) test \
+	HOST_CC="$(HOST_CC)" CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) test \
 		--manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" --all-features
 	CARGO_TARGET_DIR="$(CURDIR)/target/sdk-rust-tests" $(CARGO) test \
