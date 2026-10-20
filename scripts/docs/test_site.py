@@ -112,6 +112,59 @@ class DocumentationLinks(unittest.TestCase):
         self.assertTrue(all('disabled' in node for node in boxes))
         self.assertEqual(article.block_code, ['- [x] Literal example'])
 
+    def test_native_abi_doxygen_extracts_contracts_with_extract_all_disabled(self):
+        repository = Path(__file__).resolve().parents[2]
+        config = (repository / 'scripts/docs/Doxyfile').read_text()
+        # Exercise the production extraction policy, limiting only the input
+        # and output format so this test does not build unrelated SDK docs.
+        config += (
+            '\nINPUT = sdk/abi/include/hyper/native.h\n'
+            'GENERATE_HTML = NO\nGENERATE_XML = YES\n'
+        )
+        environment = os.environ.copy()
+        environment.update(HYPER_DOC_REVISION='test', HYPER_DOC_C_OUTPUT=str(self.root))
+        result = subprocess.run(
+            ['doxygen', '-'], input=config, text=True, capture_output=True,
+            cwd=repository, env=environment,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        compounds = [
+            ElementTree.parse(path).getroot()
+            for path in (self.root / 'xml').glob('*.xml')
+        ]
+        members = {
+            member.findtext('name'): member
+            for compound in compounds
+            for member in compound.findall('.//memberdef')
+        }
+        def documentation(name):
+            self.assertIn(name, members)
+            member = members[name]
+            return ' '.join(
+                ''.join(member.find(tag).itertext())
+                for tag in ('briefdescription', 'detaileddescription')
+            )
+
+        deadline = documentation('HYPER_NATIVE_DEADLINE_INFINITE')
+        self.assertIn('absolute monotonic nanoseconds', deadline)
+        method = members['HYPER_NATIVE_OP_CAPABILITY_CHANNEL_TRY_SEND']
+        self.assertIsNotNone(method.find('.//table'))
+        self.assertIn('AtomicOnOk', documentation('HYPER_NATIVE_OP_CAPABILITY_CHANNEL_TRY_SEND'))
+        self.assertIn('Bit N denotes auxiliary result N',
+                      documentation('hyper_native_failure_result_mask'))
+        groups = {
+            compound.findtext('compounddef/compoundname'): compound
+            for compound in compounds
+        }
+        self.assertIn('hyper_native_core_limits', groups)
+        record = groups['hyper_native_capability_disposition_t']
+        self.assertIn('Wire layout', ''.join(record.itertext()))
+        operation = record.find(".//memberdef[name='operation']/detaileddescription")
+        self.assertIsNotNone(operation)
+        self.assertIn('offset 20 bytes', ''.join(operation.itertext()))
+        contract = groups['hyper_native_contract']
+        self.assertIn('userspace-loader-hyper-<architecture>', ''.join(contract.itertext()))
+
     def test_document_source_and_asset_links(self):
         self.write('kernel/src/task.rs', '// source')
         self.write('staged/docs/guide.md', '# Guide')
