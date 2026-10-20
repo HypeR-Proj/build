@@ -134,6 +134,7 @@ HOST_CC ?= clang
 endif
 CLANG ?= clang
 LLVM_AR ?= $(shell sh scripts/find-llvm-tool.sh llvm-ar)
+LLVM_NM ?= $(shell sh scripts/find-llvm-tool.sh llvm-nm)
 LLVM_STRIP ?= $(shell sh scripts/find-llvm-tool.sh llvm-strip)
 LLVM_RANLIB ?= $(shell sh scripts/find-llvm-tool.sh llvm-ranlib)
 HYPER_LD ?= $(shell sh scripts/find-llvm-tool.sh ld.lld)

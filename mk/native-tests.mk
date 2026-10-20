@@ -325,3 +325,13 @@ test-service-provider-failure: image
 		--board "$$fixture/deployment.json" --apps "$(APP_OUTPUT)/service-failure-apps" \
 		--mkfs-erofs "$(EROFS_MKFS)" --packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)"
+
+# Production instrumentation is opt-in and never requires kernel-test.
+PMU_LOG ?= $(APP_OUTPUT)/pmu-$(QEMU_CPUS).log
+.PHONY: test-pmu
+test-pmu: export KERNEL_FEATURES = rtc runtime-symbols crash-console pmu-profiling
+test-pmu: image native-initramfs
+	@test "$(ARCH)" = aarch64 || { echo "PMUv3 acceptance requires aarch64" >&2; exit 2; }
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-pmu.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(NATIVE_INITRAMFS)" "$(PMU_LOG)" \
+		--kernel "$(KERNEL_OUTPUT)/hyper" --nm "$(LLVM_NM)"

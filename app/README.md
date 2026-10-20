@@ -557,6 +557,7 @@ authorized process resources; path traversal is bounded by the delegated root,
 not the initial cwd. Inspector delegation depends on the resolved executable
 path: `/bin/ps` receives task inspection, `/bin/free` and `/bin/memstat` memory
 inspection, and `/bin/top` task, memory and CPU inspection.
+`/bin/perf` alone receives CPU profiling control and call-chain inspection.
 `/bin/handle` receives object
 inspection including privileged details, plus task inspection for process
 lookup. Copying or
@@ -565,6 +566,16 @@ The trusted `/bin/sh` path receives the shell's delegatable diagnostic
 and control capabilities, so nested shells keep the same tool access. Every
 formal child uses the system dynamic loader, including static executables; the
 shell retains no bootstrap loader or archive directory.
+
+## PMU profiling
+
+`perf start`, `stop`, `status`, `dump` and `record` control bounded system-wide
+PMUv3 cycle sampling on an opt-in AArch64 kernel. `record --output FILE -- COMMAND`
+streams a capture while an ordinary command runs; `start` followed by `dump`
+profiles shell-launched privileged tools. Captures include loss counters and the
+kernel build identity. The host converter produces folded stacks and an SVG;
+see [PMU sampling and flame graphs](../docs/profiling.md) for commands, permissions
+and measurement limits. This does not replace `top`'s scheduler CPU-time stats.
 
 ## File tools
 

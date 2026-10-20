@@ -506,6 +506,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-perf"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "hyper-clap-shared",
+ "hyper-os",
+ "hyper-rt",
+ "serde_json",
+]
+
+[[package]]
 name = "hyper-ps"
 version = "0.0.0"
 dependencies = [
