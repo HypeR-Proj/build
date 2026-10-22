@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Build and deployment options are declared in this directory's [Kconfig](Kconfig).
 Use the repository's `make menuconfig` and `.config` to select programs; see
-[product configuration](../docs/configuration.md) for dependencies and defconfig workflows.
+[product configuration](../docs/usage/deployment/configuration.md) for dependencies and defconfig workflows.
 
 These independent executables install in `/svc`. They share the formal Cargo
 workspace in `app/Cargo.toml`; bootstrap implementations remain separately owned
@@ -22,6 +22,6 @@ service logs until the first shell is released. Filesystem, I/O, VM and session
 managers continue owning their domain workers. Those implementations
 are not linked into component-manager.
 
-See [components and supervision](../docs/services.md) for configuration and
-administration, and [bootstrap handoff](../docs/bootstrap-handoff.md) for ownership.
+See [components and supervision](../docs/design/services/components.md) for configuration and
+administration, and [bootstrap handoff](../docs/design/boot/bootstrap-handoff.md) for ownership.
 `/svc` is a deployment convention; component declarations can name other paths.

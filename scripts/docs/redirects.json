@@ -1,0 +1,152 @@
+{
+  "SPDX-FileCopyrightText": "2026 roolrz",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "pages": {
+    "docs/getting-started.md": {
+      "target": "docs/learn/getting-started.md"
+    },
+    "docs/reading-the-code.md": {
+      "target": "docs/learn/reading-the-code.md"
+    },
+    "docs/development.md": {
+      "target": "docs/usage/development/development.md"
+    },
+    "docs/documentation.md": {
+      "target": "docs/usage/development/documentation.md"
+    },
+    "docs/incremental-builds.md": {
+      "target": "docs/usage/development/incremental-builds.md"
+    },
+    "docs/configuration.md": {
+      "target": "docs/usage/deployment/configuration.md"
+    },
+    "docs/board-storage.md": {
+      "target": "docs/usage/deployment/board-storage.md"
+    },
+    "docs/image-distribution.md": {
+      "target": "docs/usage/deployment/image-distribution.md"
+    },
+    "docs/profiling.md": {
+      "target": "docs/usage/diagnostics/profiling.md"
+    },
+    "docs/memory-diagnostics.md": {
+      "target": "docs/usage/diagnostics/memory-diagnostics.md"
+    },
+    "docs/editor.md": {
+      "target": "docs/usage/applications/editor.md"
+    },
+    "docs/less.md": {
+      "target": "docs/usage/applications/less.md"
+    },
+    "docs/shell.md": {
+      "target": "docs/usage/applications/shell.md"
+    },
+    "docs/boot-layout.md": {
+      "target": "docs/architecture/boot-layout.md",
+      "anchors": {
+        "boot-profiles": "docs/usage/deployment/boot-policy.md#boot-profiles",
+        "runtime-filesystem-policy": "docs/usage/deployment/boot-policy.md#runtime-filesystem-policy",
+        "build-and-customize": "docs/usage/deployment/boot-policy.md#build-and-customize"
+      }
+    },
+    "docs/bootstrap-handoff.md": {
+      "target": "docs/design/boot/bootstrap-handoff.md"
+    },
+    "docs/filesystem-services.md": {
+      "target": "docs/design/storage/filesystem-services.md"
+    },
+    "docs/fat.md": {
+      "target": "docs/design/storage/fat.md"
+    },
+    "docs/services.md": {
+      "target": "docs/design/services/components.md"
+    },
+    "docs/terminal.md": {
+      "target": "docs/design/services/terminal.md"
+    },
+    "docs/io-vm.md": {
+      "target": "docs/design/virtualization/io-vm.md"
+    },
+    "docs/virtio-console.md": {
+      "target": "docs/design/virtualization/virtio-console.md"
+    },
+    "docs/roadmap.md": {
+      "target": "docs/project/roadmap.md"
+    },
+    "docs/status.md": {
+      "target": "docs/project/status.md",
+      "anchors": {
+        "design-priorities": "docs/architecture/overview.md#design-priorities",
+        "architecture": "docs/architecture/overview.md#architecture"
+      }
+    },
+    "kernel/docs/architecture.md": {
+      "target": "kernel/docs/architecture/README.md"
+    },
+    "kernel/docs/riscv64.md": {
+      "target": "kernel/docs/architecture/riscv64.md"
+    },
+    "kernel/docs/x86_64.md": {
+      "target": "kernel/docs/architecture/x86_64.md"
+    },
+    "kernel/docs/configuration.md": {
+      "target": "kernel/docs/usage/configuration.md"
+    },
+    "kernel/docs/crash-console.md": {
+      "target": "kernel/docs/usage/crash-console.md"
+    },
+    "kernel/docs/rpi5.md": {
+      "target": "kernel/docs/usage/rpi5.md"
+    },
+    "kernel/docs/stack-budgets.md": {
+      "target": "kernel/docs/usage/stack-budgets.md"
+    },
+    "kernel/docs/floating-point.md": {
+      "target": "kernel/docs/design/floating-point.md"
+    },
+    "kernel/docs/io-isolation.md": {
+      "target": "kernel/docs/design/io-isolation.md"
+    },
+    "kernel/docs/native-init.md": {
+      "target": "kernel/docs/design/native-init.md"
+    },
+    "kernel/docs/random.md": {
+      "target": "kernel/docs/design/random.md"
+    },
+    "kernel/docs/smmuv3.md": {
+      "target": "kernel/docs/design/smmuv3.md"
+    },
+    "kernel/docs/syscall-abi.md": {
+      "target": "kernel/docs/design/syscall-abi.md"
+    },
+    "kernel/docs/syscall-families.md": {
+      "target": "kernel/docs/design/syscall-families.md"
+    },
+    "kernel/docs/time.md": {
+      "target": "kernel/docs/design/time.md"
+    },
+    "kernel/docs/timers.md": {
+      "target": "kernel/docs/design/timers.md"
+    },
+    "kernel/docs/vfs.md": {
+      "target": "kernel/docs/design/vfs.md"
+    },
+    "kernel/docs/vm-bundle.md": {
+      "target": "kernel/docs/design/vm-bundle.md"
+    },
+    "docs/applications.md": {
+      "target": "docs/usage/applications/README.md",
+      "anchors": {
+        "object-and-capability-inspection": "docs/usage/applications/handle.md#object-and-capability-inspection",
+        "named-virtual-machines": "docs/usage/applications/vmm.md#named-virtual-machines",
+        "configuration": "docs/usage/applications/vmm.md#configuration",
+        "validation": "docs/usage/applications/vmm.md#validation",
+        "console-and-storage-visibility": "docs/usage/applications/vmm.md#console-and-storage-visibility",
+        "memory-cache-reporting": "docs/usage/applications/free.md#memory-cache-reporting",
+        "interactive-transport": "docs/usage/applications/execution.md#interactive-transport",
+        "service-administration": "docs/usage/applications/services.md",
+        "files-and-system-information": "docs/usage/applications/files.md"
+      }
+    }
+  }
+}

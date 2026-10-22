@@ -14,6 +14,9 @@ import subprocess
 import sys
 
 from check_links import check_site
+from doxygen import fix_index_anchor
+from navigation import navigation
+from redirects import write_redirects
 from rustdoc import fix_rustdoc_links
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -183,6 +186,11 @@ def api_documentation(revision):
         'HYPER_DOC_REVISION': revision,
         'HYPER_DOC_C_OUTPUT': str(api / 'c'),
     })
+    for page in (api / 'c').glob('globals*.html'):
+        original = page.read_text()
+        updated = fix_index_anchor(original)
+        if updated != original:
+            page.write_text(updated)
     lines = [
         '# API reference', '',
         'These pages are generated from the existing standard documentation comments.',
@@ -219,13 +227,6 @@ def api_documentation(revision):
     (api / 'index.md').write_text('\n'.join(lines))
 
 
-def page_title(path):
-    for line in path.read_text().splitlines():
-        if line.startswith('# '):
-            return line[2:].strip().replace('`', '')
-    return path.stem
-
-
 def prepare_site(revision):
     source = OUTPUT / 'source'
     clean(source)
@@ -234,8 +235,7 @@ def prepare_site(revision):
         raise ValueError('API output is missing; run the complete build first')
     shutil.copytree(api, source / 'api')
     files = public_files()
-    groups = {name: [] for name in ('Guides', 'Kernel', 'SDK', 'Native substrate',
-                                   'Libraries', 'Applications', 'Services', 'Tests', 'Project')}
+    pages = []
     for name in files:
         path = Path(name)
         if path.suffix.lower() not in ('.md', '.png', '.svg', '.jpg', '.jpeg', '.gif'):
@@ -246,19 +246,13 @@ def prepare_site(revision):
         destination = source / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, destination)
-        if path.suffix != '.md' or name == 'README.md':
-            continue
-        if name.startswith(('tests/', 'kernel/tests/')):
-            group = 'Tests'
-        else:
-            group = {'docs': 'Guides', 'kernel': 'Kernel', 'sdk': 'SDK', 'lib': 'Libraries', 'stdlib': 'Native substrate',
-                     'app': 'Applications', 'svc': 'Services'}.get(path.parts[0], 'Project')
-        groups[group].append({page_title(ROOT / path): name})
+        if path.suffix == '.md':
+            pages.append(name)
     assets = source / 'assets'
     assets.mkdir()
     shutil.copyfile(TOOLS / 'mermaid.js', assets / 'mermaid.js')
-    nav = [{'Home': 'README.md'}, {'API reference': 'api/index.md'}]
-    nav.extend({group: entries} for group, entries in groups.items() if entries)
+    shutil.copyfile(TOOLS / 'redirect.js', assets / 'redirect.js')
+    nav = navigation(ROOT, pages)
     (OUTPUT / 'manifest.json').write_text(json.dumps({
         'revision': revision, 'sources': files, 'nav': nav,
     }, indent=2) + '\n')
@@ -274,6 +268,7 @@ def main():
         api_documentation(revision)
     prepare_site(revision)
     run([sys.executable, '-m', 'mkdocs', 'build', '--strict', '-f', str(TOOLS / 'mkdocs.yml')])
+    write_redirects(OUTPUT / 'site', TOOLS / 'redirects.json')
     # Rustdoc checks source-level intra-doc links. Validate generated link
     # targets too, allowing its dynamic anchors and optional trait scripts.
     check_site(OUTPUT / 'site', rustdoc_roots=('api/kernel', 'api/native'))

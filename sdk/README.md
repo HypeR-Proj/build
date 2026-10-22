@@ -95,7 +95,7 @@ All in-tree applications, including init, use the HypeR `std` build. Ordinary
 operations use standard-library APIs where supported; HypeR-specific bootstrap,
 capability and VM operations retain Native SDK bindings. Init's runtime
 initialization and early output do not depend on its child services; see the
-[init runtime contract](../kernel/docs/native-init.md#rust-runtime).
+[init runtime contract](../kernel/docs/design/native-init.md#rust-runtime).
 
 `hyper-clang -shared` produces capability-loadable shared objects with the
 same W^X, page-alignment, and ELF-branding checks as applications. Shared
@@ -140,7 +140,7 @@ safe-binding host tests, and portable C runtime unit tests.
 
 ## Application address-space policy
 
-The [Native 64-bit address-space contract](../kernel/docs/syscall-abi.md#native-64-bit-application-address-space-contract)
+The [Native 64-bit address-space contract](../kernel/docs/design/syscall-abi.md#native-64-bit-application-address-space-contract)
 reserves a profile-specific region for system-managed user mappings, such as a
 future vDSO. Current application limits are 128 TiB on AArch64 VA48 and 128 GiB
 on RISC-V Sv39. These values may change; the common ABI does not require equal

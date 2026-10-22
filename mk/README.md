@@ -25,7 +25,7 @@ Native payloads and board devices without maintaining a second platform table.
 `make menuconfig` saves component selection to `.config`, which subsequent
 root Make commands read automatically. `SYSTEM_CONFIG=path/to/product.config`
 selects an alternative saved file rather than merging another selection over
-it. See [product configuration](../docs/configuration.md) for the menus, saved
+it. See [product configuration](../docs/usage/deployment/configuration.md) for the menus, saved
 format and I/O profile validation. `make app-manifest` prints the resulting
 registry for `APP_BUILD_PROFILE` (normally `system`). Kconfig files own normal defaults and executable dependencies;
 component.mk owns build and delivery metadata. The registry checks that every
@@ -213,7 +213,7 @@ persistent volumes remains explicit through `make rebuild` or `make board-rebuil
 outputs remain under `target/board/qemu/`, and Pi 5 uses
 `target/board/rpi5-native/`. Custom products append their configuration identity
 to the board output, keeping their disks separate from the default product.
-See [boot layout](../docs/boot-layout.md) for deployment policy,
+See [boot layout](../docs/architecture/boot-layout.md) for deployment policy,
 artifacts, recovery behavior and build commands.
 
 ## SDK component cache
