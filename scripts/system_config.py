@@ -10,12 +10,12 @@ import re
 import tomllib
 
 import boot_profiles
+import kconfig
 
 
-DEFAULT_BOOT = ('init', 'console-raw', 'fallback-sh', 'io-runtime', 'fs-backend',
-                'fs-erofs', 'fs-fat', 'mount', 'umount')
 HEADERS = {'SPDX-FileCopyrightText', 'SPDX-License-Identifier'}
-KERNEL_MANIFEST = Path(__file__).resolve().parents[1] / 'kernel/Cargo.toml'
+ROOT = Path(__file__).resolve().parents[1]
+KERNEL_MANIFEST = ROOT / 'kernel/Cargo.toml'
 
 
 def unique_object(pairs):
@@ -39,6 +39,7 @@ def names(value, context, *, features=False):
 
 class ProductConfig:
     def __init__(self, source):
+        self.policy_path = ''
         if (not isinstance(source, dict) or source.keys() - HEADERS - {'version', 'boot', 'system', 'kernel', 'boot-profiles'}
                 or type(source.get('version')) is not int or source['version'] != 1):
             raise ValueError('product configuration requires version 1 and boot/system/kernel sections')
@@ -99,12 +100,16 @@ class ProductConfig:
             raise ValueError(f'unknown {environment} components: {sorted(missing)}')
         selected = set()
         if section['base'] == 'default':
-            if environment == 'boot':
-                selected = set(DEFAULT_BOOT if boot_components is None else boot_components)
+            if environment == 'boot' and boot_components is not None:
+                selected = set(boot_components)
                 if missing := selected - available.keys():
                     raise ValueError(f'unknown boot components: {sorted(missing)}')
             else:
-                selected = {name for name, entry in available.items() if profile in entry['profiles']}
+                # Both environments derive defaults from domain Kconfig. Keep no
+                # second bootstrap list that can drift from the menu/registry.
+                # Formal fixture profiles must not remove bootstrap providers.
+                membership = 'system' if environment == 'boot' else profile
+                selected = {name for name, entry in available.items() if membership in entry['profiles']}
         selected |= set(section['include'])
         selected -= set(section['exclude'])
         return selected
@@ -126,5 +131,99 @@ class ProductConfig:
         return result
 
 
-def load(path):
-    return ProductConfig(json.loads(Path(path).read_text(), object_pairs_hook=unique_object))
+def component_symbols(entries):
+    """Bind Kconfig program symbols to their registered delivery targets."""
+    symbols = {}
+    for entry in entries:
+        if 'binary' not in entry:
+            continue
+        scope = entry.get('environment', 'system')
+        name = entry['staged']
+        symbol = 'CONFIG_' + scope.upper() + '_APP_' + re.sub(r'[^A-Za-z0-9]', '_', name).upper()
+        if symbol in symbols:
+            raise ValueError(f'configuration symbol collision: {symbol}')
+        symbols[symbol] = (scope, name)
+    return symbols
+
+
+def registry_entries():
+    from native_components import load_registry
+    return load_registry(ROOT / 'mk/components.mk')['entries']
+
+
+def quoted(value):
+    if any(ord(char) < 32 for char in value):
+        raise ValueError('configuration strings cannot contain control characters')
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def resolve(values, entries):
+    symbols = component_symbols(entries)
+    source = {'version': 1, 'boot': {'base': 'none', 'include': []},
+              'system': {'base': 'none', 'include': []}}
+    for key, value in values.items():
+        if key in ('CONFIG_KERNEL_FEATURES', 'CONFIG_BOOT_POLICY'):
+            continue
+        if key not in symbols:
+            raise ValueError(f'configuration has no registered program: {key}')
+        if value not in ('y', 'n'):
+            raise ValueError(f'{key}: expected y or n')
+        if value == 'y':
+            scope, name = symbols[key]
+            source[scope]['include'].append(name)
+    features = values.get('CONFIG_KERNEL_FEATURES', kconfig.schema()['CONFIG_KERNEL_FEATURES']['default'])
+    if features != 'default':
+        source['kernel'] = {'features': features.split(',') if features else []}
+    policy = values.get('CONFIG_BOOT_POLICY', kconfig.schema()['CONFIG_BOOT_POLICY']['default'])
+    if policy:
+        path = Path(policy)
+        # Paths are repository-relative, independent of where .config is saved.
+        # This also makes a savedefconfig export portable within the repository.
+        data = json.loads((path if path.is_absolute() else ROOT / path).read_text(),
+                          object_pairs_hook=unique_object)
+        if not isinstance(data, dict) or data.keys() - HEADERS - {'boot-profiles', 'storage-providers'}:
+            raise ValueError('boot policy accepts only boot-profiles and storage-providers')
+        if 'boot-profiles' in data:
+            source['boot-profiles'] = data['boot-profiles']
+        if 'storage-providers' in data:
+            source['system']['storage-providers'] = data['storage-providers']
+    product = ProductConfig(source)
+    product.policy_path = policy
+    return product
+
+
+def load(path, entries=None, *, migrate=False):
+    entries = registry_entries() if entries is None else entries
+    result = kconfig.query('migrate' if migrate else 'resolve', Path(path).resolve())
+    known = set(component_symbols(entries)) | {'CONFIG_KERNEL_FEATURES', 'CONFIG_BOOT_POLICY'}
+    if invalid := set(result['assigned']) - set(result['removed']) - known:
+        raise ValueError(f'configuration has no registered programs: {sorted(invalid)}')
+    return resolve({name: value for name, value in result['values'].items() if name in known}, entries)
+
+
+def format_config(product, entries, *, minimal=False):
+    """Emit a resolved .config or a defconfig containing only default overrides."""
+    symbols = component_symbols(entries)
+    # Check names even if no dependency validation was requested by the caller.
+    selected = {scope: product.selected_names(entries, scope) for scope in ('boot', 'system')}
+    settings = kconfig.schema()
+    lines = ['# SPDX-FileCopyrightText: 2026 roolrz', '# SPDX-License-Identifier: Apache-2.0', '']
+    for scope in ('boot', 'system'):
+        lines.append('# ' + ('Bootstrap stage1' if scope == 'boot' else 'System'))
+        for symbol, (environment, name) in sorted(symbols.items()):
+            if environment != scope:
+                continue
+            enabled = name in selected[scope]
+            if not minimal or enabled != (settings[symbol]['default'] == 'y'):
+                lines.append(f'{symbol}=y' if enabled else f'# {symbol} is not set')
+        lines.append('')
+    kernel = product.value.get('kernel')
+    if not minimal or kernel is not None:
+        features = ','.join(kernel['features']) if kernel is not None else 'default'
+        lines.append('CONFIG_KERNEL_FEATURES=' + quoted(features))
+    if not minimal or product.policy_path:
+        lines.append('CONFIG_BOOT_POLICY=' + quoted(product.policy_path))
+    if not product.policy_path and ('boot-profiles' in product.value
+                                    or 'storage-providers' in product.value['system']):
+        raise ValueError('structured boot policy requires CONFIG_BOOT_POLICY')
+    return '\n'.join(lines) + '\n'

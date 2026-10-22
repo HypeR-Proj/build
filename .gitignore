@@ -15,8 +15,9 @@
 /kernel/tests/host/Cargo.lock
 /kernel/tests/concurrency/target/
 /kernel/tools/kconfig/target/
-/kernel/tools/kconfig/Cargo.lock
 /kernel/tools/kallsyms/target/
+/.config
+/defconfig
 /kernel/.config
 /.idea/
 /.vscode/*

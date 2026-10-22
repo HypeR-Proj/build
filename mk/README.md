@@ -7,15 +7,29 @@ SPDX-License-Identifier: Apache-2.0
 
 The root Makefile is the developer entry point. Cargo owns Rust dependency
 resolution, CMake owns native compilation, and the component registry owns
-delivery metadata. `make app-manifest` prints the expanded registry without
-building an SDK or changing any files.
+delivery metadata. `make app-manifest` prints the selected registry without
+building an SDK. Its first invocation builds the small host Kconfig parser.
 
-`SYSTEM_CONFIG=path/to/product.json` selects the deployed executables and,
-optionally, the kernel's production features. See
-[product configuration](../docs/configuration.md) for the JSON schema and a
-minimal QEMU product. `make app-manifest SYSTEM_CONFIG=...` prints the selected
-registry. The registry remains the source of component names and dependencies;
-product files select from it rather than duplicating Cargo package definitions.
+Make recipes and their phony declarations live with their owner:
+`kernel/Makefile` builds and tests the kernel; `mk/sdk-app.mk` builds the SDK
+and Native programs; `mk/native-tests.mk` owns Native fixtures, including stack
+and GICv2 probes; `mk/boards.mk` composes board images and I/O fixtures. The root
+forwards kernel build/test commands and provides configuration, build, run and
+clean entry points. Cross-component test aggregates live only in
+[`tests/ci/run.sh`](../tests/ci/README.md), shared by local runs and CI.
+
+Kernel target triples, build profile and baseline QEMU settings are owned by
+`kernel/mk/platform.mk`, shared by both Make entry points. Product Make adds
+Native payloads and board devices without maintaining a second platform table.
+
+`make menuconfig` saves component selection to `.config`, which subsequent
+root Make commands read automatically. `SYSTEM_CONFIG=path/to/product.config`
+selects an alternative saved file rather than merging another selection over
+it. See [product configuration](../docs/configuration.md) for the menus, saved
+format and I/O profile validation. `make app-manifest` prints the resulting
+registry for `APP_BUILD_PROFILE` (normally `system`). Kconfig files own normal defaults and executable dependencies;
+component.mk owns build and delivery metadata. The registry checks that every
+program has a matching boolean option and rejects orphaned Kconfig program options.
 
 Each Native program and shared library declares delivery in its own
 `component.mk`. `mk/components.mk` discovers `app/*/component.mk`, `svc/*/component.mk`,
@@ -26,16 +40,17 @@ Acceptance-only payloads are declared in `tests/native/component.mk`.
 
 ```make
 # source directory, Cargo binary, staged filename, destination, image profiles
-$(eval $(call native-rust-app,app/echo,hyper-echo,echo,bin/echo,system development))
+$(eval $(call native-rust-app,app/echo,hyper-echo,echo,bin/echo,development))
 
 # source directory, library filename; the template supplies the library layout
 $(eval $(call native-rust-shared,lib/clap,libhyper_clap_shared.so))
 ```
 
-`native-rust-app` also accepts an optional sixth argument (`std` or `core`) and
-a seventh argument listing staged names of child programs it must be able to
-launch. These runtime requirements are checked against the product selection;
-they do not add Cargo dependencies or silently include omitted executables.
+`native-rust-app` also accepts an optional sixth argument (`std` or `core`).
+Its profile argument describes explicit development/IO fixtures; normal-product
+membership is derived from Kconfig. Declare deployed-program prerequisites with
+`depends on` in Kconfig, separately from Cargo crate dependencies. They constrain
+product selection and do not implicitly enable absent programs.
 
 The registry checks each declaration against its Cargo manifest and workspace
 membership. Cargo package names are read from those manifests. Dependencies,
@@ -135,10 +150,11 @@ for packages under `bootstrap/stage1/`, independently of the Make entry point;
 explicit dynamic builds through `hyper-cargo` fail. Static linking checks the
 final ELF as well as the requested flags.
 
-Image composition selects boot executables through `APP_BOOT_COMPONENTS` and
-formal programs through image-profile membership, independently. When
-`SYSTEM_CONFIG` is selected, its per-environment allowlist/exclusions filter both
-graphs and packaging. Generated formal service declarations follow the selected
+Image composition uses the same product selection as executable compilation.
+Both boot and formal defaults come from registry profile membership. The saved
+configuration filters each environment independently; `APP_BOOT_COMPONENTS`
+is derived from it for the bootstrap build. Recovery/test targets may provide
+a restricted boot selection explicitly. Generated formal service declarations follow the selected
 executables. A required runtime child or bootstrap/adoption program cannot be
 silently omitted. Every selectable boot profile is checked against the actual
 boot archive, including explicitly required workers; undeclared filesystem

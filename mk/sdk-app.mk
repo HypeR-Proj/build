@@ -15,9 +15,9 @@ APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
 APP_BOOT_CARGO_OUTPUT ?= $(APP_CARGO_OUTPUT)/boot-static
 APP_BOOT_SELECTION = $(addprefix --component ,$(APP_BOOT_COMPONENTS))
 
-.PHONY: app-manifest
+.PHONY: sdk sdk-check sdk-test app app-fetch app-check app-test app-manifest
 app-manifest:
-	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS)
+	python3 -B scripts/app-deployment.py manifest --manifest "$(APP_DEPLOYMENT)" --profile "$(APP_BUILD_PROFILE)" $(SYSTEM_CONFIG_ARGS)
 
 sdk:
 	cd "$(SDK_ABI_SOURCE)" && \

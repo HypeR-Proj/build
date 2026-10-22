@@ -4,11 +4,13 @@
 """Read component templates and check their declared Cargo delivery targets."""
 
 import os
+import re
 from pathlib import Path
 import subprocess
 import tomllib
 
 from cargo_workspace import member_directories
+import kconfig
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +28,8 @@ def load_registry(path):
     members = (member_directories(ROOT / 'app/Cargo.toml')
                | member_directories(ROOT / 'bootstrap/stage1/Cargo.toml'))
     entries = []
+    settings = kconfig.schema()
+    declared = set()
     for record in result.stdout.splitlines():
         fields = record.split('|')
         kind = fields[0]
@@ -44,6 +48,17 @@ def load_registry(path):
             if kind == 'binary':
                 if artifact not in {item['name'] for item in manifest.get('bin', [])}:
                     raise ValueError(f'component binary is absent from Cargo manifest: {artifact}')
+                symbol = ('CONFIG_BOOT_APP_' if static else 'CONFIG_SYSTEM_APP_') + re.sub(
+                    r'[^A-Za-z0-9]', '_', staged).upper()
+                if symbol in declared:
+                    raise ValueError(f'configuration symbol collision: {symbol}')
+                declared.add(symbol)
+                if symbol not in settings or settings[symbol]['kind'] != 'bool':
+                    raise ValueError(f'component {staged} requires boolean {symbol} in Kconfig')
+                if 'system' in profiles.split():
+                    raise ValueError(f'{staged}: normal defaults belong in Kconfig, not component.mk')
+                if settings[symbol]['default'] == 'y':
+                    profiles += ' system'
             else:
                 library = manifest.get('lib', {})
                 name = library.get('name', manifest['package']['name'].replace('-', '_'))
@@ -56,7 +71,7 @@ def load_registry(path):
                      'rust_runtime': runtime, 'environment': 'boot' if static else 'system',
                      'cargo_binaries': [item['name'] for item in manifest.get('bin', [])]}
             if len(fields) == 8 and fields[7]:
-                entry['runtime_requires'] = fields[7].split()
+                raise ValueError('executable dependencies belong in Kconfig, not component.mk')
         elif kind in ('source', 'symlink') and len(fields) in (5, 6):
             _, source, destination, mode, profiles = fields[:5]
             entry = {kind: source, 'destination': destination, 'mode': mode,
@@ -65,6 +80,21 @@ def load_registry(path):
         else:
             raise ValueError(f'invalid component record: {record}')
         entries.append(entry)
+    if obsolete := {name for name in settings if name.startswith(('CONFIG_BOOT_APP_', 'CONFIG_SYSTEM_APP_'))} - declared:
+        raise ValueError(f'Kconfig selects unregistered programs: {sorted(obsolete)}')
+    programs = {('CONFIG_BOOT_APP_' if entry['environment'] == 'boot' else 'CONFIG_SYSTEM_APP_')
+                + re.sub(r'[^A-Za-z0-9]', '_', entry['staged']).upper(): entry
+                for entry in entries if 'binary' in entry}
+    for symbol, entry in programs.items():
+        required = []
+        for dependency in settings[symbol]['dependencies']:
+            target = programs.get(dependency['name'])
+            if target and not dependency['inverted']:
+                if target['environment'] != entry['environment']:
+                    raise ValueError(f'cross-environment program dependency: {symbol}')
+                required.append(target['staged'])
+        if required:
+            entry['runtime_requires'] = required
     return {'version': 1, 'entries': entries}
 
 

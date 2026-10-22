@@ -18,9 +18,53 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from cargo_workspace import member_directories
+from product_fixture import write_product
 
 
 class EntrypointTests(unittest.TestCase):
+    def test_x86_image_produces_the_dtb_required_by_run(self):
+        with tempfile.TemporaryDirectory(prefix='hyper-x86-image-') as directory:
+            arguments = ['make', '--no-print-directory', '-n', 'ARCH=x86_64',
+                         f'KERNEL_BUILD_ROOT={directory}', 'INITRAMFS=fixture.cpio']
+            build = subprocess.check_output(
+                [*arguments, '-o', 'build', 'image'], cwd=ROOT / 'kernel', text=True)
+            run = subprocess.check_output(
+                [*arguments, 'run'], cwd=ROOT / 'kernel', text=True)
+            build_commands = [shlex.split(line) for line in
+                              build.replace('\\\n', '').splitlines()]
+            run_commands = [shlex.split(line) for line in
+                            run.replace('\\\n', '').splitlines()]
+            dtc = next(command for command in build_commands if '-O' in command)
+            qemu = next(command for command in run_commands if '-dtb' in command)
+            self.assertEqual(dtc[dtc.index('-O') + 1], 'dtb')
+            self.assertEqual(dtc[dtc.index('-o') + 1], qemu[qemu.index('-dtb') + 1])
+
+    def test_kernel_and_root_share_platform_defaults_and_overrides(self):
+        variables = ['KERNEL_TARGET', 'KERNEL_PROFILE', 'QEMU', 'QEMU_CPU',
+                     'QEMU_MACHINE', 'QEMU_BOOTARGS', 'QEMU_CPUS', 'QEMU_MEMORY']
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.mk') as probe:
+            probe.write('__platform:\n\t@printf "%s\\n" ' +
+                        ' '.join('"$(' + name + ')"' for name in variables) + '\n')
+            probe.flush()
+            for arch in ('aarch64', 'riscv64', 'x86_64'):
+                for overrides in ([], ['QEMU=custom-qemu', 'QEMU_MACHINE=custom-machine',
+                                       'QEMU_CPUS=2', 'QEMU_MEMORY=512M']):
+                    with self.subTest(arch=arch, overrides=overrides):
+                        command = ['make', '--no-print-directory', '-s', '-f', 'Makefile',
+                                   '-f', probe.name, '__platform', 'ARCH=' + arch, *overrides]
+                        root = subprocess.check_output(command, cwd=ROOT, text=True)
+                        kernel = subprocess.check_output(command, cwd=ROOT / 'kernel', text=True)
+                        self.assertEqual(root, kernel)
+                        if not overrides:
+                            self.assertEqual(root.splitlines()[2], 'qemu-system-' + arch)
+
+    def kernel_feature_product(self):
+        temporary = tempfile.TemporaryDirectory(prefix='hyper-entrypoint-product-')
+        self.addCleanup(temporary.cleanup)
+        path = Path(temporary.name) / 'product.config'
+        write_product(path, {'version': 1, 'kernel': {'features': ['runtime-symbols']}})
+        return path
+
     def test_workspace_discovery_agrees_with_cargo_when_an_app_is_added(self):
         with tempfile.TemporaryDirectory(prefix='hyper workspace discovery ') as directory:
             root = Path(directory)
@@ -94,16 +138,16 @@ class EntrypointTests(unittest.TestCase):
                      probe.name, '__product_outputs', *arguments], cwd=ROOT, text=True).splitlines()
         ordinary = outputs(None)
         with tempfile.TemporaryDirectory(prefix='hyper product identity ') as directory:
-            path = Path(directory) / 'product.json'
+            path = Path(directory) / 'product.config'
             value = {'version': 1, 'boot': {'exclude': ['fs-fat']},
                      'system': {'exclude': ['editor', 'less']}}
-            path.write_text(json.dumps(value))
+            write_product(path, value)
             selected = outputs(path)
             value['system']['exclude'].reverse()
-            path.write_text(json.dumps(value))
+            write_product(path, value)
             self.assertEqual(outputs(path), selected)
             value['system']['exclude'].append('grep')
-            path.write_text(json.dumps(value))
+            write_product(path, value)
             changed = outputs(path)
         for column in range(4):
             self.assertEqual(len({ordinary[column], selected[column], changed[column]}), 3)
@@ -112,7 +156,7 @@ class EntrypointTests(unittest.TestCase):
 
     def test_product_kernel_features_reach_kernel_and_reject_competing_overrides(self):
         arguments = ['make', '-n', 'image', 'ARCH=aarch64',
-                     'SYSTEM_CONFIG=configs/minimal.json']
+                     f'SYSTEM_CONFIG={self.kernel_feature_product()}']
         result = subprocess.run(arguments, cwd=ROOT, check=True, capture_output=True, text=True)
         self.assertIn('KERNEL_FEATURES="runtime-symbols"', result.stdout)
         self.assertIn('--no-default-features', result.stdout)
@@ -126,7 +170,7 @@ class EntrypointTests(unittest.TestCase):
             for build_root in (None, 'target/custom-kernel'):
                 with self.subTest(arch=arch, build_root=build_root):
                     arguments = [f'ARCH={arch}', 'RUN_PROFILE=native',
-                                 'SYSTEM_CONFIG=configs/minimal.json']
+                                 f'SYSTEM_CONFIG={self.kernel_feature_product()}']
                     if build_root:
                         arguments.append(f'KERNEL_BUILD_ROOT={build_root}')
                     planned = subprocess.check_output(

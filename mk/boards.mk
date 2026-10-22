@@ -158,14 +158,14 @@ board-run: board-check-system
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$(BOARD_OUTPUT)/bootstrap.cpio" \
 		--disk "$(BOARD_IMAGE)" --board "$(BOARD_DEPLOYMENT)"
 
-# Keep the command reporter in a test-only product selection. The ordinary
-# minimal product never deploys acceptance programs or kernel test hooks.
+# Generate the trimmed acceptance selection from the test workload, without
+# maintaining a second production preset. The reporter remains test-only.
 .PHONY: test-product-config test-product-config-run
 test-product-config:
 	python3 -B tests/qemu/verify-product-config.py prepare \
-		--output "$(BOARD_TEST_OUTPUT)/product-config/product.json"
+		--output "$(BOARD_TEST_OUTPUT)/product-config/product.config"
 	$(MAKE) test-product-config-run BOARD=qemu \
-		SYSTEM_CONFIG="$(abspath $(BOARD_TEST_OUTPUT))/product-config/product.json" \
+		SYSTEM_CONFIG="$(abspath $(BOARD_TEST_OUTPUT))/product-config/product.config" \
 		BOARD_CONFIG="$(CURDIR)/boards/qemu-minimal.json" \
 		BOARD_OUTPUT="$(abspath $(BOARD_TEST_OUTPUT))/product-config"
 

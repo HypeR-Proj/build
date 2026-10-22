@@ -44,6 +44,10 @@ class DeploymentTests(unittest.TestCase):
                 self.assertNotIn('hyper-native-test-init', targets)
                 entries = [entry for entry in deployment.load(MANIFEST)
                            if entry.get('staged') in ('echo', 'terminal-probe')]
+                # This fixture tests profile filtering and installation, not a
+                # bootable graph. Actual dependency closure is covered separately.
+                for entry in entries:
+                    entry.pop('runtime_requires', None)
                 with tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     manifest = root / 'components.json'
@@ -514,12 +518,16 @@ class NativePayloadTests(unittest.TestCase):
         self.args.packer = 'unused-packer'
         self.args.strip = 'unused-strip'
         graph = self.root / 'services.json'
-        graph.write_text(json.dumps({'format': 'hyper.service-manifest', 'services': []}))
+        console = json.loads((ROOT / 'bootstrap/stage1/init/config/services-with-vms.json').read_text())['services'][0]
+        graph.write_text(json.dumps({'format': 'hyper.service-manifest', 'services': [console]}))
         # Exercise real metadata generation and payload staging with an ELF
         # entry fixture, without invoking external build tools.
         entry = str(self.args.apps / 'component-manager')
-        records = [['0755', 'svc/component-manager', entry]]
-        with patch.object(split, 'compose_entries', return_value=([], records, {entry: split.archive.digest(entry)})), \
+        records = [['0755', 'svc/' + name, entry] for name in
+                   ('component-manager', 'system-startup', 'journal', 'bootstrap-retire', 'console-raw')]
+        boot = [['0755', 'init', str(self.args.boot_apps / 'init')],
+                ['0755', 'svc/console-raw', entry]]
+        with patch.object(split, 'compose_entries', return_value=(boot, records, {entry: split.archive.digest(entry)})), \
                 patch.object(split.subprocess, 'run'):
             split.compose(self.args, self.board['native'], graph)
         entries = json.loads((self.args.output / 'native-system/boot.entries.json').read_text())
@@ -582,11 +590,12 @@ class NativePayloadTests(unittest.TestCase):
         self.assertIn('svc/fs-fat', {name for _, name, _ in system})
 
     def test_product_exclusion_ignores_preexisting_boot_and_formal_artifacts(self):
-        self.args.system_config = self.root / 'product.json'
-        self.args.system_config.write_text(json.dumps({
-            'version': 1, 'boot': {'exclude': ['fs-fat']},
-            'system': {'exclude': ['fs-fat-system', 'vm-manager', 'vm-runtime']},
-        }))
+        self.args.system_config = self.root / 'product.config'
+        self.args.system_config.write_text(
+            '# CONFIG_BOOT_APP_FS_FAT is not set\n'
+            '# CONFIG_SYSTEM_APP_FS_FAT_SYSTEM is not set\n'
+            '# CONFIG_SYSTEM_APP_VM_MANAGER is not set\n'
+            '# CONFIG_SYSTEM_APP_VM_RUNTIME is not set\n')
         boot, system, _ = self.compose()
         self.assertTrue((self.args.boot_apps / 'fs-fat').is_file())
         self.assertTrue((self.args.apps / 'fs-fat-system').is_file())

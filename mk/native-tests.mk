@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Native image composition and acceptance fixtures.
+.PHONY: fit-pack guest-itb native-initramfs test-native test-apps test-console \
+	test-runtime-crash test-vm-smoke test-io-vm guest-smp-initramfs test-guest-smp
+
 fit-pack:
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) build \
 		--manifest-path "tools/fit-pack/Cargo.toml" --release
@@ -57,6 +60,29 @@ test-native: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-native-init.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
 		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
+
+# GICv2 host and Linux guest coverage with the standard Native service profile.
+.PHONY: test-native-gicv2
+test-native-gicv2:
+	@test "$(ARCH)" = aarch64 || { echo "GICv2 requires ARCH=aarch64" >&2; exit 2; }
+	$(MAKE) test-native ARCH=aarch64 QEMU_CPU=max \
+		QEMU_MACHINE=virt,virtualization=on,gic-version=2,dtb-randomness=on \
+		NATIVE_INITRAMFS="$(APP_OUTPUT)/initramfs-gicv2.cpio"
+
+# Keep instrumentation and the inspector-authorized workload in a dedicated
+# fixture. The normal ps binary and production initramfs are unchanged.
+.PHONY: stack-initramfs test-stack
+stack-initramfs:
+	mkdir -p "$(STACK_OUTPUT)"
+	$(MAKE) native-initramfs NATIVE_INITRAMFS="$(STACK_OUTPUT)/initramfs.cpio" \
+		NATIVE_PS_IMAGE="$(NATIVE_STD_TEST_OUTPUT)/std-dynamic"
+
+test-stack: stack-initramfs
+	$(MAKE) image CARGO_FEATURES="--features kernel-test,kernel-stack-audit"
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-stack.py \
+		"$(QEMU)" "$(KERNEL_IMAGE)" "$(STACK_OUTPUT)/initramfs.cpio" \
+		"$(STACK_OUTPUT)/qemu.log" --minimum-remaining "$(STACK_MINIMUM_REMAINING)" \
+		--maximum-used "$(STACK_MAXIMUM_USED)"
 
 .PHONY: test-boot-profiles
 .PHONY: native-profile-probe

@@ -5,6 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Formal background services
 
+Build and deployment options are declared in this directory's [Kconfig](Kconfig).
+Use the repository's `make menuconfig` and `.config` to select programs; see
+[product configuration](../docs/configuration.md) for dependencies and defconfig workflows.
+
 These independent executables install in `/svc`. They share the formal Cargo
 workspace in `app/Cargo.toml`; bootstrap implementations remain separately owned
 under `bootstrap/stage1`. `component.mk` uses the same Native build template as

@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "HypeR System Configuration"
+
+# Kernel settings have an independent schema and output (kernel/.config).
+# The root menu opens that editor without copying its symbols here.
+source "bootstrap/stage1/Kconfig"
+source "app/Kconfig"
+source "svc/Kconfig"
+source "tests/app/Kconfig"
+
+menu "Build policy"
+
+config KERNEL_FEATURES
+    string "Kernel Cargo features"
+    default "default"
+    help
+        default follows the kernel Cargo defaults for ARCH. Otherwise provide a
+        comma-separated production feature list; empty disables optional features.
+        Test features are rejected. This does not override kernel/.config.
+
+config BOOT_POLICY
+    string "Boot policy file"
+    default ""
+    help
+        Optional repository-relative or absolute JSON path with boot-profiles
+        and storage-providers. Empty follows the board policy. Runtime policy
+        cannot select applications or kernel features.
+
+endmenu

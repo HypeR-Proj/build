@@ -102,19 +102,15 @@ def compose_entries(args, native):
     roots = {key: str(getattr(args, key)) for key in ('apps', 'sdk', 'std', 'arch')}
     declarations = deployment.load(args.deployment)
     product_path = getattr(args, 'system_config', None)
-    product = system_config.load(product_path) if product_path else None
-    boot_components = args.boot_components
-    if product is not None:
-        declarations = product.select(declarations, args.profile, args.boot_components)
-        boot_components = [entry['staged'] for entry in declarations
-                           if 'binary' in entry and entry.get('environment') == 'boot']
+    product = system_config.load(product_path, declarations) if product_path else system_config.ProductConfig({'version': 1})
     components = {entry['staged']: entry for entry in declarations if 'binary' in entry}
     if len(set(args.boot_components)) != len(args.boot_components):
         raise ValueError('duplicate boot component')
-    for name in boot_components:
+    for name in args.boot_components:
         item = components.get(name)
         if item is None or item.get('environment', 'system') != 'boot':
             raise ValueError(f'unknown boot component: {name}')
+    declarations = product.select(declarations, args.profile, args.boot_components)
 
     selected = {'boot': {}, 'system': {}}
     boot_executables = set()
@@ -123,11 +119,6 @@ def compose_entries(args, native):
             continue
         environment = item.get('environment', 'system')
         if args.recovery_only and environment == 'system':
-            continue
-        if environment == 'boot' and 'binary' in item:
-            if item['staged'] not in boot_components:
-                continue
-        elif args.profile not in item['profiles'] and not (product is not None and 'binary' in item):
             continue
         name = deployment.archive_path(item['destination'].format_map(roots))
         if environment == 'boot' and 'binary' in item:
@@ -274,12 +265,19 @@ def validate_formal_sources(manifests, policy):
     providers = {
         'bootstrap.io-broker-client': 'io.broker-server',
         'bootstrap.filesystem-control-client': 'filesystem.control-server',
+        'bootstrap.console-controller': 'console.control',
+        'bootstrap.console-log-connector': 'console.logs',
     }
     for name, profile, _, manifest in manifests:
         if 'handoff' not in profile:
             continue
         purposes = {grant['purpose'] for service in manifest.get('services', [])
                     for grant in service.get('capabilities', [])}
+        # The formal journal registers its serial mirror before announcing
+        # readiness. A packaged executable alone cannot service that endpoint:
+        # the selected bootstrap profile must supply a live console provider.
+        if policy.get('journal') and not {'console.system', 'console.logs'} <= purposes:
+            raise ValueError(f'boot profile {name}: journal startup requires a bootstrap console provider')
         if 'mounts' in policy and 'filesystem.attach' not in purposes:
             raise ValueError(f'boot profile {name}: formal mounts require a filesystem provider')
         for app in policy['applications']:
@@ -311,7 +309,7 @@ def compose(args, native, service_path):
     product_path = getattr(args, 'system_config', None)
     product = system_config.load(product_path) if product_path else None
     system_images = {'/' + name for mode, name, _ in disk if mode != 'symlink'}
-    core, system = services(service_path, system_images if product_path else None)
+    core, system = services(service_path, system_images)
     manifest_path = metadata / 'services.json'
     write_json(manifest_path, core)
     profiles = boot_profiles.compose(
@@ -322,7 +320,7 @@ def compose(args, native, service_path):
     storage_providers = boot_profiles.storage_providers(product, profiles)
     components, startup_policy = component_composition.compose(
         provider_composition(selected), system,
-        mounts=not product_path or bool(native.get('fstab', '').strip()),
+        mounts=bool(native.get('fstab', '').strip()),
         storage_providers=storage_providers)
     validate_formal_sources(selected, startup_policy)
     for name, profile in profiles.items():
@@ -331,22 +329,22 @@ def compose(args, native, service_path):
                 provider['role'] == 'storage' and provider['component'] == successor
                 for provider in startup_policy['providers']):
             raise ValueError(f'boot profile {name}: storage successor {successor} is not configured in the formal environment')
+    boot_images = {'/' + name for mode, name, _ in boot if mode != 'symlink'}
+    boot_links = {name: source for mode, name, source in boot if mode == 'symlink'}
+    if '/init' not in boot_images:
+        raise ValueError('bootstrap entry requires deployed boot component init')
+    for name, _, _, manifest in selected:
+        for service in manifest.get('services', []):
+            if '/' + resolve(service['image'].lstrip('/'), boot_links) not in boot_images:
+                raise ValueError(f"boot profile {name}: bootstrap service {service['name']} requires deployed image {service['image']}")
+    if not args.recovery_only:
+        if '/svc/component-manager' not in system_images:
+            raise ValueError('system handoff requires deployed component component-manager')
+        for name, declaration in components.items():
+            program = declaration.get('program')
+            if program is not None and program['image'] not in system_images:
+                raise ValueError(f"startup component {name} requires deployed image {program['image']}")
     if product_path:
-        boot_images = {'/' + name for mode, name, _ in boot if mode != 'symlink'}
-        boot_links = {name: source for mode, name, source in boot if mode == 'symlink'}
-        if '/init' not in boot_images:
-            raise ValueError('bootstrap entry requires deployed boot component init')
-        for name, _, _, manifest in selected:
-            for service in manifest.get('services', []):
-                if '/' + resolve(service['image'].lstrip('/'), boot_links) not in boot_images:
-                    raise ValueError(f"boot profile {name}: bootstrap service {service['name']} requires deployed image {service['image']}")
-        if not args.recovery_only:
-            if '/svc/component-manager' not in system_images:
-                raise ValueError('system handoff requires deployed component component-manager')
-            for name, declaration in components.items():
-                program = declaration.get('program')
-                if program is not None and program['image'] not in system_images:
-                    raise ValueError(f"startup component {name} requires deployed image {program['image']}")
         write_json(metadata / 'product.json', {
             'configuration': system_config.load(product_path).value,
             'boot': sorted(boot_images), 'system': sorted(system_images),

@@ -21,6 +21,7 @@ from native_components import load_registry
 from board_config import Board
 import board_bootstrap
 import component_composition
+from product_fixture import trimmed_product, write_product
 
 DEPLOYMENT = ROOT / 'scripts/app-deployment.py'
 REGISTRY = ROOT / 'mk/components.mk'
@@ -39,10 +40,10 @@ class ProductTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
-    def config(self, value, filename='product.json'):
+    def config(self, value, filename='product.config'):
         path = self.root / filename
-        path.write_text(json.dumps(value))
-        return system_config.load(path)
+        write_product(path, value)
+        return system_config.load(path, self.entries)
 
     def test_default_preserves_boot_environment_and_excludes_acceptance_apps(self):
         selected = self.config({'version': 1}).select(self.entries)
@@ -53,6 +54,17 @@ class ProductTests(unittest.TestCase):
             if entry.get('environment') == 'boot' and 'binary' in entry:
                 self.assertEqual(entry['link_mode'], 'static')
 
+    def test_saved_product_does_not_implicitly_enable_development_programs(self):
+        self.config({'version': 1})
+        command = [sys.executable, str(DEPLOYMENT), 'manifest', '--manifest', str(REGISTRY)]
+        ordinary = json.loads(subprocess.check_output(command + ['--profile', 'system'], text=True))
+        for profile in ('system', 'development', 'io'):
+            saved = json.loads(subprocess.check_output(command + [
+                '--profile', profile, '--system-config', str(self.root / 'product.config')], text=True))
+            programs = lambda entries: {entry['staged'] for entry in entries['entries'] if 'binary' in entry}
+            self.assertEqual(programs(ordinary), programs(saved))
+            self.assertNotIn('test-report', programs(saved))
+
     def test_fs_workers_are_optional_without_rewriting_mount_policy(self):
         product = self.config({'version': 1, 'boot': {'exclude': ['fs-fat']},
                                'system': {'exclude': ['fs-fat-system']}})
@@ -60,13 +72,22 @@ class ProductTests(unittest.TestCase):
         self.assertFalse({'fs-fat', 'fs-fat-system'} & names)
         self.assertTrue({'fs-backend', 'fs-backend-system', 'fs-erofs', 'fs-erofs-system'} <= names)
 
-    def test_minimal_example_selects_exact_formal_executables(self):
-        path = ROOT / 'configs/minimal.json'
-        product = system_config.load(path)
+    def test_defaults_follow_the_domain_kconfig_definitions(self):
+        import kconfig
+        product = self.config({'version': 1})
+        symbols = system_config.component_symbols(self.entries)
+        for scope in ('boot', 'system'):
+            expected = {name for symbol, (environment, name) in symbols.items()
+                        if environment == scope and kconfig.schema()[symbol]['default'] == 'y'}
+            self.assertEqual(product.selected_names(self.entries, scope), expected)
+
+    def test_trimmed_fixture_selects_exact_formal_executables(self):
+        source = trimmed_product(self.entries)
+        product = self.config(source)
         selected = product.select(self.entries)
         formal = {entry['staged'] for entry in selected
                   if 'binary' in entry and entry.get('environment') == 'system'}
-        self.assertEqual(formal, set(json.loads(path.read_text())['system']['include']))
+        self.assertEqual(formal, set(source['system']['include']))
         self.assertFalse({'fs-fat-system', 'vm-manager', 'vm-runtime', 'vmm', 'editor'} & formal)
         self.assertNotIn('fs-fat', product.boot_components(self.entries))
 
@@ -78,20 +99,50 @@ class ProductTests(unittest.TestCase):
                   if 'binary' in entry and entry.get('environment') == 'system']
         self.assertEqual(formal, ['echo'])
 
-    def test_excluding_required_child_fails_instead_of_adding_it_back(self):
-        for parent, child in [('session-manager', 'terminal-service'),
-                              ('session-manager', 'sh'), ('vm-manager', 'vm-runtime'),
-                              ('component-manager', 'svc/journal')]:
+    def test_required_program_graph_is_checked_for_every_edge(self):
+        # Check all declarations, not just the service pairs that prompted a fix.
+        for entry in self.entries:
+            for dependency in entry.get('runtime_requires', []):
+                with self.subTest(program=entry['staged'], prerequisite=dependency):
+                    product = system_config.ProductConfig({'version': 1, entry['environment']: {
+                        'include': [entry['staged']], 'exclude': [dependency]}})
+                    with self.assertRaisesRegex(ValueError, 'requires deployed component'):
+                        product.select(self.entries, profile='development')
+
+    def test_explicit_missing_prerequisites_fail_in_kconfig(self):
+        for parent, child in [('SESSION_MANAGER', 'TERMINAL_SERVICE'),
+                              ('SESSION_MANAGER', 'SH'), ('VM_MANAGER', 'VM_RUNTIME'),
+                              ('FS_FAT_SYSTEM', 'FS_BACKEND_SYSTEM'),
+                              ('EDITOR', 'TERMINAL_SERVICE'), ('VMM', 'VM_MANAGER'),
+                              ('MOUNT_SYSTEM', 'FS_BACKEND_SYSTEM')]:
             with self.subTest(parent=parent, child=child):
-                product = self.config({'version': 1, 'system': {'exclude': [child]}})
-                with self.assertRaisesRegex(ValueError, f'{parent}.*{child}'):
-                    product.select(self.entries)
+                path = self.root / 'broken.config'
+                path.write_text(f'CONFIG_SYSTEM_APP_{parent}=y\n# CONFIG_SYSTEM_APP_{child} is not set\n')
+                with self.assertRaisesRegex(ValueError, f'CONFIG_SYSTEM_APP_{parent}.*requires'):
+                    system_config.load(path)
+
+    def test_headless_and_storage_selection_preserve_unrelated_tools(self):
+        core = {'component-manager', 'system-startup', 'svc/bootstrap-retire',
+                'console-raw-system', 'svc/journal'}
+        path = self.root / 'headless.config'
+        path.write_text('# CONFIG_SYSTEM_APP_SESSION_MANAGER is not set\n'
+                        '# CONFIG_SYSTEM_APP_TERMINAL_SERVICE is not set\n'
+                        '# CONFIG_SYSTEM_APP_SH is not set\n'
+                        '# CONFIG_SYSTEM_APP_FS_BACKEND_SYSTEM is not set\n'
+                        '# CONFIG_SYSTEM_APP_IO_RUNTIME_SYSTEM is not set\n'
+                        '# CONFIG_SYSTEM_APP_VM_MANAGER is not set\n')
+        product = system_config.load(path)
+        names = {entry['staged'] for entry in product.select(self.entries) if 'binary' in entry}
+        self.assertTrue(core <= names)
+        self.assertFalse({'editor', 'vmm', 'mount-system', 'fs-fat-system'} & names)
+        self.assertTrue({'ls', 'cat', 'less'} <= names)
+        self.assertIn('io-runtime', names)  # Formal selection never trims stage1.
 
     def test_missing_and_wrong_environment_names_are_errors(self):
         for environment, names in [('boot', ['does-not-exist']), ('system', ['init']),
                                    ('boot', ['fs-fat-system']), ('system', ['fs-fat'])]:
             with self.subTest(environment=environment, names=names):
-                product = self.config({'version': 1, environment: {'exclude': names}})
+                product = system_config.ProductConfig({'version': 1, environment: {'exclude': names}})
                 with self.assertRaisesRegex(ValueError, f'unknown {environment} components'):
                     product.select(self.entries)
 
@@ -108,8 +159,8 @@ class ProductTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.config(value)
         path = self.root / 'duplicate.json'
-        path.write_text('{"version":1,"system":{"base":"none","base":"default"}}')
-        with self.assertRaisesRegex(ValueError, 'duplicate product configuration key'):
+        path.write_text('CONFIG_SYSTEM_APP_EDITOR=y\n# CONFIG_SYSTEM_APP_EDITOR is not set\n')
+        with self.assertRaisesRegex(ValueError, 'duplicate assignment'):
             system_config.load(path)
 
     def test_identity_uses_contents_and_normalizes_order(self):
@@ -126,7 +177,8 @@ class ProductTests(unittest.TestCase):
                             self.config({'version': 1, 'kernel': {'features': []}}).identity())
 
     def test_cli_selection_agrees_with_manifest_and_omits_unselected_build_targets(self):
-        path = ROOT / 'configs/minimal.json'
+        self.config(trimmed_product(self.entries))
+        path = self.root / 'product.config'
         def invoke(action, *extra):
             return subprocess.check_output(
                 [sys.executable, str(DEPLOYMENT), action, '--manifest', str(REGISTRY),
@@ -173,11 +225,62 @@ class ProductTests(unittest.TestCase):
                 if headless:
                     self.assertFalse(any(app.get('interactive') for app in policy['applications']))
 
+    def test_handoff_checks_live_providers_not_only_packaged_programs(self):
+        source = board_bootstrap.services(Board.load(ROOT / 'boards/qemu.json'), ROOT)
+        path = self.root / 'services.json'
+        path.write_text(json.dumps(source))
+        core, formal = split.services(path)
+        _, policy = component_composition.compose(core, formal)
+        profile = {'handoff': {'system-init': '/svc/component-manager'}}
+        def validate(manifest):
+            split.validate_formal_sources([('default', profile, path, manifest)], policy)
+        validate(core)
+        for purpose in ('console.system', 'console.logs', 'console.control',
+                        'filesystem.control-server', 'io.broker-server'):
+            with self.subTest(purpose=purpose):
+                manifest = json.loads(json.dumps(core))
+                for service in manifest['services']:
+                    service['capabilities'] = [g for g in service.get('capabilities', [])
+                                               if g['purpose'] != purpose]
+                with self.assertRaisesRegex(ValueError, 'boot profile default'):
+                    validate(manifest)
+
+    def test_defconfig_round_trip_migration_and_failure_are_atomic(self):
+        fragment = self.root / 'custom_defconfig'
+        fragment.write_text('# CONFIG_SYSTEM_APP_VM_MANAGER is not set\n'
+                            '# CONFIG_BOOT_APP_FS_FAT is not set\n')
+        full, minimal = self.root / '.config', self.root / 'defconfig'
+        kernel = ROOT / 'kernel/.config'
+        before_kernel = kernel.read_bytes() if kernel.exists() else None
+        def make(command, **settings):
+            return subprocess.run(['make', '--no-print-directory', command,
+                                   *[f'{key}={value}' for key, value in settings.items()]],
+                                  cwd=ROOT, text=True, capture_output=True)
+        generated = make('defconfig', SYSTEM_CONFIG=full, SYSTEM_DEFCONFIG=fragment)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        product = system_config.load(full)
+        self.assertNotIn('vmm', product.selected_names(self.entries, 'system'))
+        saved = make('savedefconfig', SYSTEM_CONFIG=full, SYSTEM_DEFCONFIG_OUTPUT=minimal)
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        self.assertEqual(system_config.load(minimal).identity(), product.identity())
+        full.write_text(full.read_text() + 'CONFIG_REMOVED_APP=y\n')
+        migrated = make('olddefconfig', SYSTEM_CONFIG=full)
+        self.assertEqual(migrated.returncode, 0, migrated.stderr)
+        self.assertIn('CONFIG_REMOVED_APP', migrated.stderr)
+        self.assertEqual(system_config.load(full).identity(), product.identity())
+        original = full.read_bytes()
+        fragment.write_text('CONFIG_SYSTEM_APP_VM_MANAGER=y\n# CONFIG_SYSTEM_APP_VM_RUNTIME is not set\n')
+        rejected = make('defconfig', SYSTEM_CONFIG=full, SYSTEM_DEFCONFIG=fragment)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('CONFIG_SYSTEM_APP_VM_MANAGER', rejected.stderr)
+        self.assertEqual(full.read_bytes(), original)
+        self.assertEqual(kernel.read_bytes() if kernel.exists() else None, before_kernel)
+
     def test_product_kernel_section_cannot_enable_test_hooks(self):
         for name in ('kernel-test', 'io-dma-revoke-test', 'kernel-self-test', 'missing'):
             with self.subTest(name=name):
-                path = self.root / 'product.json'
-                path.write_text(json.dumps({'version': 1, 'kernel': {'features': [name]}}))
+                path = self.root / 'product.config'
+                path.write_text('CONFIG_KERNEL_FEATURES=' + system_config.quoted(name) + '\n')
                 result = subprocess.run(
                     [sys.executable, str(DEPLOYMENT), 'kernel-features',
                      '--manifest', str(REGISTRY), '--system-config', str(path)],
@@ -219,15 +322,29 @@ class ProductTests(unittest.TestCase):
         ]))
         arguments = ['pack-native-system', '--board', str(ROOT / 'boards/qemu-minimal.json'),
                      '--board-output', str(board_output), '--deployment', str(manifest),
-                     '--system-config', str(self.root / 'product.json'), '--apps', str(apps),
+                     '--system-config', str(self.root / 'product.config'), '--apps', str(apps),
                      '--boot-apps', str(boot), '--sdk', str(sdk), '--std', str(self.root / 'std'),
                      '--output', str(output), '--arch', 'aarch64', '--packer', 'unused-packer',
-                     '--strip', 'unused-strip', '--boot-components', *system_config.DEFAULT_BOOT]
+                     '--strip', 'unused-strip', '--boot-components', *system_config.ProductConfig({'version': 1}).boot_components(self.entries)]
         # Run real board composition and staging; only external ELF stripping,
         # manifest executables and cpio creation are outside this Python test.
-        with patch.object(sys, 'argv', arguments), patch.object(split.subprocess, 'run'):
-            split.main()
-        startup = json.loads((output / 'system-root/etc/hyper/startup.json').read_text())
+        policies = []
+        for explicit in (True, False):
+            selected_arguments = list(arguments)
+            if not explicit:
+                index = selected_arguments.index('--system-config')
+                del selected_arguments[index:index + 2]
+            real_run = subprocess.run
+            def run(command, *args, **kwargs):
+                if Path(command[0]).name in ('make', 'hyper-kconfig'):
+                    return real_run(command, *args, **kwargs)
+                return subprocess.CompletedProcess(command, 0)
+            with patch.object(sys, 'argv', selected_arguments), patch.object(split.subprocess, 'run', run):
+                split.main()
+            policies.append(json.loads((output / 'system-root/etc/hyper/startup.json').read_text()))
+        self.assertEqual(policies[0], policies[1])
+        startup = policies[0]
+        self.assertNotIn('mounts', startup)
         manager = next(app for app in startup['applications'] if app['component'] == '/vm-manager')
         self.assertEqual(manager['fleet'], '/etc/hyper/vms.json')
         fleet = output / 'system-root' / manager['fleet'].lstrip('/')

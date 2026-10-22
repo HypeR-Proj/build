@@ -5,6 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # HypeR Native applications
 
+Build and deployment options are declared in this directory's [Kconfig](Kconfig).
+Use the repository's `make menuconfig` and `.config` to select programs; see
+[product configuration](../docs/configuration.md) for dependencies and defconfig workflows.
+
 This directory contains foreground Native tools. Background programs live in
 [`svc/`](../svc/README.md), with independent service policy and logging.
 The RAM-resident boot and recovery programs live in

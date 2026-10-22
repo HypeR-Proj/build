@@ -197,8 +197,12 @@ def main():
                         help='select a Cargo runtime graph without std feature unification')
     args = parser.parse_args()
     all_entries = load(args.manifest)
-    product = system_config.load(args.system_config) if args.system_config else None
-    product_entries = product.select(all_entries, args.profile or 'system') if product else None
+    product = system_config.load(args.system_config, all_entries) if args.system_config else None
+    # An omitted product is the same registry-default selection as an empty
+    # saved product. Unscoped registry queries and explicit component builds
+    # remain available for host checks and isolated test fixtures.
+    entries = ((product or system_config.ProductConfig({'version': 1})).select(
+        all_entries, args.profile or 'system') if product or args.profile else all_entries)
     if args.action == 'config-id':
         print(product.identity() if product else '')
         return
@@ -210,13 +214,7 @@ def main():
         selection = product or system_config.ProductConfig({'version': 1})
         print(' '.join(selection.boot_components(all_entries)))
         return
-    entries = product_entries if product is not None else all_entries
     entries = select_components(entries, args.component)
-    if args.profile and product is None:
-        filtered = [entry for entry in entries if args.profile in entry['profiles']]
-        if args.component and len(filtered) != len(entries):
-            parser.error('component selection conflicts with its deployment profile')
-        entries = filtered
     if args.link_mode:
         filtered = link_entries(entries, args.link_mode)
         if args.component and len(filtered) != len(entries):

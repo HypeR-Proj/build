@@ -21,6 +21,7 @@ import boot_profiles
 import system_config
 from board_config import Board
 from board_bootstrap import services
+from native_components import load_registry
 
 
 class ProfileTests(unittest.TestCase):
@@ -154,6 +155,32 @@ class ProfileTests(unittest.TestCase):
             self.validate()
         self.add('vm/io.itb', b'fixture guest payload')
         self.validate()
+
+    def test_product_cannot_remove_a_service_required_by_its_io_profile(self):
+        self.profile['io'] = {'kind': 'io-vm', 'service': 'io-runtime'}
+        self.add_profile('default')
+        self.add('svc/io-runtime', self.elf, '0755')
+        (self.root / 'etc/hyper/services.json').write_text(json.dumps({
+            'format': 'hyper.service-manifest', 'services': [
+                {'name': 'console-raw', 'image': '/svc/console-raw'},
+                {'name': 'io-runtime', 'image': '/svc/io-runtime'},
+            ],
+        }))
+        self.add('etc/hyper/board.json', {'io-vm': {'image': '/vm/io.itb'}})
+        self.add('vm/io.itb', b'fixture guest payload')
+        entries = load_registry(ROOT / 'mk/components.mk')['entries']
+        product = system_config.ProductConfig({
+            'version': 1, 'boot': {'exclude': ['io-runtime']},
+            'boot-profiles': {'default': self.profile},
+        })
+        selected = product.boot_components(entries)
+        omitted = {entry['destination'] for entry in entries if 'binary' in entry
+                   and entry['environment'] == 'boot' and entry['staged'] not in selected}
+        self.records = [record for record in self.records if record[1] not in omitted]
+        # A stale build output cannot satisfy a module absent from the archive.
+        self.assertTrue((self.root / 'svc/io-runtime').is_file())
+        with self.assertRaisesRegex(ValueError, 'io-runtime.*absent from the boot archive'):
+            self.validate()
 
     def test_generic_source_does_not_require_an_io_vm(self):
         self.profile['io'] = {'kind': 'service', 'service': 'block-driver'}
