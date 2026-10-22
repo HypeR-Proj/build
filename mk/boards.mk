@@ -84,13 +84,19 @@ board-plan: board-deployment
 
 board-initramfs: board-deployment app app-boot fit-pack $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "board deployment requires aarch64" >&2; exit 2; }
-	@package="$(IO_VM_PACKAGE)"; \
+	python3 -B scripts/board_bootstrap.py --board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_OUTPUT)/board"
+	@needed=$$(python3 -B scripts/boot_profiles.py needs-io-vm --board "$(BOARD_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS)) || exit $$?; \
+	if test "$$needed" = no; then \
+		echo "Bootstrap profiles do not require an I/O VM image."; \
+	else \
+	package="$(IO_VM_PACKAGE)"; \
 	if test -z "$$package"; then \
 		package=$$(python3 -B scripts/fetch-io-vm.py --platform "$(BOARD)" \
 			--reference "$(IO_VM_REFERENCE)" --oras "$(IO_VM_ORAS)") || exit $$?; \
 	fi; \
 	python3 -B scripts/io-vm-images.py --package "$$package" \
-		--fit-pack "$(FIT_PACK)" --board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_OUTPUT)/io.itb"
+		--fit-pack "$(FIT_PACK)" --board "$(BOARD_DEPLOYMENT)" --output "$(BOARD_OUTPUT)/io.itb"; \
+	fi
 	python3 -B scripts/pack-native-system.py \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--deployment "$(APP_DEPLOYMENT)" --arch "$(NATIVE_ARCH)" \

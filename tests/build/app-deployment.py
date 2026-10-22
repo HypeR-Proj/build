@@ -508,22 +508,29 @@ class NativePayloadTests(unittest.TestCase):
         self.compose()
 
     def test_init_policies_are_packaged_in_their_own_environments(self):
+        self.args.board.write_text(json.dumps(self.board))
         self.args.output = self.root / 'output'
         self.args.initramfs = self.root / 'bootstrap.cpio'
         self.args.packer = 'unused-packer'
         self.args.strip = 'unused-strip'
         graph = self.root / 'services.json'
         graph.write_text(json.dumps({'format': 'hyper.service-manifest', 'services': []}))
-        # Exercise real metadata generation and payload staging; this fixture
-        # contains no ELF programs and does not invoke external build tools.
-        with patch.object(split, 'compose_entries', return_value=([], [], {})), \
+        # Exercise real metadata generation and payload staging with an ELF
+        # entry fixture, without invoking external build tools.
+        entry = str(self.args.apps / 'component-manager')
+        records = [['0755', 'svc/component-manager', entry]]
+        with patch.object(split, 'compose_entries', return_value=([], records, {entry: split.archive.digest(entry)})), \
                 patch.object(split.subprocess, 'run'):
             split.compose(self.args, self.board['native'], graph)
         entries = json.loads((self.args.output / 'native-system/boot.entries.json').read_text())
         boot_config = next(Path(source) for _, name, source in entries
-                           if name == 'etc/hyper/init.json')
-        self.assertEqual(json.loads(boot_config.read_text()),
-                         {'system-root': '/system', 'put-old': '/boot', 'system-init': '/svc/component-manager'})
+                           if name == 'etc/hyper/boot-profiles/default.json')
+        self.assertEqual(json.loads(boot_config.read_text()), {
+            'version': 1, 'services': '/etc/hyper/services.json', 'io': {'kind': 'none'},
+            'requires': [], 'handoff': {
+                'system-root': '/system', 'put-old': '/boot', 'system-init': '/svc/component-manager'},
+        })
+        self.assertNotIn('etc/hyper/init.json', {name for _, name, _ in entries})
         system = self.args.output / 'system-root'
         self.assertEqual(json.loads((system / 'etc/hyper/components.json').read_text()), {
             'configuration_directory': '/etc/components', 'root': 'root', 'startup': '/startup',
@@ -531,6 +538,15 @@ class NativePayloadTests(unittest.TestCase):
         self.assertEqual((system / 'etc/fstab').read_text(), self.board['native']['fstab'])
         self.assertEqual(json.loads((system / 'etc/hyper/filesystem.json').read_text()),
                          {'worker_directories': [{'environment': 'svc'}]})
+
+    def test_each_profile_handoff_entry_must_exist_in_formal_payload(self):
+        profiles = {'default': {'handoff': {'system-init': '/svc/entry'}}}
+        entry = str(self.args.apps / 'component-manager')
+        records = [['0755', 'svc/component-manager', entry], ['symlink', 'svc/entry', 'component-manager']]
+        split.validate_handoff_entries(profiles, records)
+        profiles['alternate'] = {'handoff': {'system-init': '/svc/absent'}}
+        with self.assertRaisesRegex(ValueError, 'alternate.*not an executable'):
+            split.validate_handoff_entries(profiles, records)
 
     def test_boot_is_static_and_keeps_system_services_separate(self):
         boot, disk, _ = self.compose()
@@ -550,9 +566,9 @@ class NativePayloadTests(unittest.TestCase):
         self.assertTrue({'init', 'svc/fallback-sh', 'lib64/userspace-loader-hyper-aarch64'}
                         .isdisjoint(disk_names))
 
-    def test_missing_erofs_worker_does_not_gate_an_erofs_system_build(self):
-        # The deployment intentionally lacks fs-erofs in both RAM and on disk.
-        # Only runtime magic detection/worker lookup may reject this mount.
+    def test_component_selection_does_not_invent_filesystem_workers(self):
+        # Component selection keeps the requested payload. Full composition
+        # later checks required boot workers against every selected profile.
         boot, disk, _ = self.compose()
         system = next(partition for partition in self.board['disk']['partitions']
                       if partition.get('content') == 'system')

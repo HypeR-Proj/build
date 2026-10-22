@@ -17,6 +17,7 @@ import sys
 import tempfile
 
 from native_libraries import add_dependencies, validate as validate_libraries
+import boot_profiles
 
 
 def digest(path):
@@ -69,6 +70,7 @@ def inputs(args):
     return {
         "script": digest(__file__),
         "libraries": digest(Path(__file__).with_name('native_libraries.py')),
+        "profiles": digest(Path(__file__).with_name('boot_profiles.py')),
         "packer": digest(shutil.which(args.packer) or args.packer),
         "strip": digest(shutil.which(args.strip) or args.strip),
         "deployment": ([digest(args.deployment), digest(Path(__file__).with_name("app-deployment.py"))]
@@ -130,13 +132,15 @@ def main():
         args.entries = add_dependencies(args.entries, args.library_dir)
         validate_entries(args.entries)
     validate_libraries(args.entries, args.library_namespace)
+    profiles = boot_profiles.validate_archive([
+        args.entries[index:index + 3] for index in range(0, len(args.entries), 3)])
     # Validate the actual selected/generated manifest before cache hits or any
     # output mutation. The host tool shares init's parser and admission policy.
     manifests = [args.entries[index + 2] for index in range(0, len(args.entries), 3)
                  if args.entries[index + 1].lstrip('/') == 'etc/hyper/services.json']
     if len(manifests) > 1:
         parser.error("duplicate etc/hyper/services.json entries")
-    if manifests:
+    if manifests and not profiles:
         subprocess.run([sys.executable, str(Path(__file__).with_name('check-service-manifest.py')),
                         manifests[0], '--bootstrap', *args.entries[1::3]], check=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)

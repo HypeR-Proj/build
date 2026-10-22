@@ -246,7 +246,7 @@ def prepare_payload(board, artifacts, directory, system_root=None):
         # The RP1 assignment profile validates and inherits the firmware's
         # configured PCIe link. A reset would discard that handoff state.
         rp1_handoff = ('pciex4_reset=0\n'
-                       if 'network-device' in board.source['io-vm'] else '')
+                       if 'network-device' in board.source.get('io-vm', {}) else '')
         (directory / 'config.txt').write_text(
             '[pi5]\nkernel=hyper.img\n'
             'initramfs bootstrap.cpio followkernel\ncmdline=cmdline.txt\n'

@@ -30,7 +30,7 @@ def validate_board_disk(path, configuration):
 
 def network_arguments(board):
     """Expose only an explicitly assigned QEMU uplink; Linux owns guest TAPs."""
-    if board is None or 'network-device' not in board.source['io-vm']:
+    if board is None or 'network-device' not in board.source.get('io-vm', {}):
         return []
     pci = board.source['io-vm']['network-device']['profile'] == 'pci-function'
     # Direct kernel boot needs no PXE option ROM or distribution firmware package.
@@ -40,7 +40,7 @@ def network_arguments(board):
 
 
 def storage_controller(board):
-    pci = board is not None and board.source['io-vm']['io-device']['profile'] == 'pci-function'
+    pci = board is not None and board.source.get('io-vm', {}).get('io-device', {}).get('profile') == 'pci-function'
     model = 'virtio-scsi-pci,addr=1.0,disable-legacy=on' if pci else 'virtio-scsi-device'
     return model + ',id=physicalscsi,iommu_platform=on'
 
@@ -48,7 +48,7 @@ def storage_controller(board):
 def machine_arguments(board, machine):
     pci = board is not None and any(device.get('profile') == 'pci-function'
                                    for key in ('io-device', 'network-device')
-                                   if (device := board.source['io-vm'].get(key)))
+                                   if (device := board.source.get('io-vm', {}).get(key)))
     if not pci:
         return machine
     options = machine.split(',')

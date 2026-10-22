@@ -222,11 +222,11 @@ class Board:
         # Canonicalize before deriving GPT, client manifests or bootstrap files:
         # reloading a generated snapshot must describe exactly the same volumes.
         data = prepare(data, recovery=recovery)
-        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines', 'io-vm'), ('native',))
+        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines'), ('native', 'io-vm'))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
-        resident = io_vm(data['io-vm'])
+        resident = io_vm(data['io-vm']) if 'io-vm' in data else {}
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
         if 'network-device' in resident:
@@ -282,15 +282,17 @@ class Board:
         vms = data['virtual-machines']
         if not isinstance(vms, list) or len(vms) > 8:
             raise ValueError('too many VMs or invalid VM list')
-        seen = {resident['name']}
+        seen = {resident['name']} if resident else set()
         native = data['native']
-        if len(native['volumes']) + len(vms) > 8:
+        if resident and len(native['volumes']) + len(vms) > 8:
             raise ValueError('Native and guest clients exceed the eight I/O data slots')
         networks = {network['name'] for network in resident.get('networks', [])}
         macs = set()
         for vm in vms:
             keys(vm, ('name', 'image', 'autostart', 'configuration'),
                  ('disk', 'network'))
+            if not resident and ('disk' in vm or 'network' in vm):
+                raise ValueError('the configured guest disk/network backend requires an I/O VM')
             vm_configuration(vm['configuration'], guest=True)
             vm_name = name(vm['name'])
             if vm_name in seen:
@@ -386,4 +388,4 @@ class Board:
     def bootstrap_networks(self):
         return 'hyper.networks.v1\n' + ''.join(
             f"{network['name']} {network['bridge']} {network['uplink']}\n"
-            for network in self.source['io-vm'].get('networks', []))
+            for network in self.source.get('io-vm', {}).get('networks', []))

@@ -58,6 +58,24 @@ test-native: image native-initramfs
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(NATIVE_INITRAMFS)" \
 		"$(QEMU_CPU)" "$(QEMU_CPUS)" "$(QEMU_MEMORY)" "$(QEMU_BOOTARGS)"
 
+.PHONY: test-boot-profiles
+.PHONY: native-profile-probe
+native-profile-probe: app-fetch
+	CARGO_TARGET_DIR="$(APP_BOOT_CARGO_OUTPUT)" HYPER_LINK_MODE=static HYPER_ARCH="$(NATIVE_ARCH)" \
+		HYPER_SYSROOT="$(SDK_OUTPUT)" HYPER_RUST_STD=1 \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" build --manifest-path bootstrap/stage1/Cargo.toml \
+		-p hyper-bootstrap-stage1-init --bin hyper-profile-storage-probe --release --locked --offline
+
+test-boot-profiles: NATIVE_SERVICE_MANIFEST = $(CURDIR)/bootstrap/stage1/init/config/services-console-only.json
+test-boot-profiles: NATIVE_VM_CONFIG =
+test-boot-profiles: image native-initramfs native-profile-probe
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-boot-profiles.py \
+		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--entries "$(NATIVE_INITRAMFS).deployment/fixture.entries.json" \
+		--probe "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-profile-storage-probe" \
+		--output "$(APP_OUTPUT)/boot-profiles" --packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)"
+
 test-apps: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-apps.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_INITRAMFS)" "$(APP_OUTPUT)/apps.log"
@@ -207,13 +225,22 @@ test-runtime-crash: image native-initramfs
 
 .PHONY: test-storage-failure
 test-storage-failure: APP_BUILD_PROFILE = development
-test-storage-failure: image app app-boot native-fixture-init $(NEWC_PACK)
+test-storage-failure: image app app-boot native-fixture-init fit-pack $(NEWC_PACK)
 	@test "$(ARCH)" = aarch64 || { echo "storage recovery acceptance requires aarch64" >&2; exit 2; }
+	@package="$(IO_VM_PACKAGE)"; \
+	if test -z "$$package"; then \
+		package=$$(python3 -B scripts/fetch-io-vm.py --platform qemu \
+			--reference "$(IO_VM_REFERENCE)" --oras "$(IO_VM_ORAS)") || exit $$?; \
+	fi; \
+	python3 -B scripts/io-vm-images.py --package "$$package" \
+		--board "$(BOARD_CONFIG)" --fit-pack "$(FIT_PACK)" \
+		--output "$(APP_OUTPUT)/storage-failure/io.itb"
 	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		python3 -B tests/qemu/verify-storage-failure.py prepare \
 		--apps "$(APP_OUTPUT)" --boot-apps "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" \
 		--fixture-init "$(APP_BOOT_CARGO_OUTPUT)/$(NATIVE_RUST_TARGET)/release/hyper-native-test-init" \
+		--io-image "$(APP_OUTPUT)/storage-failure/io.itb" \
 		--boot-components $(APP_BOOT_COMPONENTS) \
 		--packer "$(NEWC_PACK)" --strip "$(LLVM_STRIP)" \
 		--output "$(APP_OUTPUT)/storage-failure"

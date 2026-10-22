@@ -26,7 +26,7 @@ DESCRIPTIONS = {
 }
 
 
-def compose(core, formal, *, mounts=True):
+def compose(core, formal, *, mounts=True, storage_providers=()):
     declarations = {}
     children = []
 
@@ -46,10 +46,16 @@ def compose(core, formal, *, mounts=True):
               'applications': []}
     for entry in core['services']:
         name = Path(entry['image']).name
-        role = {'console-raw': 'console', 'io-runtime': 'io', 'fs-backend': 'filesystem'}.get(name)
+        role = {'console-raw': 'console', 'fs-backend': 'filesystem'}.get(name)
         if role is not None:
             path = add(name, '/svc/' + name, prepared=True, resident=True, critical=True)
             policy['providers'].append({'role': role, 'component': path})
+    for provider in storage_providers:
+        component = provider['component']
+        if not isinstance(component, str) or not component.startswith('/') or component.count('/') != 1:
+            raise ValueError(f'invalid storage component: {component!r}')
+        path = add(component[1:], provider['image'], prepared=True, resident=True, critical=True)
+        policy['providers'].append({'role': 'storage', 'component': path})
     add('journal', '/svc/journal', prepared=True, critical=True)
     if mounts and any(p['role'] == 'filesystem' for p in policy['providers']):
         policy['mounts'] = add('mounts', '/bin/mount', arguments=['-a'], prepared=True)

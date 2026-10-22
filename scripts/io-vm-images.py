@@ -98,6 +98,8 @@ def deployment_board(board, mode):
     """Retain one board snapshot; diskless qualification cannot require volumes."""
     from board_config import Board
     source = copy.deepcopy(board.source)
+    if 'io-vm' not in source:
+        raise ValueError('an io-vm boot profile requires an I/O VM board configuration')
     config = source['io-vm']['configuration']
     if mode != 'storage':
         # Standby has no physical network transport.

@@ -36,6 +36,13 @@ def main():
         arguments.remove('--bootstrap')
         if '--core' in arguments:
             raise SystemExit('--bootstrap and --core are mutually exclusive')
+    profile = []
+    if '--profile' in arguments:
+        index = arguments.index('--profile')
+        if not bootstrap or index + 1 >= len(arguments):
+            raise SystemExit('--profile requires --bootstrap and a profile path')
+        profile = ['--profile', str(Path(arguments[index + 1]).resolve())]
+        del arguments[index:index + 2]
     if '--core' in arguments:
         index = arguments.index('--core') + 1
         if index >= len(arguments):
@@ -51,7 +58,7 @@ def main():
     result = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--target', host,
         '-p', package, '--example', 'check-services', '--',
-        str(Path(sys.argv[1]).resolve()), *arguments,
+        *profile, str(Path(sys.argv[1]).resolve()), *arguments,
     ], cwd=root / workspace, env=environment)
     raise SystemExit(result.returncode)
 

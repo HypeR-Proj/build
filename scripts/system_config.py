@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import tomllib
 
+import boot_profiles
+
 
 DEFAULT_BOOT = ('init', 'console-raw', 'fallback-sh', 'io-runtime', 'fs-backend',
                 'fs-erofs', 'fs-fat', 'mount', 'umount')
@@ -37,13 +39,14 @@ def names(value, context, *, features=False):
 
 class ProductConfig:
     def __init__(self, source):
-        if (not isinstance(source, dict) or source.keys() - HEADERS - {'version', 'boot', 'system', 'kernel'}
+        if (not isinstance(source, dict) or source.keys() - HEADERS - {'version', 'boot', 'system', 'kernel', 'boot-profiles'}
                 or type(source.get('version')) is not int or source['version'] != 1):
             raise ValueError('product configuration requires version 1 and boot/system/kernel sections')
         self.value = {'version': 1}
         for environment in ('boot', 'system'):
             section = source.get(environment, {})
-            if (not isinstance(section, dict) or section.keys() - {'base', 'include', 'exclude'}
+            allowed = {'base', 'include', 'exclude'} | ({'storage-providers'} if environment == 'system' else set())
+            if (not isinstance(section, dict) or section.keys() - allowed
                     or section.get('base', 'default') not in ('default', 'none')):
                 raise ValueError(f'invalid {environment} selection; base must be default or none')
             include = names(section.get('include', []), f'{environment}.include')
@@ -52,6 +55,23 @@ class ProductConfig:
                 raise ValueError(f'{environment} includes and excludes the same component')
             self.value[environment] = {'base': section.get('base', 'default'),
                                        'include': include, 'exclude': exclude}
+            if 'storage-providers' in section:
+                providers = section['storage-providers']
+                if not isinstance(providers, list) or len(providers) > boot_profiles.MAX_PROFILES:
+                    raise ValueError('system.storage-providers must list at most 16 formal storage providers')
+                selected = []
+                for provider in providers:
+                    if not isinstance(provider, dict) or provider.keys() != {'component', 'image'}:
+                        raise ValueError('formal storage provider requires component and image')
+                    selected.append({
+                        'component': boot_profiles.component_path(provider['component']),
+                        'image': boot_profiles.absolute_path(provider['image'], 'formal storage image'),
+                    })
+                if len({provider['component'] for provider in selected}) != len(selected):
+                    raise ValueError('duplicate formal storage provider component')
+                self.value[environment]['storage-providers'] = sorted(selected, key=lambda provider: provider['component'])
+        if 'boot-profiles' in source:
+            self.value['boot-profiles'] = boot_profiles.validate_set(source['boot-profiles'])
         if 'kernel' in source:
             kernel = source['kernel']
             if not isinstance(kernel, dict) or kernel.keys() != {'features'}:

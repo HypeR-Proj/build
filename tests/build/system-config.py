@@ -209,7 +209,14 @@ class ProductTests(unittest.TestCase):
         manifest.write_text(json.dumps({'version': 1, 'entries': self.entries}))
         output = self.root / 'output'
         output.mkdir()
-        (output / 'io.entries.json').write_text('[]')
+        io_image = output / 'io.itb'
+        io_image.write_bytes(b'fixture I/O VM FIT')
+        (output / 'io.entries.json').write_text(json.dumps([
+            ['0644', 'vm/io.itb', str(io_image)],
+            ['0644', 'etc/hyper/board.json', str(ROOT / 'boards/qemu-minimal.json')],
+            *[['0644', 'etc/hyper/' + name, str(board_output / name)]
+              for name in ('storage.json', 'filesystem.json')],
+        ]))
         arguments = ['pack-native-system', '--board', str(ROOT / 'boards/qemu-minimal.json'),
                      '--board-output', str(board_output), '--deployment', str(manifest),
                      '--system-config', str(self.root / 'product.json'), '--apps', str(apps),

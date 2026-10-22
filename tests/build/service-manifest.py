@@ -54,7 +54,8 @@ class ManifestTests(unittest.TestCase):
                 core, formal = SPLIT.services(source)
                 core_path = directory / 'core.json'
                 core_path.write_text(json.dumps(core))
-                units, startup = component_composition.compose(core, formal)
+                units, startup = component_composition.compose(core, formal, storage_providers=[
+                    {'component': '/io-runtime', 'image': '/svc/io-runtime'}])
                 for name in ('console-raw', 'io-runtime', 'fs-backend', 'journal', 'session-manager'):
                     self.assertTrue(units[name]['program']['critical'], name)
                 self.assertFalse(units['vm-manager']['program']['critical'])
@@ -208,6 +209,55 @@ class ManifestTests(unittest.TestCase):
                 candidate['services'].append({'name': name, 'image': '/svc/custom'})
                 with self.assertRaisesRegex(ValueError, 'invalid or duplicate component name'):
                     component_composition.compose(core, candidate)
+
+    def test_storage_replacements_are_explicit_and_do_not_require_io_vm(self):
+        core, formal = SPLIT.services(BASE)
+        units, policy = component_composition.compose(core, formal, storage_providers=[])
+        self.assertNotIn('io-runtime', units)
+        self.assertFalse(any(p['role'] == 'storage' for p in policy['providers']))
+        candidates = [
+            {'component': '/block-driver', 'image': '/svc/custom-block'},
+            {'component': '/io-runtime', 'image': '/svc/io-runtime'},
+        ]
+        units, policy = component_composition.compose(core, formal, storage_providers=candidates)
+        self.assertEqual([p['component'] for p in policy['providers'] if p['role'] == 'storage'],
+                         ['/block-driver', '/io-runtime'])
+        self.assertEqual(units['block-driver']['program']['image'], '/svc/custom-block')
+        self.assertTrue(units['block-driver']['program']['resident'])
+        for path in ['/../escape', 'block-driver', '/', '/nested/driver']:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                component_composition.compose(core, formal, storage_providers=[
+                    {'component': path, 'image': '/svc/custom-block'}])
+
+    def test_formal_admission_does_not_revalidate_bootstrap_plugin_grants(self):
+        core = {'format': 'hyper.service-manifest', 'services': [{
+            'name': 'storage-driver', 'image': '/svc/custom-block', 'critical': True,
+            'loader': 'bootstrap', 'restart': 'never', 'after': [],
+            'capabilities': [{'source': 'bootstrap.io-ready-channel', 'purpose': 'io.ready',
+                              'operation': 'move', 'rights': ['write', 'wait']}],
+        }]}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            core_path = directory / 'core.json'
+            core_path.write_text(json.dumps(core))
+            profile_path = directory / 'profile.json'
+            profile_path.write_text(json.dumps({
+                'version': 1, 'services': '/etc/hyper/custom.json',
+                'io': {'kind': 'service', 'service': 'storage-driver'}, 'requires': [],
+            }))
+            result = self.check_manifest(core_path, ['--bootstrap', '--profile', str(profile_path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            units, policy = component_composition.compose(core, {'services': []}, storage_providers=[
+                {'component': '/storage-driver', 'image': '/svc/formal-block'}])
+            component_dir = directory / 'components'
+            component_dir.mkdir()
+            for name, unit in units.items():
+                (component_dir / f'{name}.json').write_text(json.dumps(unit))
+            startup = directory / 'startup.json'
+            startup.write_text(json.dumps(policy))
+            result = self.check_manifest(component_dir, [
+                '--components', '--startup', str(startup), '--core', str(core_path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_packer_rejects_before_publication(self):
         with tempfile.TemporaryDirectory() as temporary:

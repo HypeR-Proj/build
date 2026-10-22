@@ -26,6 +26,30 @@ spec.loader.exec_module(images)
 
 
 class DiskTests(unittest.TestCase):
+    def test_board_without_io_vm_has_no_vm_network_or_appliance(self):
+        from board_config import Board
+        from board_bootstrap import services
+        root = Path(__file__).resolve().parents[2]
+        source = json.loads((root / 'boards/qemu-minimal.json').read_text())
+        del source['io-vm']
+        board = Board.parse(source)
+        self.assertEqual(runner.network_arguments(board), [])
+        self.assertEqual(runner.storage_controller(board), runner.storage_controller(None))
+        self.assertEqual(runner.machine_arguments(board, 'virt'), 'virt')
+        self.assertEqual(board.bootstrap_networks(), 'hyper.networks.v1\n')
+        graph = services(board, root)
+        self.assertNotIn('io-runtime', [service['name'] for service in graph['services']])
+        with self.assertRaisesRegex(ValueError, 'requires an I/O VM board'):
+            images.deployment_board(board, 'storage')
+
+    def test_guest_backend_without_io_vm_is_rejected_explicitly(self):
+        from board_config import Board
+        root = Path(__file__).resolve().parents[2]
+        source = json.loads((root / 'boards/qemu.json').read_text())
+        del source['io-vm']
+        with self.assertRaisesRegex(ValueError, 'guest disk/network backend requires an I/O VM'):
+            Board.parse(source)
+
     def test_standby_device_matches_boardless_mmio_launcher(self):
         from board_config import Board
         root = Path(__file__).resolve().parents[2]

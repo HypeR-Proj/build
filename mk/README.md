@@ -140,8 +140,9 @@ formal programs through image-profile membership, independently. When
 `SYSTEM_CONFIG` is selected, its per-environment allowlist/exclusions filter both
 graphs and packaging. Generated formal service declarations follow the selected
 executables. A required runtime child or bootstrap/adoption program cannot be
-silently omitted; a missing filesystem format worker remains a runtime mount
-error. Explicit boot
+silently omitted. Every selectable boot profile is checked against the actual
+boot archive, including explicitly required workers; undeclared filesystem
+formats discovered only at runtime can still fail mount. Explicit boot
 files such as the loader also declare their image profiles. Rust components derive their environment from their
 source directory. Duplicate destinations within one environment are errors; a
 boot and formal provider can share a relative path. `--replace boot:svc/fs-fat=...`

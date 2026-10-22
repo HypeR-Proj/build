@@ -37,14 +37,17 @@ def linux_overlay(board, original):
 def services(board, root):
     manifest = json.loads((root / 'bootstrap/stage1/init/config/services-with-vms.json').read_bytes())
     manifest['virtual-machines']['config'] = board.vm_config_path
-    manifest['services'].append(filesystem_service())
+    if 'io-vm' in board.source:
+        manifest['services'].append(filesystem_service())
+    else:
+        manifest['services'] = [service for service in manifest['services'] if service['name'] != 'io-runtime']
     for service in manifest['services']:
-        if service['name'] == 'session-manager':
+        if service['name'] == 'session-manager' and 'io-vm' in board.source:
             service['capabilities'].append({
                 'source': 'bootstrap.filesystem-control-client',
                 'purpose': 'filesystem.control-client', 'operation': 'duplicate',
                 'rights': ['wait', 'write', 'duplicate', 'transfer']})
-        if service['name'] == 'vm-manager':
+        if service['name'] == 'vm-manager' and 'io-vm' in board.source:
             service['capabilities'].append({
                 'source': 'bootstrap.io-broker-client', 'purpose': 'io.broker-client',
                 'operation': 'move', 'rights': ['wait', 'write']})
@@ -113,3 +116,17 @@ def stage(board, root, output):
             target.write_text(contents)
     for name in ('boot-fstab', 'fstab'):
         (output / name).write_text(board.source['native'][name])
+
+
+if __name__ == '__main__':
+    import argparse
+    from board_config import Board
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--board', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        stage(Board.load(args.board), Path(__file__).resolve().parents[1], args.output)
+    except (OSError, ValueError) as error:
+        parser.exit(1, f'Bootstrap configuration: {error}\n')

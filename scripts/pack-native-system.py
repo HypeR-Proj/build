@@ -15,9 +15,10 @@ import sys
 import tempfile
 
 from board_config import Board, unique_object
-from native_libraries import add_dependencies, read_image, validate as validate_libraries
+from native_libraries import add_dependencies, read_image, resolve, validate as validate_libraries
 import component_composition
 import system_config
+import boot_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -165,6 +166,8 @@ def compose_entries(args, native):
         environment, name = scoped_path(path, selected)
         if environment is None:
             environment = 'boot' if mode == 'symlink' or read_image(source) is None else 'system'
+        if environment == 'boot' and name.startswith(boot_profiles.DIRECTORY + '/'):
+            raise ValueError('declare boot profiles in SYSTEM_CONFIG so every profile contributes to composition')
         if args.recovery_only and environment != 'boot':
             raise ValueError('stage1 recovery cannot contain formal system entries')
         extras[environment].extend([mode, name, source])
@@ -233,25 +236,110 @@ def stage_system(records, destination, strip, checksums):
         staging.rename(destination)
 
 
+def selected_manifests(profiles, boot, generated):
+    """Resolve each profile's early graph without borrowing formal files."""
+    entries = {name: (mode, source) for mode, name, source in boot}
+    links = {name: source for name, (mode, source) in entries.items() if mode == 'symlink'}
+    selected = []
+    for name, profile in profiles.items():
+        path = resolve(profile['services'].lstrip('/'), links)
+        if path == 'etc/hyper/services.json':
+            source = generated
+        else:
+            entry = entries.get(path)
+            if entry is None or entry[0] == 'symlink':
+                raise ValueError(f'boot profile {name}: services {profile["services"]} is absent from the boot archive')
+            source = Path(entry[1])
+        value = boot_profiles.read_json(source)
+        selected.append((name, profile, source, value))
+    return selected
+
+
+def provider_composition(manifests):
+    """The formal provider candidate set covers every handoff-capable profile."""
+    services = {}
+    for name, profile, _, manifest in manifests:
+        if 'handoff' not in profile:
+            continue
+        for service in manifest.get('services', []):
+            image = service['image']
+            if image not in ('/svc/console-raw', '/svc/fs-backend'):
+                continue
+            services.setdefault(image, service)
+    return {'format': 'hyper.service-manifest', 'services': list(services.values())}
+
+
+def validate_formal_sources(manifests, policy):
+    """Reject formal grants known to be unavailable from a selected boot graph."""
+    providers = {
+        'bootstrap.io-broker-client': 'io.broker-server',
+        'bootstrap.filesystem-control-client': 'filesystem.control-server',
+    }
+    for name, profile, _, manifest in manifests:
+        if 'handoff' not in profile:
+            continue
+        purposes = {grant['purpose'] for service in manifest.get('services', [])
+                    for grant in service.get('capabilities', [])}
+        if 'mounts' in policy and 'filesystem.attach' not in purposes:
+            raise ValueError(f'boot profile {name}: formal mounts require a filesystem provider')
+        for app in policy['applications']:
+            for grant in app['capabilities']:
+                required = providers.get(grant['source'])
+                if required is not None and required not in purposes:
+                    raise ValueError(f'boot profile {name}: formal {app["component"]} requires unavailable {grant["source"]}')
+
+
+def validate_handoff_entries(profiles, disk):
+    entries = {name: (mode, source) for mode, name, source in disk}
+    links = {name: source for name, (mode, source) in entries.items() if mode == 'symlink'}
+    for name, profile in profiles.items():
+        handoff = profile.get('handoff')
+        if handoff is None:
+            continue
+        image = handoff['system-init']
+        record = entries.get(resolve(image.lstrip('/'), links))
+        if (record is None or record[0] == 'symlink' or not int(record[0], 8) & 0o111
+                or read_image(record[1]) is None):
+            raise ValueError(f'boot profile {name}: handoff entry {image} is not an executable in the formal payload')
+
+
 def compose(args, native, service_path):
     args.output.mkdir(parents=True, exist_ok=True)
     boot, disk, checksums = compose_entries(args, native)
     metadata = args.output / 'native-system'
     metadata.mkdir(exist_ok=True)
     product_path = getattr(args, 'system_config', None)
+    product = system_config.load(product_path) if product_path else None
     system_images = {'/' + name for mode, name, _ in disk if mode != 'symlink'}
     core, system = services(service_path, system_images if product_path else None)
     manifest_path = metadata / 'services.json'
     write_json(manifest_path, core)
+    profiles = boot_profiles.compose(
+        product, core, recovery=args.recovery_only,
+        board=Board.load(args.board) if args.board else None)
+    validate_handoff_entries(profiles, disk)
+    selected = selected_manifests(profiles, boot, manifest_path)
+    storage_providers = boot_profiles.storage_providers(product, profiles)
     components, startup_policy = component_composition.compose(
-        core, system, mounts=not product_path or bool(native.get('fstab', '').strip()))
+        provider_composition(selected), system,
+        mounts=not product_path or bool(native.get('fstab', '').strip()),
+        storage_providers=storage_providers)
+    validate_formal_sources(selected, startup_policy)
+    for name, profile in profiles.items():
+        successor = profile['io'].get('successor')
+        if 'handoff' in profile and successor is not None and not any(
+                provider['role'] == 'storage' and provider['component'] == successor
+                for provider in startup_policy['providers']):
+            raise ValueError(f'boot profile {name}: storage successor {successor} is not configured in the formal environment')
     if product_path:
         boot_images = {'/' + name for mode, name, _ in boot if mode != 'symlink'}
+        boot_links = {name: source for mode, name, source in boot if mode == 'symlink'}
         if '/init' not in boot_images:
             raise ValueError('bootstrap entry requires deployed boot component init')
-        for service in core['services']:
-            if service['image'] not in boot_images:
-                raise ValueError(f"bootstrap service {service['name']} requires deployed image {service['image']}")
+        for name, _, _, manifest in selected:
+            for service in manifest.get('services', []):
+                if '/' + resolve(service['image'].lstrip('/'), boot_links) not in boot_images:
+                    raise ValueError(f"boot profile {name}: bootstrap service {service['name']} requires deployed image {service['image']}")
         if not args.recovery_only:
             if '/svc/component-manager' not in system_images:
                 raise ValueError('system handoff requires deployed component component-manager')
@@ -263,9 +351,6 @@ def compose(args, native, service_path):
             'configuration': system_config.load(product_path).value,
             'boot': sorted(boot_images), 'system': sorted(system_images),
         })
-    init_path = metadata / 'init.json'
-    write_json(init_path, {'system-root': '/system', 'put-old': '/boot',
-                          'system-init': '/svc/component-manager'})
     filesystem_path = metadata / 'system-filesystem.json'
     write_json(filesystem_path, {'worker_directories': [{'environment': 'svc'}]})
     component_config = metadata / 'components.json'
@@ -277,9 +362,14 @@ def compose(args, native, service_path):
     placeholder.touch()
     boot.extend([
         ['0644', 'etc/hyper/services.json', str(manifest_path.resolve())],
-        ['0644', 'etc/hyper/init.json', str(init_path.resolve())],
         ['0644', f'lib64/{args.arch}-hyper-hyper/.keep', str(placeholder.resolve())],
     ])
+    profile_directory = metadata / 'boot-profiles'
+    profile_directory.mkdir(exist_ok=True)
+    for name, profile in profiles.items():
+        path = profile_directory / f'{name}.json'
+        write_json(path, profile)
+        boot.append(['0644', f'{boot_profiles.DIRECTORY}/{name}.json', str(path.resolve())])
     boot_fstab = metadata / 'boot-fstab'
     boot_fstab.write_text(native.get('boot-fstab', ''))
     boot = [record for record in boot if record[1] != 'etc/fstab']
@@ -309,11 +399,13 @@ def compose(args, native, service_path):
               if mode != 'symlink' and read_image(source) is not None]
     images.extend(name for mode, name, source in disk
                   if mode != 'symlink' and read_image(source) is not None)
-    subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
-                    str(manifest_path), '--bootstrap', *images], check=True)
+    boot_profiles.validate_archive(boot)
     if not args.recovery_only:
-        subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
-                        str(component_directory), '--components', '--startup', str(startup_path), '--core', str(manifest_path), *images], check=True)
+        for _, profile, source, _ in selected:
+            if 'handoff' in profile:
+                subprocess.run([sys.executable, str(ROOT / 'scripts/check-service-manifest.py'),
+                                str(component_directory), '--components', '--startup', str(startup_path),
+                                '--core', str(source), *images], check=True)
     archive.validate_entries([field for record in boot for field in record])
     archive.validate_entries([field for record in disk for field in record])
     # Publish checked staging first. A failed composition must not make an old
@@ -383,9 +475,18 @@ def main():
                 raise ValueError('board and Native artifact architectures differ')
             native = board.source['native']
             service_path = service_path or args.board_output / 'services.json'
-            args.entries_from.insert(0, args.output / 'io.entries.json')
-            args.extra_entries.extend(['0644', 'etc/hyper/io-clients.conf',
-                                       str(args.board_output / 'io-clients.conf')])
+            product = system_config.load(args.system_config) if args.system_config else None
+            if boot_profiles.needs_io_vm(product, board):
+                args.entries_from.insert(0, args.output / 'io.entries.json')
+                args.extra_entries.extend(['0644', 'etc/hyper/io-clients.conf',
+                                           str(args.board_output / 'io-clients.conf')])
+            else:
+                # Stale I/O VM artifacts in the output tree must not leak into a
+                # product whose selected sources are independent userspace services.
+                args.extra_entries.extend(['0644', 'etc/hyper/board.json', str(args.board)])
+                for name in ('storage.json', 'filesystem.json'):
+                    args.extra_entries.extend(['0644', 'etc/hyper/' + name,
+                                               str(args.board_output / name)])
             if board.vm_config_path != '/data/vms.json':
                 args.extra_entries.extend(['0644', 'system:' + board.vm_config_path[1:],
                                            str(args.board_output / 'vms.json')])
