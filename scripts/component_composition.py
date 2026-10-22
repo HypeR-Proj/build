@@ -14,15 +14,15 @@ from pathlib import Path
 HEADER = {'SPDX-FileCopyrightText': '2026 roolrz', 'SPDX-License-Identifier': 'Apache-2.0'}
 
 DESCRIPTIONS = {
-    'system-startup': 'Transfer bootstrap ownership',
+    'system-startup': 'Take bootstrap ownership',
     'console-raw': 'Physical console transport',
     'journal': 'Service log collection',
-    'session-manager': 'Terminal and interactive shell',
-    'io-runtime': 'Storage and network backend',
+    'session-manager': 'Terminal and shell',
+    'io-runtime': 'Storage and network',
     'fs-backend': 'Filesystem mount service',
-    'mount': 'Mount persistent filesystems',
+    'mount': 'Mount persistent storage',
     'vm-manager': 'Virtual machine fleet',
-    'bootstrap-retire': 'Release bootstrap resources',
+    'bootstrap-retire': 'Retire bootstrap services',
 }
 
 
