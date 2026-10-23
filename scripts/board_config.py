@@ -39,7 +39,7 @@ def keys(value, required, optional=()):
 
 def vm_configuration(value, *, guest=False):
     keys(value, ('memory-bytes', 'vcpus', 'bootargs'),
-         ('affinity', 'virtio-transport') if guest else ('affinity',))
+         ('affinity', 'virtio-transport', 'scheduling') if guest else ('affinity', 'scheduling'))
     integer(value['vcpus'], 1, 8)
     memory = integer(value['memory-bytes'], 64 * MIB, 1 << 63)
     if memory & (memory - 1):
@@ -49,6 +49,8 @@ def vm_configuration(value, *, guest=False):
         raise ValueError('VM bootargs must contain at most 2048 bytes and no NUL')
     if value.get('virtio-transport', 'mmio') not in ('mmio', 'pci'):
         raise ValueError('virtio-transport must be mmio or pci')
+    if 'scheduling' in value:
+        scheduling_configuration(value['scheduling'])
     affinity = value.get('affinity', [])
     if not isinstance(affinity, list) or len(affinity) > value['vcpus']:
         raise ValueError('VM affinity must be a list with at most one entry per vCPU')
@@ -68,6 +70,36 @@ def vm_configuration(value, *, guest=False):
         if len(set(cpus)) != len(cpus):
             raise ValueError('VM affinity contains a duplicate host CPU')
     return value
+
+
+def scheduling_configuration(value):
+    """Bounds are syntax admission; live authority and kernel P remain enforced."""
+    keys(value, ('band', 'role'), ('policy',))
+    integer(value['band'], 0, 255)
+    if value['role'] not in ('ordinary', 'priority', 'protected'):
+        raise ValueError('unknown VM scheduling role')
+    if 'policy' not in value:
+        return
+    policy = value['policy']
+    if not isinstance(policy, dict):
+        raise ValueError('VM scheduling policy must be an object')
+    kind = policy.get('kind')
+    if kind == 'fair':
+        keys(policy, ('kind', 'weight', 'quantum_ns'), ('backend',))
+        integer(policy['weight'], 1, 1024)
+        integer(policy['quantum_ns'], 1, 1_000_000_000)
+        if policy.get('backend', 'default') not in ('stride', 'round-robin', 'default'):
+            raise ValueError('unknown Fair scheduling backend')
+    elif kind == 'budget':
+        keys(policy, ('kind', 'budget_ns', 'period_ns', 'burst_ns'))
+        period = integer(policy['period_ns'], 1, 1_000_000_000)
+        integer(policy['budget_ns'], 1, period)
+        integer(policy['burst_ns'], 1, period)
+    elif kind == 'fifo':
+        keys(policy, ('kind', 'priority'))
+        integer(policy['priority'], 0, 255)
+    else:
+        raise ValueError('unknown VM scheduling policy')
 
 
 def name(value):

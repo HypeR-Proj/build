@@ -33,6 +33,10 @@ def compose(core, formal, *, mounts=True, storage_providers=()):
     def add(name, image, **program):
         if re.fullmatch(r'[A-Za-z0-9_.-]{1,63}', name) is None or name in declarations:
             raise ValueError(f'invalid or duplicate component name: {name!r}')
+        program.setdefault('scheduling', {
+            'policy': {'kind': 'fair', 'weight': 16, 'quantum_ns': 5_000_000},
+            'band': 64, 'role': 'priority',
+        })
         declaration = {**HEADER, 'name': name, 'program': {'image': image, **program}}
         if description := DESCRIPTIONS.get(Path(image).name):
             declaration['description'] = description
@@ -62,7 +66,8 @@ def compose(core, formal, *, mounts=True, storage_providers=()):
     add('bootstrap-retire', '/svc/bootstrap-retire', prepared=True)
     for entry in formal['services']:
         path = add(entry['name'], entry['image'], prepared=True,
-                   critical=entry.get('critical', False))
+                   critical=entry.get('critical', False),
+                   **({'scheduling': copy.deepcopy(entry['scheduling'])} if 'scheduling' in entry else {}))
         grants = [copy.deepcopy(g) for g in entry.get('capabilities', [])
                   if g['purpose'] not in ('stdio.input', 'stdio.output', 'stdio.error')]
         app = {'component': path, 'critical': entry.get('critical', False), 'capabilities': grants}

@@ -106,6 +106,39 @@ class BoardTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         Board.parse(changed)
 
+    def test_vm_scheduling_policy_validation_and_projection(self):
+        valid = [
+            {'role': 'priority', 'band': 64},
+            {'role': 'protected', 'band': 128,
+             'policy': {'kind': 'fair', 'weight': 16, 'quantum_ns': 1000000}},
+            {'role': 'ordinary', 'band': 128,
+             'policy': {'kind': 'budget', 'budget_ns': 14000000,
+                        'period_ns': 20000000, 'burst_ns': 10000000}},
+        ]
+        invalid = [None, {}, {'role': 'other', 'band': 128},
+                   {'role': 'priority', 'band': True},
+                   {'role': 'priority', 'band': 64, 'policy': None},
+                   {'role': 'ordinary', 'band': 128,
+                    'policy': {'kind': 'budget', 'budget_ns': 11,
+                               'period_ns': 10, 'burst_ns': 1}},
+                   {'role': 'ordinary', 'band': 128,
+                    'policy': {'kind': 'fair', 'weight': 0, 'quantum_ns': 1}}]
+        for target in ('business', 'io'):
+            for policy in valid + invalid:
+                with self.subTest(target=target, policy=policy):
+                    changed = copy.deepcopy(self.source)
+                    config = (changed['io-vm']['configuration'] if target == 'io' else
+                              changed['virtual-machines'][0]['configuration'])
+                    config['scheduling'] = policy
+                    if policy in invalid:
+                        with self.assertRaises(ValueError):
+                            Board.parse(changed)
+                    else:
+                        board = Board.parse(changed)
+                        actual = (board.source['io-vm']['configuration'] if target == 'io' else
+                                  board.vms()['virtual-machines'][0]['configuration'])
+                        self.assertEqual(actual['scheduling'], policy)
+
     def test_io_vm_has_one_complete_bootstrap_definition(self):
         for profile in ('qemu', 'rpi5', 'rpi5-native'):
             board = Board.load(ROOT / f'boards/{profile}.json')
