@@ -388,3 +388,11 @@ test-pmu: image native-initramfs
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-pmu.py "$(QEMU)" "$(KERNEL_IMAGE)" \
 		"$(NATIVE_INITRAMFS)" "$(PMU_LOG)" \
 		--kernel "$(KERNEL_OUTPUT)/hyper" --nm "$(LLVM_NM)"
+
+# The trace collector uses the ordinary SDK and a production feature only.
+TRACE_LOG ?= $(APP_OUTPUT)/trace-$(QEMU_CPUS).log
+.PHONY: test-trace
+test-trace: export KERNEL_FEATURES = rtc runtime-symbols crash-console kernel-trace
+test-trace: image native-initramfs
+	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-trace.py "$(QEMU)" "$(KERNEL_IMAGE)" \
+		"$(NATIVE_INITRAMFS)" "$(TRACE_LOG)"
