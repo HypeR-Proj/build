@@ -12,6 +12,10 @@ NATIVE_FREESTANDING_TARGET_aarch64 := aarch64-unknown-none
 NATIVE_FREESTANDING_TARGET_riscv64 := riscv64gc-unknown-none-elf
 NATIVE_FREESTANDING_TARGET := $(NATIVE_FREESTANDING_TARGET_$(NATIVE_ARCH))
 KERNEL_DIRECTORY := $(CURDIR)/kernel
+# Resolve explicit paths before make -C; leave the default unset so the kernel
+# can still prepare a missing or architecture-mismatched .config on normal builds.
+KERNEL_CONFIG_PATH = $(if $(filter undefined,$(origin CONFIG_FILE)),$(KERNEL_DIRECTORY)/.config,$(shell python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$(CONFIG_FILE)"))
+KERNEL_CONFIG_ARGUMENT = $(if $(filter undefined,$(origin CONFIG_FILE)),,CONFIG_FILE="$(KERNEL_CONFIG_PATH)")
 KERNEL_BUILD_ROOT ?= $(KERNEL_DIRECTORY)/target$(if $(SYSTEM_CONFIG_ID),/products/$(SYSTEM_CONFIG_ID))
 KERNEL_OUTPUT = $(abspath $(KERNEL_BUILD_ROOT))/$(KERNEL_TARGET)/$(KERNEL_PROFILE)
 KERNEL_IMAGE = $(KERNEL_OUTPUT)/hyper.img
@@ -37,6 +41,11 @@ SYSTEM_CONFIG_OUTPUT = $(if $(strip $(SYSTEM_CONFIG)),$(SYSTEM_CONFIG),$(CURDIR)
 SYSTEM_DEFCONFIG ?= $(CURDIR)/configs/default_defconfig
 SYSTEM_DEFCONFIG_OUTPUT ?= $(CURDIR)/defconfig
 PRODUCT_CONFIG_TARGETS := config menuconfig defconfig olddefconfig savedefconfig
+ifneq ($(filter defconfig,$(MAKECMDGOALS)),)
+ifeq ($(shell python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]) == os.path.realpath(sys.argv[2]))' "$(SYSTEM_CONFIG_OUTPUT)" "$(KERNEL_CONFIG_PATH)"),True)
+$(error SYSTEM_CONFIG and CONFIG_FILE must select different files for defconfig)
+endif
+endif
 ifneq ($(filter $(PRODUCT_CONFIG_TARGETS),$(MAKECMDGOALS)),)
 ifneq ($(words $(MAKECMDGOALS)),1)
 $(error run configuration targets separately, then invoke the build with the saved configuration)
@@ -198,11 +207,12 @@ config: menuconfig
 
 menuconfig:
 	python3 -B scripts/menuconfig.py --output "$(SYSTEM_CONFIG_OUTPUT)" \
-		--kernel-config "$(if $(filter undefined,$(origin CONFIG_FILE)),$(KERNEL_DIRECTORY)/.config,$(abspath $(CONFIG_FILE)))" \
+		--kernel-config "$(KERNEL_CONFIG_PATH)" \
 		--arch "$(ARCH)"
 
 defconfig:
-	python3 -B scripts/product-config.py defconfig --input "$(SYSTEM_DEFCONFIG)" --output "$(SYSTEM_CONFIG_OUTPUT)"
+	python3 -B scripts/product-config.py defconfig --input "$(SYSTEM_DEFCONFIG)" --output "$(SYSTEM_CONFIG_OUTPUT)" \
+		--kernel-input "$(KERNEL_DIRECTORY)/configs/qemu_$(ARCH)_defconfig" --kernel-output "$(KERNEL_CONFIG_PATH)"
 
 olddefconfig:
 	python3 -B scripts/product-config.py olddefconfig --input "$(SYSTEM_CONFIG_OUTPUT)" --output "$(SYSTEM_CONFIG_OUTPUT)"
@@ -211,7 +221,7 @@ savedefconfig:
 	python3 -B scripts/product-config.py savedefconfig --input "$(SYSTEM_CONFIG_OUTPUT)" --output "$(SYSTEM_DEFCONFIG_OUTPUT)"
 
 $(KERNEL_TARGETS):
-	$(MAKE) -C "$(KERNEL_DIRECTORY)" $@ $(SYSTEM_KERNEL_ARGS) $(if $(filter undefined,$(origin CONFIG_FILE)),,CONFIG_FILE="$(abspath $(CONFIG_FILE))")
+	$(MAKE) -C "$(KERNEL_DIRECTORY)" $@ $(SYSTEM_KERNEL_ARGS) $(KERNEL_CONFIG_ARGUMENT)
 
 include mk/sdk-app.mk
 

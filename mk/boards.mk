@@ -299,7 +299,7 @@ test-board-dma-revoke:
 	CARGO_TARGET_DIR="$$build" $(MAKE) -C "$(KERNEL_DIRECTORY)" image \
 		$(SYSTEM_KERNEL_ARGS) \
 		KERNEL_BUILD_ROOT="$$build" \
-		CONFIG_FILE="$(abspath $(or $(CONFIG_FILE),kernel/configs/qemu_aarch64_defconfig))" \
+		CONFIG_FILE="$(if $(filter undefined,$(origin CONFIG_FILE)),$(KERNEL_DIRECTORY)/configs/qemu_aarch64_defconfig,$(KERNEL_CONFIG_PATH))" \
 		KERNEL_OUTPUT="$$build/$(KERNEL_TARGET)/$(KERNEL_PROFILE)" \
 		KALLSYMS_SEED_TARGET="$$build/kallsyms-seed" \
 		CARGO_FEATURES='--features kernel-test,io-dma-revoke-test' \

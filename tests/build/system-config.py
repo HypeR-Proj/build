@@ -6,6 +6,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -250,14 +251,16 @@ class ProductTests(unittest.TestCase):
         fragment.write_text('# CONFIG_SYSTEM_APP_VM_MANAGER is not set\n'
                             '# CONFIG_BOOT_APP_FS_FAT is not set\n')
         full, minimal = self.root / '.config', self.root / 'defconfig'
-        kernel = ROOT / 'kernel/.config'
-        before_kernel = kernel.read_bytes() if kernel.exists() else None
+        kernel = self.root / 'kernel.config'
         def make(command, **settings):
             return subprocess.run(['make', '--no-print-directory', command,
+                                   'ARCH=aarch64', f'CONFIG_FILE={kernel}',
                                    *[f'{key}={value}' for key, value in settings.items()]],
                                   cwd=ROOT, text=True, capture_output=True)
         generated = make('defconfig', SYSTEM_CONFIG=full, SYSTEM_DEFCONFIG=fragment)
         self.assertEqual(generated.returncode, 0, generated.stderr)
+        before_kernel = kernel.read_bytes()
+        self.assertIn(b'CONFIG_ARCH_AARCH64=y', before_kernel)
         product = system_config.load(full)
         self.assertNotIn('vmm', product.selected_names(self.entries, 'system'))
         saved = make('savedefconfig', SYSTEM_CONFIG=full, SYSTEM_DEFCONFIG_OUTPUT=minimal)
@@ -274,7 +277,79 @@ class ProductTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn('CONFIG_SYSTEM_APP_VM_MANAGER', rejected.stderr)
         self.assertEqual(full.read_bytes(), original)
-        self.assertEqual(kernel.read_bytes() if kernel.exists() else None, before_kernel)
+        self.assertEqual(kernel.read_bytes(), before_kernel)
+
+    def test_top_level_defconfig_resets_both_configs_for_the_selected_architecture(self):
+        kernel = self.root / 'kernel settings.config'
+        product = self.root / 'product.config'
+        expected_product = self.config({'version': 1}, filename='expected-product.config')
+        for arch in ('aarch64', 'riscv64', 'x86_64'):
+            with self.subTest(arch=arch):
+                kernel.write_text('CONFIG_ARCH_AARCH64=y\nCONFIG_MAX_CPUS=23\n'
+                                  'CONFIG_FEATURE_KERNEL_TEST=y\n')
+                # Root-relative paths must retain their meaning after make -C.
+                relative = os.path.relpath(kernel, ROOT)
+                result = subprocess.run(
+                    ['make', '--no-print-directory', 'defconfig', f'ARCH={arch}',
+                     f'SYSTEM_CONFIG={product}', f'CONFIG_FILE={relative}'],
+                    cwd=ROOT, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                schema = ROOT / 'kernel/Kconfig'
+                expected = system_config.kconfig.query(
+                    'resolve', ROOT / f'kernel/configs/qemu_{arch}_defconfig', schema=schema)
+                actual = system_config.kconfig.query('resolve', kernel, schema=schema)
+                self.assertEqual(actual['values'], expected['values'])
+                self.assertEqual(system_config.load(product).identity(),
+                                 expected_product.identity())
+
+    def test_plain_defconfig_delegates_to_the_default_kernel_config(self):
+        result = subprocess.run(
+            ['make', '--no-print-directory', '-n', 'defconfig', 'ARCH=aarch64',
+             f'SYSTEM_CONFIG={self.root / "product.config"}'],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'--kernel-input "{ROOT}/kernel/configs/qemu_aarch64_defconfig"', result.stdout)
+        self.assertIn(f'--kernel-output "{ROOT}/kernel/.config"', result.stdout)
+
+    def test_kernel_generation_and_output_failures_preserve_both_configs(self):
+        product = self.root / 'product.config'
+        kernel = self.root / 'kernel.config'
+        for path in (product, kernel):
+            path.write_text('original configuration\n')
+        invalid = self.root / 'invalid-kernel-defconfig'
+        invalid.write_text('CONFIG_KERNEL_STACK_SIZE_KB=24\n')
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts/product-config.py'), 'defconfig',
+             '--input', str(ROOT / 'configs/default_defconfig'), '--output', str(product),
+             '--kernel-input', str(invalid), '--kernel-output', str(kernel)],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('power of two', result.stderr)
+        for path in (product, kernel):
+            self.assertEqual(path.read_text(), 'original configuration\n')
+        # Both inputs are valid, but the second output cannot be prepared.
+        for output in (self.root / 'missing-directory/kernel.config', self.root):
+            result = subprocess.run(
+                ['make', '--no-print-directory', 'defconfig', f'SYSTEM_CONFIG={product}',
+                 f'CONFIG_FILE={output}'],
+                cwd=ROOT, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(product.read_text(), 'original configuration\n')
+            self.assertFalse(list(self.root.glob('.hyper-config-*')))
+
+    def test_defconfig_rejects_overlapping_outputs_before_writing(self):
+        kernel = self.root / 'shared.config'
+        kernel.write_text('keep this configuration\n')
+        alias = self.root / 'product.config'
+        alias.symlink_to(kernel)
+        result = subprocess.run(
+            ['make', '--no-print-directory', 'defconfig',
+             f'SYSTEM_CONFIG={alias}', f'CONFIG_FILE={kernel}'],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must select different files', result.stderr)
+        self.assertEqual(kernel.read_text(), 'keep this configuration\n')
+        self.assertTrue(alias.is_symlink())
 
     def test_product_kernel_section_cannot_enable_test_hooks(self):
         for name in ('kernel-test', 'io-dma-revoke-test', 'kernel-self-test', 'missing'):

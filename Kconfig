@@ -13,12 +13,14 @@ source "tests/app/Kconfig"
 menu "Build policy"
 
 config KERNEL_FEATURES
-    string "Kernel Cargo features"
+    string "Kernel feature override (advanced)"
     default "default"
     help
-        default follows the kernel Cargo defaults for ARCH. Otherwise provide a
-        comma-separated production feature list; empty disables optional features.
-        Test features are rejected. This does not override kernel/.config.
+        Normally leave this at default and use the Kernel submenu. default
+        follows kernel/.config (or the architecture defconfig). An explicit
+        comma-separated production feature list replaces that feature selection;
+        empty disables optional features. Numeric kernel settings remain in
+        kernel/.config. Test features are rejected here.
 
 config BOOT_POLICY
     string "Boot policy file"
