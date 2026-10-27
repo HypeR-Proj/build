@@ -332,7 +332,7 @@ class DocumentationLinks(unittest.TestCase):
         self.assertEqual(documented_crates(workspace_packages(manifest)), ['doc_shared'])
 
     def test_portable_atomics_link_to_upstream_standard_library_docs(self):
-        atomic = Path(__file__).resolve().parents[2] / 'kernel/src/sync/atomic.rs'
+        atomic = Path(__file__).resolve().parents[2] / 'kernel/core/src/sync/atomic.rs'
         manifest = self.write('fixture/Cargo.toml', '[package]\nname = "atomic-doc-probe"\n'
                               'version = "0.1.0"\nedition = "2024"\n[workspace]\n')
         self.write('fixture/src/lib.rs', f'#![no_std]\n#[path = {json.dumps(str(atomic))}]\n'
