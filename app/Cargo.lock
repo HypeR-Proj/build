@@ -513,6 +513,7 @@ dependencies = [
  "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
+ "hyper-service",
  "serde_json",
 ]
 
