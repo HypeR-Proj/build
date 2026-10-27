@@ -407,3 +407,23 @@ test-trace test-trace-remote: image app
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/$(if $(filter test-trace-remote,$@),verify-trace-remote.py,verify-trace.py) \
 		$(if $(filter test-trace-remote,$@),--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" --log "$(TRACE_LOG)","$(QEMU)" "$(KERNEL_IMAGE)" "$$fixture/bootstrap.cpio" "$(TRACE_LOG)") \
 		--disk "$$fixture/disk.img" --board "$$fixture/deployment.json"
+
+# Functional benchmark acceptance only: TCG latency is never a CI threshold.
+SCHED_BENCH_LOG ?= $(BOARD_TEST_OUTPUT)/scheduler-$(QEMU_CPUS).log
+SCHED_BENCH_DATA_MIB ?= 512
+.PHONY: test-scheduler-bench
+test-scheduler-bench: APP_EXTRA_BINS += hyper-sched-bench hyper-test-report
+test-scheduler-bench: image app
+	@test "$(ARCH)" = aarch64 || { echo "scheduler benchmark fixture requires aarch64" >&2; exit 2; }
+	mkdir -p "$(BOARD_TEST_OUTPUT)" "$(dir $(SCHED_BENCH_LOG))"
+	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/scheduler.XXXXXX") && \
+	python3 -B tests/qemu/trace_artifacts.py --board-output "$$fixture/board.json" --data-mib "$(SCHED_BENCH_DATA_MIB)" && \
+	$(MAKE) -o image -o app board-image BOARD=qemu \
+		BOARD_CONFIG="$$fixture/board.json" BOARD_OUTPUT="$$fixture" \
+		BOARD_IMAGE="$$fixture/disk.img" \
+		BOARD_EXTRA_ENTRIES='0755 bin/sched-bench "$(APP_OUTPUT)/sched-bench" 0755 bin/test-report "$(APP_OUTPUT)/test-report"' && \
+	$(NATIVE_QEMU_ENV) python3 -B tests/performance/scheduler/run.py \
+		--functional --qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
+		--initramfs "$$fixture/bootstrap.cpio" --disk "$$fixture/disk.img" \
+		--board "$$fixture/deployment.json" --cpus "$(QEMU_CPUS)" \
+		--output "$$fixture/results" --log "$(SCHED_BENCH_LOG)"
