@@ -241,6 +241,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "hyper-clap-shared",
+ "hyper-os",
 ]
 
 [[package]]
@@ -767,6 +768,7 @@ name = "hyper-vm-image"
 version = "0.0.0"
 dependencies = [
  "hyper-abi",
+ "hyper-os",
 ]
 
 [[package]]

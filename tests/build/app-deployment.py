@@ -153,15 +153,16 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('required link mode', result.stderr)
 
     def test_executable_roots_preserve_explicit_shared_library_features(self):
+        # This tests argument routing, independently of any current Cargo feature.
         arguments = [sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
                      '--executable-roots', '--features',
-                     'hyper-vm-support-shared/startup-profile']
+                     'hyper-vm-support-shared/routing-test']
         result = subprocess.check_output([
             *arguments, '--link-mode', 'dynamic', '--component', 'echo'], text=True).split()
         self.assertIn('hyper-echo', result)
         self.assertIn('hyper-vm-support-shared', result)
         self.assertIn('--lib', result)
-        self.assertIn('hyper-vm-support-shared/startup-profile', result)
+        self.assertIn('hyper-vm-support-shared/routing-test', result)
         static = subprocess.check_output([
             *arguments, '--link-mode', 'static', '--component', 'init'], text=True).split()
         self.assertNotIn('hyper-vm-support-shared', static)
