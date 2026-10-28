@@ -740,7 +740,8 @@ dependencies = [
  "hyper-clap-shared",
  "hyper-os",
  "hyper-rt",
- "hyper-terminal",
+ "hyper-text-ui",
+ "hyper-text-ui-shared",
  "hyper-tool-args",
  "hyper-tool-args-shared",
 ]
