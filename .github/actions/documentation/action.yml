@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+name: Repository documentation
+description: Build and validate only the checked-out repository's documentation
+inputs:
+  output:
+    description: Fresh output directory
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install documentation dependencies
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: python3 -m pip install -r "$ACTION_PATH/../../../scripts/docs/requirements.txt"
+    - name: Build repository site and validate links
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OUTPUT: ${{ inputs.output }}
+        REPOSITORY: ${{ github.event.repository.name }}
+      run: |
+        python3 -m unittest discover -s "$ACTION_PATH/../../../scripts/docs" -p 'test_*.py'
+        python3 "$ACTION_PATH/../../../scripts/docs/build.py" --root "$GITHUB_WORKSPACE" --output "$OUTPUT" --repository "$REPOSITORY"

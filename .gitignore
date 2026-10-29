@@ -20,3 +20,4 @@
 /tools/*
 !/tools/newc-pack.c
 **/__pycache__/
+!/docs/
