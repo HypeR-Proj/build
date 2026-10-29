@@ -18,7 +18,7 @@
       "-s",
       "{component}/build-tests",
       "-p",
-      "test_project.py"
+      "test_*.py"
     ],
     [
       "python3",

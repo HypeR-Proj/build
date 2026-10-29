@@ -98,7 +98,7 @@ rust-std-test: sdk
 		"$(SDK_OUTPUT)" "$(CURDIR)/target/module-rust-std" sdk/toolchain/tests/std-smoke/Cargo.toml
 
 app-fetch: sdk
-	python3 -B tests/ci/check-workspace.py
+	python3 -B .workspace/tests/check-workspace.py
 	@set -e; for workspace in app bootstrap/stage1; do \
 	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" fetch --manifest-path "$$workspace/Cargo.toml" --locked; \

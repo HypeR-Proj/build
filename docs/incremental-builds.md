@@ -58,5 +58,5 @@ publication rejects concurrent publishers; kernel architectures also share the
 default `.config`. Build architectures serially, or use separate checkouts.
 
 Run `python3 tests/build/incremental.py` for cache invalidation and failure-path
-regressions. It is also included in `sh tests/ci/run.sh scripts`. SDK publication
+regressions. It is also included in `python3 project.py test build`. SDK publication
 rollback and publisher exclusion remain covered by `make sdk-check`.

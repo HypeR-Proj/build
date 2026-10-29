@@ -91,9 +91,9 @@ Use these repository-root commands for short feedback loops:
 | Native ABI and SDK source behavior | `make sdk-test` |
 | Installed SDK consumption by apps | `make app-sdk-test ARCH=aarch64` |
 | Portable kernel mechanisms | `make -C kernel test ARCH=aarch64` |
-| App deployment and packaging | `sh tests/ci/run.sh scripts` |
+| App deployment and packaging | `python3 project.py test build` |
 | Kernel or app runtime behavior | The relevant QEMU target below |
-| Product trimming and kernel test gates | `sh tests/ci/run.sh scripts` and `sh tests/ci/run.sh kernel-configurations` |
+| Product trimming and kernel test gates | `python3 project.py test build` and `KERNEL_CI_SUITE=configurations python3 project.py test kernel` |
 
 `app-test` uses SDK source patches within both Native workspaces, an explicit
 host target, and ordinary Cargo. It does not assemble an SDK or require patched
@@ -233,8 +233,8 @@ disks that must survive cleaning need an external `BOARD_IMAGE` or `IO_VM_DISK`.
 `make board-image` still refuses an existing output unless explicitly replaced.
 For Native/standby profiles, select the same `RUN_PROFILE` for build and run.
 
-GitHub Actions separates source quality, architecture builds, image contracts,
-Native SDK integration, and runtime acceptance. The AArch64 matrix exercises
+Automatic module workflows own source quality, architecture builds, image
+contracts and SDK consumers. Manual system verification owns runtime acceptance. The AArch64 matrix exercises
 VHE with different address-space geometries, UP/SMP, kernel self-tests, and
 virtual interrupts and timers. A separate negative boot test verifies that
 CPUs without FEAT_VHE reach the explicit rejection loop. Linux guest startup is
@@ -257,19 +257,19 @@ with guest-memory reclamation. x86-64 has a build and image contract only.
 Stable local equivalents live in `tests/ci/run.sh`:
 
 ```sh
-sh tests/ci/run.sh scripts
-sh tests/ci/run.sh quality
+python3 project.py test build
+KERNEL_CI_SUITE=quality python3 project.py test kernel
 sh tests/ci/run.sh native                 # all AArch64 Native shards, serially
 sh tests/ci/run.sh native-console         # one independent CI shard
 sh tests/ci/run.sh native-gicv3            # serial console + VM aggregate
 sh tests/ci/run.sh native-stack-16k        # minimum-stack Native boot on one/four CPUs
 sh tests/ci/run.sh board-storage
 sh tests/ci/run.sh io-vm
-sh tests/ci/run.sh riscv64-native
-sh tests/ci/run.sh aarch64-build
-QEMU_CPU=max QEMU_CPUS=4 sh tests/ci/run.sh aarch64-qemu
-sh tests/ci/run.sh riscv64-qemu
-sh tests/ci/run.sh x86_64-build
+sh tests/ci/run.sh riscv64-runtime
+sh kernel/tests/ci/run.sh aarch64-build
+QEMU_CPU=max QEMU_CPUS=4 sh kernel/tests/ci/run.sh aarch64-qemu
+sh kernel/tests/ci/run.sh riscv64-qemu
+sh kernel/tests/ci/run.sh x86_64-build
 ```
 
 QEMU tests track and terminate the processes they create. Failed CI runs retain
@@ -339,8 +339,8 @@ Before opening a pull request:
    obligations that are not evident from the types.
 4. Add host tests for portable mechanisms and architecture acceptance coverage
    for changed low-level paths.
-5. Run `git diff --check`, `sh tests/ci/run.sh quality`,
-   `sh tests/ci/run.sh scripts`, and `make check` for every affected
+5. Run `git diff --check`, `KERNEL_CI_SUITE=quality python3 project.py test kernel`,
+   `python3 project.py test build`, and `make check` for every affected
    architecture. Run the relevant QEMU contract when runtime behavior changes.
 6. Do not add GPL-derived implementation code. New dependencies require
    explicit `no_std`, maintenance, and license review.
