@@ -2,29 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 /target/
-/app/target/
-/bootstrap/stage1/target/
-/kernel/target/
-/sdk/abi/target/
-/stdlib/rust/target/
-/sdk/toolchain/target/
-/sdk/toolchain/tests/rust-smoke/target/
-/sdk/toolchain/tests/std-smoke/target/
-/tools/fit-pack/target/
-/kernel/tests/host/target/
-/kernel/tests/host/Cargo.lock
-/kernel/tests/concurrency/target/
-/kernel/tools/kconfig/target/
-/kernel/tools/kallsyms/target/
-/.config
-/defconfig
-/kernel/.config
-/.idea/
-/.vscode/*
-!/.vscode/settings.json
-!/.vscode/rust-analyzer.toml
-/.agent
-*.swp
-*.swo
-*.log
+/out/
 __pycache__/
+*.pyc
+.config
+.config.old
