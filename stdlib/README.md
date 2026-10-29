@@ -11,8 +11,8 @@ installed SDK. It must not depend on either environment's service policy.
 
 | Source | Responsibility |
 | --- | --- |
-| [`hyper/`](hyper/README.md) | Native C ABI wrappers, startup, heap/thread support and the Rust std C adapter |
-| [`rust/`](rust/README.md) | Raw and safe Native bindings, Rust entry, and the kernel filesystem-service wire protocol |
+| [`hyper/`](https://github.com/HypeR-Proj/lib/blob/main/README.md) | Native C ABI wrappers, startup, heap/thread support and the Rust std C adapter |
+| [`rust/`](https://github.com/HypeR-Proj/rust-lib/blob/main/README.md) | Raw and safe Native bindings, Rust entry, and the kernel filesystem-service wire protocol |
 | `rust-std/` | Formal-system dylib delivery of the SDK's Rust std port; bootstrap still links std statically |
 
 ABI definitions remain in `sdk/abi/`. Compiler drivers and assembly of an

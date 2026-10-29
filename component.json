@@ -94,17 +94,108 @@
     "tests/build/rpi5-bringup.py": "tests/build/rpi5-bringup.py",
     "tests/build/service-manifest.py": "tests/build/service-manifest.py",
     "tests/build/system-config.py": "tests/build/system-config.py",
-    "tools/newc-pack.c": "tools/newc-pack.c"
+    "tools/newc-pack.c": "tools/newc-pack.c",
+    "app/.cargo/config.toml": "app/.cargo/config.toml"
   },
   "SPDX-FileCopyrightText": "2026 roolrz",
   "SPDX-License-Identifier": "Apache-2.0",
-  "mounts": {},
+  "mounts": {
+    "scripts": "scripts",
+    "mk": "mk",
+    "tests/build": "tests/build"
+  },
   "packages": [],
   "tests": [
     [
       "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "{component}/tests",
+      "-p",
+      "test_project.py"
+    ],
+    [
+      "python3",
       "-B",
-      "tests/ci/check-workspace.py"
+      "tests/build/app-deployment.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/board-image-update.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/board-image.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/boot-profiles.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/developer-entrypoints.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/fetch-rpi5-boot.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/guest-rootfs.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/incremental.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/io-vm-package.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/io-vm-run.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/kernel-version.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/menuconfig.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/native-libraries.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/rpi5-bringup.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/service-manifest.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/system-config.py"
     ]
-  ]
+  ],
+  "cargo_context": {}
 }

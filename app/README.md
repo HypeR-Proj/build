@@ -7,15 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 
 Build and deployment options are declared in this directory's [Kconfig](Kconfig).
 Use the repository's `make menuconfig` and `.config` to select programs; see
-[product configuration](../docs/usage/deployment/configuration.md) for dependencies and defconfig workflows.
+[product configuration](https://github.com/HypeR-Proj/HypeR/blob/main/docs/usage/deployment/configuration.md) for dependencies and defconfig workflows.
 
 This directory contains foreground Native tools. Background programs live in
 [`svc/`](../svc/README.md), with independent service policy and logging.
 The RAM-resident boot and recovery programs live in
-[`bootstrap/stage1`](../bootstrap/stage1/README.md), an independent static-link
+[`bootstrap/stage1`](https://github.com/HypeR-Proj/bootstrap/blob/main/README.md), an independent static-link
 workspace with its own lockfile and executable-owned implementations. The workspace here owns
 formal applications and reusable libraries in the top-level `lib/`.
-Native acceptance executables live under [`tests/app`](../tests/app/README.md);
+Native acceptance executables live under [`tests/app`](https://github.com/HypeR-Proj/ci/blob/main/tests/app/README.md);
 they share this workspace's dependency lock but are built or packaged only by
 their selected test targets or development profile.
 Target builds consume the assembled
@@ -59,12 +59,12 @@ field and escape rejection); its bounded collections now use Vec storage.
 The kernel starts the archive's `/init` through the bootstrap loader. Stage-1
 prepares an independent system root and transfers supervision to the formal
 component manager. The detailed ownership rules live in
-[boot architecture](../docs/architecture/boot-layout.md) and the
-[handoff contract](../docs/design/boot/bootstrap-handoff.md).
+[boot architecture](https://github.com/HypeR-Proj/HypeR/blob/main/docs/architecture/boot-layout.md) and the
+[handoff contract](https://github.com/HypeR-Proj/HypeR/blob/main/docs/design/boot/bootstrap-handoff.md).
 
-Formal commands use [terminal streams and scoped authority](../docs/usage/applications/execution.md).
-Background providers follow the [component contract](../docs/design/services/components.md);
-VM lifecycle and console operations follow the [vmm manual](../docs/usage/applications/vmm.md).
+Formal commands use [terminal streams and scoped authority](https://github.com/HypeR-Proj/HypeR/blob/main/docs/usage/applications/execution.md).
+Background providers follow the [component contract](https://github.com/HypeR-Proj/HypeR/blob/main/docs/design/services/components.md);
+VM lifecycle and console operations follow the [vmm manual](https://github.com/HypeR-Proj/HypeR/blob/main/docs/usage/applications/vmm.md).
 These manuals own runtime behavior; this README describes how the application
 workspace is built and maintained.
 
@@ -167,7 +167,7 @@ SDK, compiler, profile and features. Host tests use the rlib variants.
 These executables consume startup capabilities and service channels supplied by
 their supervisor. Their installed paths identify service roles; they are not
 standalone shell commands. The selected deployment profile determines which
-services are present. See [init configuration](../bootstrap/stage1/init/config/README.md) for the
+services are present. See [init configuration](https://github.com/HypeR-Proj/bootstrap/blob/main/init/config/README.md) for the
 manifest and board configuration inputs.
 
 Bootstrap paths below identify initial launch locations. Their independent
@@ -178,30 +178,30 @@ configuration and workers, separately from the live root namespace capability.
 
 | Installed executable | Source | Responsibility |
 | --- | --- | --- |
-| `/init` | [init](../bootstrap/stage1/init) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
-| `/svc/console-raw` in each environment | [bootstrap](../bootstrap/stage1/console-raw), [formal](../svc/console-raw/) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
-| `/svc/session-manager` | [session-manager](../svc/session-manager/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
-| `/svc/terminal-service` | [terminal-service](../svc/terminal-service/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
-| `/svc/io-runtime` in each environment | [bootstrap](../bootstrap/stage1/io-runtime), [formal](../svc/io-runtime/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
-| `/svc/vm-manager` | [vm-manager](../svc/vm-manager/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
-| `/svc/fs-backend` in each environment | [bootstrap](../bootstrap/stage1/fs-backend), [formal](../svc/fs-backend/) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
-| `/svc/fs-fat` in each environment | [bootstrap](../bootstrap/stage1/fs-fat), [formal](../svc/fs-fat/) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by the manager in its own environment; the formal worker takes over existing FAT mounts before bootstrap retirement. |
-| `/svc/fs-erofs` in each environment | [bootstrap](../bootstrap/stage1/fs-erofs), [formal](../svc/fs-erofs/) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend; the formal worker takes over the mounted system volume. |
-| `/svc/component-manager` | [component-manager](../svc/component-manager/) | Act as formal root, validate instance trees and capability routes, activate providers on demand and own component lifetimes. |
-| `/svc/system-startup` | [system-startup](../svc/system-startup/) | Perform finite bootstrap adoption, formal mounts and initial VM provisioning. Submit prepared processes to the manager and arrange retirement, then exit. |
-| `/svc/journal` | [journal](../svc/journal/) | Capture attributed service streams, retain bounded volatile records, mirror serial output and answer queries. |
-| `/svc/bootstrap-retire` | [bootstrap-retire](../svc/bootstrap-retire/) | Stop and join transferred predecessors, drain console output and normally unmount the boot archive. |
-| `/svc/vm-runtime` | [vm-runtime](../svc/vm-runtime/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
+| `/init` | [init](https://github.com/HypeR-Proj/bootstrap/tree/main/init) | Validate the service manifest, construct the service graph, delegate capabilities and supervise services. Start console services before waiting for storage; keep Native services available if storage or fleet configuration is unavailable. |
+| `/svc/console-raw` in each environment | [bootstrap](https://github.com/HypeR-Proj/bootstrap/tree/main/console-raw), [formal](https://github.com/HypeR-Proj/console-raw/tree/main/) | Own physical Console byte transport and independent bounded log ingress. Preserve raw bytes; mirror service logs during and after bootstrap. |
+| `/svc/session-manager` | [session-manager](https://github.com/HypeR-Proj/session-manager/tree/main/) | Supervise the formal terminal and its shell/session group; revoke old transport bindings and restart a fresh session after failure. Does not relay ordinary I/O. |
+| `/svc/terminal-service` | [terminal-service](https://github.com/HypeR-Proj/terminal-service/tree/main/) | Serve one terminal endpoint: canonical/raw input, editing and echo, conversions, software flow control, scoped foreground leases, size/events and ordered output. |
+| `/svc/io-runtime` in each environment | [bootstrap](https://github.com/HypeR-Proj/bootstrap/tree/main/io-runtime), [formal](https://github.com/HypeR-Proj/io-runtime/tree/main/) | Load the board-configured Linux I/O VM, manage its assigned physical devices and backend connections, discover GPT partitions, bind authorized block ranges and transfer Native block capabilities to the filesystem manager. Forward aggregate mount readiness. Broker guest block/network connections and retire their backend resources. Included in I/O deployments. |
+| `/svc/vm-manager` | [vm-manager](https://github.com/HypeR-Proj/vm-manager/tree/main/) | Own named VM definitions and lifecycle policy, handle `vmm` requests, launch and supervise per-VM runtimes, and expose the I/O VM's read-only observation entry. |
+| `/svc/fs-backend` in each environment | [bootstrap](https://github.com/HypeR-Proj/bootstrap/tree/main/fs-backend), [formal](https://github.com/HypeR-Proj/fs-backend/tree/main/) | Apply fstab, identify the filesystem on each authorized GPT partition, load its independent worker, publish mounts and serve mount/umount requests. Retain lifecycle ownership outside the file I/O path. |
+| `/svc/fs-fat` in each environment | [bootstrap](https://github.com/HypeR-Proj/bootstrap/tree/main/fs-fat), [formal](https://github.com/HypeR-Proj/fs-fat/tree/main/) | Validate and serve FAT32 media. Uses the common filesystem service library for shared-buffer RPC and parent failure; the kernel retains VFS, file locks and caching. Started on demand by the manager in its own environment; the formal worker takes over existing FAT mounts before bootstrap retirement. |
+| `/svc/fs-erofs` in each environment | [bootstrap](https://github.com/HypeR-Proj/bootstrap/tree/main/fs-erofs), [formal](https://github.com/HypeR-Proj/fs-erofs/tree/main/) | Serve immutable core EROFS media, including directory and symlink metadata. Validate checksums and bounds, and reject unsupported format extensions. Started on demand by fs-backend; the formal worker takes over the mounted system volume. |
+| `/svc/component-manager` | [component-manager](https://github.com/HypeR-Proj/component-manager/tree/main/) | Act as formal root, validate instance trees and capability routes, activate providers on demand and own component lifetimes. |
+| `/svc/system-startup` | [system-startup](https://github.com/HypeR-Proj/system-startup/tree/main/) | Perform finite bootstrap adoption, formal mounts and initial VM provisioning. Submit prepared processes to the manager and arrange retirement, then exit. |
+| `/svc/journal` | [journal](https://github.com/HypeR-Proj/journald/tree/main/) | Capture attributed service streams, retain bounded volatile records, mirror serial output and answer queries. |
+| `/svc/bootstrap-retire` | [bootstrap-retire](https://github.com/HypeR-Proj/bootstrap-retire/tree/main/) | Stop and join transferred predecessors, drain console output and normally unmount the boot archive. |
+| `/svc/vm-runtime` | [vm-runtime](https://github.com/HypeR-Proj/vm-runtime/tree/main/) | Construct and run one managed guest: load its image, configure vCPUs and virtual devices, connect I/O backends, serve its console and control requests, and retire resources on termination. Started by the VM manager for each VM start. |
 
 The resident Linux I/O VM runs physical device drivers. `io-runtime` is the
 Native service that manages that VM; `vm-runtime` manages an individual business
-guest. [vm-smoke](../tests/app/vm-smoke/README.md) is a separate privileged acceptance fixture,
+guest. [vm-smoke](https://github.com/HypeR-Proj/ci/blob/main/tests/app/vm-smoke/README.md) is a separate privileged acceptance fixture,
 not an interactive command or production service.
 
 ## Command manuals
 
 User-facing syntax and operational guidance live in the
-[application manuals](../docs/usage/applications/README.md). This README covers the source
+[application manuals](https://github.com/HypeR-Proj/HypeR/blob/main/docs/usage/applications/README.md). This README covers the source
 workspace, build process and development interfaces.
 
 
@@ -233,7 +233,7 @@ retaining Native APIs for bootstrap and delegation.
 
 ## Planned work
 
-The shared [roadmap](../docs/project/roadmap.md) owns project commitments. Existing
+The shared [roadmap](https://github.com/HypeR-Proj/HypeR/blob/main/docs/project/roadmap.md) owns project commitments. Existing
 Native application functionality remains supported while I/O backend and
 hardware qualification work continues. Multi-UART transport discovery and
 wiring are not yet implemented; the current deployment has one physical console.
@@ -241,4 +241,4 @@ wiring are not yet implemented; the current deployment has one physical console.
 ## License
 
 Licensed under the Apache License, Version 2.0. See
-[the project license](../LICENSE).
+[the project license](https://github.com/HypeR-Proj/HypeR/blob/main/LICENSE).

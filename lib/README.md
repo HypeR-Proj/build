@@ -12,7 +12,7 @@ support live in [`stdlib/`](../stdlib/README.md). ABI definitions and SDK constr
 
 | Source | Responsibility | Build owner |
 | --- | --- | --- |
-| [`dynamic-loader/`](dynamic-loader/README.md) | Formal static/dynamic executable loading, relocation and capability-relative runtime loading | SDK assembly through CMake |
+| [`dynamic-loader/`](https://github.com/HypeR-Proj/dynamic-loader/blob/main/README.md) | Formal static/dynamic executable loading, relocation and capability-relative runtime loading | SDK assembly through CMake |
 | `service/`, `block/`, `vm-image/` | Service protocols, GPT parsing and guest-image handling | Formal Cargo workspace |
 
 The application libraries below are explicit members of `app/Cargo.toml`, with
@@ -21,7 +21,7 @@ depend on kernel source or source-tree runtime paths. Application-specific code
 remains with its executable.
 
 The minimal static bootstrap loader belongs to
-[`bootstrap/stage1/userspace-loader`](../bootstrap/stage1/userspace-loader/README.md).
+[`bootstrap/stage1/userspace-loader`](https://github.com/HypeR-Proj/bootstrap/blob/main/userspace-loader/README.md).
 The kernel starts `/init` through that loader; later process builders choose
 the bootstrap or formal loader explicitly through an executable capability.
 

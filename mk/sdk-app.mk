@@ -36,7 +36,7 @@ sdk:
 		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
 		OUTPUT="$(SDK_OUTPUT)"
 
-sdk-check: sdk
+sdk-check: toolchain-test
 	$(CARGO) fmt --manifest-path "$(SDK_ABI_SOURCE)/Cargo.toml" -- --check
 	cd "$(SDK_ABI_SOURCE)" && \
 		CARGO_TARGET_DIR="$(SDK_ABI_TARGET)" $(CARGO) run \
@@ -56,6 +56,9 @@ sdk-check: sdk
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) clippy \
 		--manifest-path "tools/fit-pack/Cargo.toml" \
 		--target "$(HOST_TARGET)" --all-targets -- -D warnings
+
+.PHONY: toolchain-test
+toolchain-test: sdk
 	HYPER_SDK_VERSION="$(SDK_VERSION)" \
 		HYPER_SDK_SOURCE_REVISION="$(SDK_SOURCE_REVISION)" \
 		CLANG="$(CLANG)" HOST_CC="$(HOST_CC)" \
@@ -85,6 +88,12 @@ sdk-test:
 		-DHYPER_ABI_INCLUDE_DIR="$(SDK_ABI_SOURCE)/include"
 	cmake --build "$(SDK_LIB_TEST_OUTPUT)"
 	ctest --test-dir "$(SDK_LIB_TEST_OUTPUT)" --output-on-failure
+
+.PHONY: rust-std-test
+rust-std-test: sdk
+	HOST_CC="$(HOST_CC)" sh sdk/toolchain/scripts/check-std-sync.sh
+	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" sh sdk/toolchain/scripts/check-rust-std.sh \
+		"$(SDK_OUTPUT)" "$(CURDIR)/target/module-rust-std" sdk/toolchain/tests/std-smoke/Cargo.toml
 
 app-fetch: sdk
 	python3 -B tests/ci/check-workspace.py
@@ -205,6 +214,15 @@ endef
 
 app-test:
 	$(call native-host-tests,$(SDK_ABI_SOURCE),$(SDK_RUST_SOURCE))
+
+.PHONY: component-check
+component-check: sdk
+	@test -n "$(APP_TEST_PACKAGE)" || { echo "APP_TEST_PACKAGE is required" >&2; exit 2; }
+	CARGO_TARGET_DIR="$(CURDIR)/target/component-check" \
+		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
+		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" HYPER_RUST_STD=1 \
+		"$(SDK_OUTPUT)/bin/hyper-cargo" check --manifest-path "$(APP_TEST_WORKSPACE)/Cargo.toml" \
+		--locked -p "$(APP_TEST_PACKAGE)"
 
 app-sdk-test: app-fetch
 	$(call native-host-tests,$(SDK_OUTPUT)/share/hyper/abi,$(SDK_OUTPUT)/share/hyper/rust,--offline)
