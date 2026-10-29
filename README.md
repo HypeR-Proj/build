@@ -3,24 +3,28 @@ SPDX-FileCopyrightText: 2026 roolrz
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Build integration
+# HypeR build tools
 
-`project.py` prepares a disposable system build directory from a repo-managed source workspace.
-It uses each repository's `component.json` ownership and Cargo context declarations; there is no
-fallback to the original monorepo. Build inputs and their commits are recorded in `source-inventory.json`.
+This repository provides Make rules, build scripts and development tools.
+The [manifest](https://github.com/HypeR-Proj/manifest) checks it out at the
+workspace root and places each source repository at its declared path.
+Product configuration and workspace composition belong to the manifest.
 
-From the workspace root:
+From a synchronized workspace:
 
 ```sh
-python3 build/project.py prepare
-python3 build/project.py test kernel
-python3 build/project.py make native-initramfs ARCH=aarch64
+make native-initramfs ARCH=aarch64
+python3 project.py test kernel
+python3 project.py prepare
 ```
 
-The default output is `out/system`. `--output PATH` selects another owned output directory.
-Existing directories without the build marker are refused. Re-preparation preserves unchanged
-file timestamps and removes only previously generated files.
+`prepare` records source commits and file hashes in `source-inventory.json`.
+It does not copy sources or change Cargo manifests. Edit files in their checked-out
+repositories and build them directly. `project.py archive OUTPUT.tar.xz` collects
+all tracked project sources and manifest links for redistribution.
 
-Components own their test command lists. `{component}` expands to the source checkout and
-`{system}` to the generated build directory. Module tests run with dependencies present but do
-not implicitly invoke system acceptance. Use `HypeR/hyper` for the common developer entry point.
+Each component owns its test commands in `component.json`; `{component}` is its
+checkout and `{system}` is the workspace root. System acceptance is manually
+started in the [CI repository](https://github.com/HypeR-Proj/ci).
+
+See [HypeR](https://github.com/HypeR-Proj/HypeR) for setup and documentation.

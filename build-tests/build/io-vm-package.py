@@ -75,6 +75,18 @@ class ImportTests(unittest.TestCase):
         self.assertEqual({p.name for p in result.iterdir()},
                          {"Image", "initramfs.cpio.gz", "oci-manifest.json"})
 
+    def test_corresponding_sources_share_runtime_digest_and_recheck_cached_bytes(self):
+        with patch.object(FETCH.subprocess, "run", side_effect=self.registry):
+            directory = self.fetch()
+            materials = FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+            self.assertEqual((materials / "sources.tar.xz").read_bytes(), self.blobs["sources.tar.xz"])
+            calls = len(self.calls)
+            FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+            self.assertEqual(len(self.calls), calls)
+            (materials / "sources.tar.xz").write_bytes(b"corrupted")
+            with self.assertRaises(ValueError):
+                FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+
     def test_same_common_digest_imports_for_both_boards(self):
         self.manifest['annotations']['org.hyper.supported-platforms'] = '["qemu","rpi5"]'
         self.pin()

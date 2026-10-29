@@ -182,6 +182,30 @@ def fetch(reference, platform, output, oras=""):
     return generation.resolve()
 
 
+def fetch_materials(reference, platform, directory, oras=""):
+    """Fetch corresponding sources from the same verified immutable manifest."""
+    match = REFERENCE.fullmatch(reference)
+    if match is None:
+        raise ValueError("materials require an immutable package reference")
+    repository, digest = match.groups()
+    layers = validate_manifest(directory / "oci-manifest.json", digest, platform)
+    materials = directory / "materials"
+    materials.mkdir(exist_ok=True)
+    for name in ("kernel.config", "sources.tar.xz"):
+        destination = materials / name
+        if not destination.exists():
+            oras = oras or ensure_oras()
+            with tempfile.TemporaryDirectory(prefix=".materials-", dir=materials) as temporary:
+                staged = Path(temporary) / name
+                subprocess.run([oras, "blob", "fetch", "--output", str(staged),
+                                repository + "@" + layers[name]["digest"]],
+                               check=True, stdout=subprocess.DEVNULL)
+                checked_file(staged, layers[name])
+                staged.replace(destination)
+        checked_file(destination, layers[name])
+    return materials
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", help="explicit immutable package; default: latest qualified main release")
@@ -189,6 +213,7 @@ def main():
     parser.add_argument("--output", type=Path,
                         default=Path(__file__).resolve().parents[1] / "target/io-vm/packages")
     parser.add_argument("--oras", default="", help="ORAS executable; default: PATH or verified local download")
+    parser.add_argument("--materials", action="store_true", help="include corresponding source assets")
     args = parser.parse_args()
     try:
         oras = args.oras
@@ -196,7 +221,10 @@ def main():
         if not reference:
             oras = oras or ensure_oras()
             reference = qualified_reference(args.platform, oras)
-        print(fetch(reference, args.platform, args.output, oras))
+        directory = fetch(reference, args.platform, args.output, oras)
+        if args.materials:
+            fetch_materials(reference, args.platform, directory, oras)
+        print(directory)
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             subprocess.CalledProcessError, tarfile.TarError, zlib.error) as error:
         parser.exit(1, f"fetch-io-vm: {error}\n")

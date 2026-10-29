@@ -1,9 +1,22 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
-
-target/
-out/
-__pycache__/
-*.pyc
-.config
-.config.old
+# The build project occupies the workspace root. All source projects and
+# manifest links belong to their own repositories, never to this index.
+/*
+!/.github/
+!/.gitignore
+!/LICENSE
+!/README.md
+!/SECURITY.md
+!/CONTRIBUTING.md
+!/component.json
+!/Makefile
+!/project.py
+!/toml_output.py
+!/scripts/
+!/mk/
+!/build-tests/
+!/tools/
+/tools/*
+!/tools/newc-pack.c
+**/__pycache__/

@@ -46,12 +46,11 @@ def clean(path):
 
 
 def public_files():
-    output = subprocess.check_output(
-        ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT)
+    output = subprocess.check_output([sys.executable, str(ROOT / 'project.py'), 'files'], cwd=ROOT)
     result = []
-    for name in sorted(set(output.decode().split('\0')) - {''}):
+    for name in sorted(set(output.decode().splitlines()) - {''}):
         path = ROOT / name
-        if (name.startswith(('.agent/', '.agents/', '.codex/'))
+        if (name.startswith(('.agent/', '.agents/', '.codex/', '.workspace/', '.project/', 'io-vm/', 'pi5-images/'))
                 or path.is_symlink() or not path.is_file()):
             continue
         result.append(name)
