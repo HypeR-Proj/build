@@ -55,7 +55,6 @@
     "scripts/host_e2fsprogs.py": "scripts/host_e2fsprogs.py",
     "scripts/install-if-changed.sh": "scripts/install-if-changed.sh",
     "scripts/io-vm-images.py": "scripts/io-vm-images.py",
-    "scripts/io-vm.lock.json": "scripts/io-vm.lock.json",
     "scripts/kconfig.py": "scripts/kconfig.py",
     "scripts/menuconfig.py": "scripts/menuconfig.py",
     "scripts/native_components.py": "scripts/native_components.py",

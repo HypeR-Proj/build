@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
-"""Import a digest-pinned I/O VM OCI boot package; never build or modify Linux."""
+"""Resolve a qualified I/O VM release, then import and verify its immutable digest."""
 
 import argparse
 import hashlib
@@ -23,7 +23,7 @@ MIB = 1024 * 1024
 LIMITS = {"Image": 32 * MIB, "initramfs.cpio.gz": 8 * MIB,
           "kernel.config": MIB, "sources.tar.xz": 2 * 1024 * MIB}
 REFERENCE = re.compile(r"(ghcr\.io/[a-z0-9][a-z0-9._/-]*)@(sha256:[0-9a-f]{64})")
-DEFAULT_LOCK = Path(__file__).with_name("io-vm.lock.json")
+REGISTRY = "ghcr.io/hyper-proj/io-vm"
 ORAS_VERSION = "1.3.0"
 # Published checksums from oras-project/oras v1.3.0.
 ORAS_SHA256 = {
@@ -74,17 +74,14 @@ def ensure_oras():
     return str(executable)
 
 
-def pinned_reference(platform, lock=DEFAULT_LOCK):
-    metadata = json.loads(lock.read_text())
-    if metadata.get("version") != 1:
-        raise ValueError("unsupported I/O VM lock format")
-    entry = metadata["platforms"].get(platform)
-    if entry is None:
-        raise ValueError(f"no qualified I/O VM package pinned for {platform}")
-    reference = entry["reference"]
-    if not isinstance(reference, str) or REFERENCE.fullmatch(reference) is None:
-        raise ValueError("I/O VM lock requires an immutable GHCR reference")
-    return reference
+def qualified_reference(platform, oras):
+    if platform not in ("qemu", "rpi5"):
+        raise ValueError("unsupported appliance platform")
+    tag = f"{REGISTRY}:main-aarch64-{platform}"
+    digest = subprocess.check_output([oras, "resolve", tag], text=True).strip()
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+        raise ValueError("registry did not return an immutable appliance digest")
+    return REGISTRY + "@" + digest
 
 
 def checked_file(path, descriptor):
@@ -187,15 +184,19 @@ def fetch(reference, platform, output, oras=""):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference", help="override the qualified package in io-vm.lock.json")
+    parser.add_argument("--reference", help="explicit immutable package; default: latest qualified main release")
     parser.add_argument("--platform", required=True, choices=("qemu", "rpi5"))
     parser.add_argument("--output", type=Path,
                         default=Path(__file__).resolve().parents[1] / "target/io-vm/packages")
     parser.add_argument("--oras", default="", help="ORAS executable; default: PATH or verified local download")
     args = parser.parse_args()
     try:
-        print(fetch(args.reference or pinned_reference(args.platform),
-                    args.platform, args.output, args.oras))
+        oras = args.oras
+        reference = args.reference
+        if not reference:
+            oras = oras or ensure_oras()
+            reference = qualified_reference(args.platform, oras)
+        print(fetch(reference, args.platform, args.output, oras))
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             subprocess.CalledProcessError, tarfile.TarError, zlib.error) as error:
         parser.exit(1, f"fetch-io-vm: {error}\n")
