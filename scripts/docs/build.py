@@ -28,6 +28,15 @@ def build(root, output, repository, revision=None):
                    and not any(part.startswith('.') for part in Path(name).parts)
                    and not name.startswith(('legacy/', 'third_party/')))
     pages = [name for name in files if name.endswith('.md')]
+    metadata = root / 'component.json'
+    if metadata.is_file():
+        selected = json.loads(metadata.read_text()).get('documentation', {}).get('pages')
+        if selected is not None:
+            if (not isinstance(selected, list) or any(not isinstance(name, str) for name in selected)
+                    or len(selected) != len(set(selected))
+                    or any(name not in pages for name in selected)):
+                raise ValueError('documentation.pages must select unique tracked Markdown files')
+            pages = selected
     if 'README.md' not in pages:
         raise ValueError('the documentation entry point must be README.md')
     revision = revision or subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
