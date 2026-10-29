@@ -49,6 +49,7 @@ def build(root, output, repository, revision=None):
         'site_name': repository + ' documentation',
         'site_url': f'https://hyper-proj.github.io/{repository}/',
         'repo_url': f'https://github.com/HypeR-Proj/{repository}',
+        'edit_uri': '',  # Pages are staged and README files are renamed.
         'docs_dir': str(source), 'site_dir': str(output / 'site'),
         'use_directory_urls': False, 'strict': True,
         'theme': {'name': 'readthedocs'}, 'plugins': ['search'],
