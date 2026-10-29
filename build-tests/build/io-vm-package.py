@@ -75,6 +75,18 @@ class ImportTests(unittest.TestCase):
         self.assertEqual({p.name for p in result.iterdir()},
                          {"Image", "initramfs.cpio.gz", "oci-manifest.json"})
 
+    def test_corresponding_sources_share_runtime_digest_and_recheck_cached_bytes(self):
+        with patch.object(FETCH.subprocess, "run", side_effect=self.registry):
+            directory = self.fetch()
+            materials = FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+            self.assertEqual((materials / "sources.tar.xz").read_bytes(), self.blobs["sources.tar.xz"])
+            calls = len(self.calls)
+            FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+            self.assertEqual(len(self.calls), calls)
+            (materials / "sources.tar.xz").write_bytes(b"corrupted")
+            with self.assertRaises(ValueError):
+                FETCH.fetch_materials(self.reference, "qemu", directory, "oras")
+
     def test_same_common_digest_imports_for_both_boards(self):
         self.manifest['annotations']['org.hyper.supported-platforms'] = '["qemu","rpi5"]'
         self.pin()
@@ -115,17 +127,23 @@ class ImportTests(unittest.TestCase):
                 FETCH.fetch("ghcr.io/example/io-vm:latest", "qemu", self.output)
             run.assert_not_called()
 
-    def test_lock_selects_only_an_immutable_qualified_platform(self):
-        lock = Path(self.temporary.name) / "lock.json"
-        metadata = {"version": 1, "platforms": {"qemu": {"reference": self.reference}}}
-        lock.write_text(json.dumps(metadata))
-        self.assertEqual(FETCH.pinned_reference("qemu", lock), self.reference)
-        with self.assertRaises(ValueError):
-            FETCH.pinned_reference("rpi5", lock)
-        metadata["platforms"]["qemu"]["reference"] = "ghcr.io/example/io-vm:latest"
-        lock.write_text(json.dumps(metadata))
-        with self.assertRaises(ValueError):
-            FETCH.pinned_reference("qemu", lock)
+    def test_qualified_channel_resolves_once_to_an_immutable_generation(self):
+        for platform in ("qemu", "rpi5"):
+            with self.subTest(platform=platform):
+                with patch.object(FETCH.subprocess, "check_output", return_value="sha256:" + self.digest + "\n") as resolve:
+                    reference = FETCH.qualified_reference(platform, "oras")
+                resolve.assert_called_once_with(
+                    ["oras", "resolve", f"ghcr.io/hyper-proj/io-vm:main-aarch64-{platform}"], text=True)
+                self.assertEqual(reference, FETCH.REGISTRY + "@sha256:" + self.digest)
+        for response in ("latest", "sha256:bad", "sha256:" + self.digest + "\nsha256:" + self.digest):
+            with patch.object(FETCH.subprocess, "check_output", return_value=response):
+                with self.assertRaises(ValueError):
+                    FETCH.qualified_reference("qemu", "oras")
+
+    def test_unavailable_channel_does_not_silently_fall_back(self):
+        with patch.object(FETCH.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "oras")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                FETCH.qualified_reference("qemu", "oras")
 
     def test_failed_download_keeps_previous_generation(self):
         with patch.object(FETCH.subprocess, "run", side_effect=self.registry):

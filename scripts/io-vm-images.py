@@ -62,7 +62,7 @@ def package_payloads(package, platform='qemu', *, require_client_resources=False
         image, initramfs = package / 'Image', package / 'initramfs.cpio.gz'
     if require_client_resources and str(clients_version) != '5':
         raise ValueError('I/O VM package lacks hyper.clients.v5 per-client SCSI/network resources; '
-                         'update the pinned appliance or set IO_VM_PACKAGE to a compatible build')
+                         'select a qualified appliance or set IO_VM_PACKAGE to a compatible build')
     if bounded_read(image, 32 * MIB)[56:60] != b'ARM\x64':
         raise ValueError('not an AArch64 Linux Image')
     decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)

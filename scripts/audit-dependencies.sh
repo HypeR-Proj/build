@@ -7,7 +7,7 @@
 set -eu
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
-git ls-files '*Cargo.lock' | {
+python3 project.py files | grep -E '(^|/)Cargo.lock$' | {
     failed=0
     while IFS= read -r lockfile; do
         echo "Auditing $lockfile"

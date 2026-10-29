@@ -2,10 +2,9 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build the same complete documentation artifact locally and in PR/deploy CI."""
+"""Build one repository's documentation without checking out the system."""
 
 import argparse
-from html import escape
 import json
 import os
 from pathlib import Path
@@ -13,266 +12,66 @@ import shutil
 import subprocess
 import sys
 
+import yaml
+
 from check_links import check_site
-from doxygen import fix_index_anchor
-from navigation import navigation
-from redirects import write_redirects
-from rustdoc import fix_rustdoc_links
-
-ROOT = Path(__file__).resolve().parents[2]
-OUTPUT = ROOT / 'target/documentation'
-TOOLS = ROOT / 'scripts/docs'
-TARGETS = {
-    'aarch64': 'aarch64-unknown-none-softfloat',
-    'riscv64': 'riscv64imac-unknown-none-elf',
-    'x86_64': 'x86_64-unknown-none',
-}
-DOC_FLAGS = ('-D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags '
-             '-D rustdoc::invalid_codeblock_attributes')
 
 
-def run(command, *, cwd=ROOT, env=None):
-    print('+ ' + ' '.join(map(str, command)), flush=True)
-    subprocess.run(command, cwd=cwd, env=os.environ | (env or {}), check=True)
-
-
-def clean(path):
-    # All generated content stays under the dedicated documentation directory.
-    if not path.resolve().is_relative_to(OUTPUT.resolve()) or path == OUTPUT:
-        raise ValueError(f'refusing to remove {path}')
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True)
-
-
-def public_files():
-    output = subprocess.check_output(
-        ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT)
-    result = []
-    for name in sorted(set(output.decode().split('\0')) - {''}):
-        path = ROOT / name
-        if (name.startswith(('.agent/', '.agents/', '.codex/'))
-                or path.is_symlink() or not path.is_file()):
-            continue
-        result.append(name)
-    return result
-
-
-def rust_documentation(api):
-    abi_packages = workspace_packages(ROOT / 'sdk/abi/Cargo.toml')
-    kernel_packages = workspace_packages(ROOT / 'kernel/Cargo.toml') + abi_packages
-    environment = {'RUSTDOCFLAGS': reference_doc_flags(documented_crates(kernel_packages), '..'),
-                   'RUSTC_BOOTSTRAP': '1'}
-    for architecture, target in TARGETS.items():
-        cargo_output = OUTPUT / 'cargo/kernel'
-        clean(cargo_output / target / 'doc')
-        run(['make', '-C', 'kernel', 'doc', f'ARCH={architecture}',
-             f'CONFIG_FILE=configs/qemu_{architecture}_defconfig'],
-            env=environment | {'CARGO_TARGET_DIR': str(cargo_output)})
-        copy_rustdoc(cargo_output / target / 'doc', api / 'kernel' / architecture)
-
-    native_documentation(api)
-
-
-def native_documentation(api):
-    """Keep independently owned, possibly same-name Native crates separate."""
-    abi_packages = workspace_packages(ROOT / 'sdk/abi/Cargo.toml')
-    domains = [('app', 'system', 'dynamic'), ('bootstrap/stage1', 'bootstrap', 'static')]
-    applications = {workspace: [package for package in workspace_packages(ROOT / workspace / 'Cargo.toml')
-                                if not Path(package['manifest_path']).is_relative_to(ROOT / 'tests')]
-                    for workspace, _, _ in domains}
-    sdk_packages = workspace_packages(ROOT / 'stdlib/rust/Cargo.toml') + abi_packages
-    for architecture in ('aarch64', 'riscv64'):
-        sdk = OUTPUT / 'sdk' / architecture
-        run(['make', 'sdk', f'ARCH={architecture}', f'SDK_OUTPUT={sdk}'])
-        for workspace, name, mode in domains:
-            # A formal provider and its bootstrap predecessor may expose the
-            # same crate name. Separate doc/cache trees prevent overwrite and
-            # keep links bound to the owning environment's implementation.
-            selected = applications[workspace] + sdk_packages
-            cargo_output = OUTPUT / 'cargo/native' / architecture / name
-            documentation = cargo_output / f'{architecture}-unknown-hyper/doc'
-            clean(documentation)
-            command = [str(sdk / 'bin/hyper-cargo'), 'doc', '--manifest-path',
-                       f'{workspace}/Cargo.toml', '--no-deps', '--document-private-items', '--locked']
-            environment = {
-                'RUSTC_BOOTSTRAP': '1', 'HYPER_LINK_MODE': mode,
-                'CARGO_TARGET_DIR': str(cargo_output),
-                'RUSTDOCFLAGS': reference_doc_flags(documented_crates(selected), '..'),
-            }
-            packages = [arg for package in selected for arg in ('--package', package['name'])]
-            run(command + packages, env=environment)
-            library_view = api / 'native' / architecture / name
-            copy_rustdoc(documentation, library_view)
-
-            # Default cargo doc skips same-name binaries. Preserve the library
-            # view before generating executable pages with links back to it.
-            programs = native_programs(applications[workspace])
-            clean(documentation)
-            run(command + ['--workspace']
-                + [arg for program in programs for arg in ('--bin', program)],
-                env=environment | {'RUSTDOCFLAGS': program_doc_flags(library_view)})
-            for program in programs:
-                if not (documentation / program.replace('-', '_') / 'index.html').is_file():
-                    raise ValueError(f'missing executable documentation: {architecture}/{name}/{program}')
-            copy_rustdoc(documentation, library_view / 'programs',
-                         source_roots=(library_view / 'src',))
-
-
-def workspace_packages(manifest):
-    metadata = json.loads(subprocess.check_output(
-        ['cargo', 'metadata', '--no-deps', '--offline', '--format-version', '1',
-         '--manifest-path', str(manifest)], cwd=ROOT))
-    return [package for package in metadata['packages']
-            if package['id'] in metadata['workspace_members']]
-
-
-def native_programs(packages):
-    return sorted(target['name'] for package in packages
-                  for target in package['targets']
-                  if 'bin' in target['kind'] and target['doc']
-                  and not target.get('required-features')
-                  and Path(target['src_path']).is_relative_to(
-                      Path(package['manifest_path']).parent / 'src'))
-
-
-def documented_crates(packages):
-    return sorted({target['name'].replace('-', '_') for package in packages
-                   for target in package['targets']
-                   if target['doc'] and not target.get('required-features')
-                   and any(kind in ('lib', 'dylib', 'cdylib', 'bin', 'proc-macro')
-                           for kind in target['kind'])})
-
-
-def reference_doc_flags(crates, root_url):
-    # --no-deps does not guarantee a selected dependency's HTML already exists
-    # when its consumer is documented. Explicit roots make links order-independent.
-    flags = [DOC_FLAGS, '-Z unstable-options', '--extern-html-root-takes-precedence']
-    flags.extend(f'--extern-html-root-url {crate}={root_url}' for crate in crates)
-    return ' '.join(flags)
-
-
-def program_doc_flags(library_view):
-    crates = (crate.name for crate in sorted(library_view.iterdir())
-              if (crate / 'index.html').is_file())
-    return reference_doc_flags(crates, '../..')
-
-
-def copy_rustdoc(source, destination, *, source_roots=()):
-    shutil.copytree(source, destination)
-    for page in destination.rglob('*.html'):
-        original = page.read_text()
-        updated = fix_rustdoc_links(original, page, destination, source_roots)
-        if updated != original:
-            page.write_text(updated)
-    # Cargo doc does not create a workspace landing page by default, but the
-    # generated help/settings pages link back to one.
-    crates = sorted(path.name for path in destination.iterdir()
-                    if (path / 'index.html').is_file())
-    links = ''.join(f'<li><a href="{escape(crate)}/index.html">{escape(crate)}</a></li>'
-                    for crate in crates)
-    home = Path(os.path.relpath(OUTPUT / 'api/index.html', destination)).as_posix()
-    (destination / 'index.html').write_text(
-        '<!doctype html><html lang="en"><meta charset="utf-8">'
-        '<title>Rust API reference</title><h1>Rust API reference</h1>'
-        f'<p><a href="{escape(home)}">All API references</a></p><ul>{links}</ul></html>')
-
-
-def api_documentation(revision):
-    api = OUTPUT / 'api'
-    clean(api)
-    rust_documentation(api)
-    run(['doxygen', str(TOOLS / 'Doxyfile')], env={
-        'HYPER_DOC_REVISION': revision,
-        'HYPER_DOC_C_OUTPUT': str(api / 'c'),
-    })
-    for page in (api / 'c').glob('globals*.html'):
-        original = page.read_text()
-        updated = fix_index_anchor(original)
-        if updated != original:
-            page.write_text(updated)
-    lines = [
-        '# API reference', '',
-        'These pages are generated from the existing standard documentation comments.',
-        'Rustdoc also lists item signatures and source locations, including private items.',
-        'Undocumented functions receive no generated explanation. C entries require',
-        'Doxygen comments; ordinary `/* ... */` comments are not converted.', '',
-        'Each Rust view uses the named architecture and its normal build configuration.',
-        'Only HypeR-owned crates are documented. Native views include applications,',
-        'the installed SDK and ABI, built against the HypeR target and standard library.',
-        'Third-party crates, the standard library and test-only features are excluded',
-        'from the generated references.', '',
-        'Bootstrap and formal Native references have independent output, including',
-        'when their crates share a name. Executable references are separate from',
-        'same-name libraries; links stay within their architecture and environment.', '',
-        f'Source revision: `{revision}`.', '',
-    ]
-    views = [(f'Kernel — {arch}', f'kernel/{arch}') for arch in TARGETS]
-    views += [(f'Native {environment} — {arch}', f'native/{arch}/{environment}')
-              for arch in ('aarch64', 'riscv64') for environment in ('system', 'bootstrap')]
-    for title, relative in views:
-        lines.extend([f'## {title}', ''])
-        for crate in sorted((api / relative).iterdir()):
-            if crate.name != 'programs' and (crate / 'index.html').is_file():
-                lines.append(f'- [{crate.name}]({relative}/{crate.name}/index.html)')
-        lines.append('')
-        programs = api / relative / 'programs'
-        if programs.is_dir():
-            lines.extend(['### Executables', ''])
-            for crate in sorted(programs.iterdir()):
-                if (crate / 'index.html').is_file():
-                    lines.append(f'- [{crate.name}]({relative}/programs/{crate.name}/index.html)')
-            lines.append('')
-    lines.extend(['## C SDK', '', '- [Documented C interfaces and source](c/index.html)', ''])
-    (api / 'index.md').write_text('\n'.join(lines))
-
-
-def prepare_site(revision):
-    source = OUTPUT / 'source'
-    clean(source)
-    api = OUTPUT / 'api'
-    if not (api / 'index.md').is_file():
-        raise ValueError('API output is missing; run the complete build first')
-    shutil.copytree(api, source / 'api')
-    files = public_files()
-    pages = []
-    for name in files:
-        path = Path(name)
-        if path.suffix.lower() not in ('.md', '.png', '.svg', '.jpg', '.jpeg', '.gif'):
-            continue
-        # GitHub templates are repository metadata, not published guides.
-        if name.startswith(('.', 'third_party/')):
-            continue
-        destination = source / path
+def build(root, output, repository, revision=None):
+    root, output = root.resolve(), output.resolve()
+    if output == root or root.is_relative_to(output):
+        raise ValueError('documentation output must not contain the repository')
+    if output.exists():
+        raise ValueError(f'output already exists: {output}')
+    tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
+    files = sorted(name for name in tracked if name and (root / name).is_file()
+                   and not any(part.startswith('.') for part in Path(name).parts)
+                   and not name.startswith(('legacy/', 'third_party/')))
+    pages = [name for name in files if name.endswith('.md')]
+    if 'README.md' not in pages:
+        raise ValueError('the documentation entry point must be README.md')
+    revision = revision or subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
+    source = output / 'source'
+    source.mkdir(parents=True)
+    mapping = {name: ('index.md' if name == 'README.md' else name) for name in pages}
+    assets = [name for name in files if Path(name).suffix.lower() in ('.png', '.svg', '.jpg', '.jpeg', '.gif', '.webp')]
+    for name in pages + assets:
+        destination = source / mapping.get(name, name)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / path, destination)
-        if path.suffix == '.md':
-            pages.append(name)
-    assets = source / 'assets'
-    assets.mkdir()
-    shutil.copyfile(TOOLS / 'mermaid.js', assets / 'mermaid.js')
-    shutil.copyfile(TOOLS / 'redirect.js', assets / 'redirect.js')
-    nav = navigation(ROOT, pages)
-    (OUTPUT / 'manifest.json').write_text(json.dumps({
-        'revision': revision, 'sources': files, 'nav': nav,
-    }, indent=2) + '\n')
+        shutil.copyfile(root / name, destination)
+    tools = Path(__file__).resolve().parent
+    (source / '_docs_assets').mkdir()
+    shutil.copyfile(tools / 'mermaid.js', source / '_docs_assets/mermaid.js')
+    settings = {'repository': repository, 'revision': revision, 'files': files,
+                'pages': mapping, 'assets': assets}
+    (output / 'sources.json').write_text(json.dumps(settings))
+    config = {
+        'site_name': repository + ' documentation',
+        'site_url': f'https://hyper-proj.github.io/{repository}/',
+        'repo_url': f'https://github.com/HypeR-Proj/{repository}',
+        'docs_dir': str(source), 'site_dir': str(output / 'site'),
+        'use_directory_urls': False, 'strict': True,
+        'theme': {'name': 'readthedocs'}, 'plugins': ['search'],
+        'hooks': [str(tools / 'repository_site.py')],
+        'markdown_extensions': ['tables', 'fenced_code', 'toc', 'pymdownx.tasklist'],
+        'extra_javascript': ['https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js', '_docs_assets/mermaid.js'],
+        'validation': {'links': {'not_found': 'warn', 'anchors': 'warn', 'unrecognized_links': 'warn'}},
+        'extra': {'source_inventory': str(output / 'sources.json')},
+    }
+    path = output / 'mkdocs.yml'
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
+    subprocess.run([sys.executable, '-m', 'mkdocs', 'build', '--strict', '-f', str(path)], check=True)
+    check_site(output / 'site', base_path=f'/{repository}/')
+    return output / 'site'
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--reuse-api', action='store_true',
-                        help='local Markdown preview only: reuse an earlier complete API build')
-    options = parser.parse_args()
-    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    if not options.reuse_api:
-        api_documentation(revision)
-    prepare_site(revision)
-    run([sys.executable, '-m', 'mkdocs', 'build', '--strict', '-f', str(TOOLS / 'mkdocs.yml')])
-    write_redirects(OUTPUT / 'site', TOOLS / 'redirects.json')
-    # Rustdoc checks source-level intra-doc links. Validate generated link
-    # targets too, allowing its dynamic anchors and optional trait scripts.
-    check_site(OUTPUT / 'site', rustdoc_roots=('api/kernel', 'api/native'))
-    print(f'Documentation artifact: {OUTPUT / "site"}')
+    parser.add_argument('--root', type=Path, default=Path.cwd())
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--repository', required=True)
+    args = parser.parse_args()
+    print(build(args.root, args.output, args.repository))
 
 
 if __name__ == '__main__':
