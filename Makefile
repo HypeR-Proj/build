@@ -28,7 +28,8 @@ SDK_RUST_SOURCE := $(CURDIR)/stdlib/rust
 SDK_TOOLCHAIN_SOURCE := $(CURDIR)/sdk/toolchain
 SDK_OUTPUT ?= $(CURDIR)/target/sdk/$(NATIVE_ARCH)
 SDK_VERSION ?= source
-SDK_SOURCE_REVISION ?= $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+# SDK build-tool revision; installed component contents have separate input hashes.
+SDK_SOURCE_REVISION ?= $(shell git -C sdk/toolchain describe --always --dirty 2>/dev/null || echo unknown)
 SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
 SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/stdlib/hyper-tests
 APP_FEATURES ?=
