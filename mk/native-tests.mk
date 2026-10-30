@@ -165,7 +165,7 @@ test-vm-smoke: image app-fetch $(NEWC_PACK)
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)"
+		0755 $(NATIVE_LIBRARY_DIRECTORY)/libsystem.so "$(NATIVE_RUNTIME_LIBRARY)"
 	$(NATIVE_QEMU_ENV) python3 tests/qemu/verify-vm-smoke.py \
 		"$(QEMU)" "$(KERNEL_IMAGE)" "$(APP_OUTPUT)/vm-smoke.cpio" \
 		"$(APP_OUTPUT)/vm-smoke-$(QEMU_CPUS).log"
@@ -188,7 +188,7 @@ test-filesystem-failure: image app-fetch $(NEWC_PACK)
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)"
+		0755 $(NATIVE_LIBRARY_DIRECTORY)/libsystem.so "$(NATIVE_RUNTIME_LIBRARY)"
 	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-filesystem-failure.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
 		--initramfs "$(APP_OUTPUT)/filesystem-failure.cpio" \
@@ -220,7 +220,7 @@ test-io-vm: image app-fetch fit-pack $(NEWC_PACK)
 		symlink lib lib64 \
 		0755 lib64/ld-hyper-$(NATIVE_ARCH).so "$(NATIVE_LOADER)" \
 		0755 lib64/userspace-loader-hyper-$(NATIVE_ARCH) "$(NATIVE_USERSPACE_LOADER)" \
-		0755 $(NATIVE_LIBRARY_DIRECTORY)/libhyper.so "$(NATIVE_RUNTIME_LIBRARY)" \
+		0755 $(NATIVE_LIBRARY_DIRECTORY)/libsystem.so "$(NATIVE_RUNTIME_LIBRARY)" \
 		0644 vm/io.itb "$(APP_OUTPUT)/io-vm/io.itb" \
 		0644 etc/hyper/io-vms.json "$(APP_OUTPUT)/io-vm/io-vms.json" \
 		0644 vm/business.itb "$(APP_OUTPUT)/io-vm/business.itb"
