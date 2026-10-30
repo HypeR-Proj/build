@@ -79,7 +79,8 @@ The kernel's early boot log includes its crate version, Git revision and UTC
 build time, for example
 `HypeR version 0.1.0-0123456789ab-dirty (built 2026-10-06T00:00:00Z)`.
 Uncommitted changes and untracked source files add the
-`-dirty` suffix; a source archive without Git metadata reports `unknown`.
+`-dirty` suffix; an exported source archive retains that revision in its source inventory.
+Archives without either Git metadata or an inventory report `unknown`.
 Incremental `make` builds refresh the identity when source state changes and
 retain the timestamp when the kernel is not recompiled. `SOURCE_DATE_EPOCH`
 can supply a fixed Unix timestamp for reproducible builds. The I/O VM prints
@@ -87,11 +88,11 @@ its own appliance revision and build time independently of Linux's release.
 
 `make` builds the Rust std-based init, direction-attenuated Console workers,
 session manager, capability-scoped shell, VM manager, and isolated VM runtime
-only through the assembled SDK under `target/sdk/aarch64`. It also downloads
+only through the assembled SDK under `OUT/sdk/aarch64`. It also downloads
 the checksum-pinned AArch64 Linux inputs and, on first build, packages the guest
 FIT and root disk into the board disk. Later builds preserve that disk,
 including its VM definitions, Alpine FIT and root filesystem. Changes to
-`boards/qemu.json` or the guest `/init` do not update those existing files.
+the manifest-owned QEMU board definition or the guest `/init` do not update those existing files.
 `make run` only starts existing artifacts. A changed system executable or
 library requires a matching system image; the build rejects a stale system
 payload instead of silently pairing it with a new bootstrap. `make rebuild`
@@ -121,7 +122,7 @@ the bridge and connects each guest TAP automatically; QEMU user networking
 supplies DHCP and NAT. After `vmm start alpine`, use `vmm console alpine` to
 enter the guest. Alpine starts DHCP in the background and renews its lease;
 an absent DHCP server does not block its shell. The persistent disk is
-`target/board/qemu/disk.img`; `BOARD_IMAGE` selects another board disk. Formal
+`OUT/build/build/board/qemu/disk.img`; `BOARD_IMAGE` selects another board disk. Formal
 programs are not embedded in the initial archive. For a diskless Pi 5 diagnostic,
 `make rpi5-bringup` builds only static stage-1 and its fallback shell.
 
@@ -148,7 +149,7 @@ This explicitly enables `kernel-test,kernel-self-test` and starts a four-CPU QEM
 `virt` machine. Kernel self-tests do not load Linux or create a default VM.
 Use `make test-native` for userspace-managed Linux guest integration. Its guest
 downloads are cached under the platform temporary directory and generated
-payloads remain under `kernel/target/guest/`.
+payloads remain under `OUT/build/kernel/guest/`.
 
 Select another architecture explicitly:
 
@@ -170,7 +171,7 @@ Useful targets:
 | Command | Purpose |
 | --- | --- |
 | `make image ARCH=<arch>` | Build the canonical ELF and delivery image |
-| `make sdk` | Assemble the AArch64 Native SDK under `target/sdk/aarch64` |
+| `make sdk` | Assemble the AArch64 Native SDK under `OUT/sdk/aarch64` |
 | `make sdk-check` / `make sdk-test` | Verify SDK generation, publication, compilation, and portable runtime behavior |
 | `make native-initramfs` | Build the test-only RAMFS handoff fixture; product images use independent system storage |
 | `make` / `make run ARCH=aarch64` | Build while preserving persistent disk contents / start existing artifacts |
