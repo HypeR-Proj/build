@@ -218,7 +218,7 @@ artifacts, recovery behavior and build commands.
 
 ## SDK component cache
 
-The SDK builder uses one CMake invocation template for libhyper, dynamic-loader
+The SDK builder uses one CMake invocation template for libsystem, dynamic-loader
 and userspace-loader. Their installed outputs are cached independently beside
 the SDK in `<sdk-output>.components/`, keyed by source/dependency contents,
 compiler/tool identities, configuration and relevant environment. Cache hits

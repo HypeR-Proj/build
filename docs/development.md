@@ -162,7 +162,7 @@ AArch64, formal programs use:
 ```text
 /lib64/ld-hyper-aarch64.so
 /lib64/aarch64-hyper-hyper/
-    libhyper.so
+    libsystem.so
     libhyper_rust_std.so
     libhyper_clap_shared.so
     libhyper_tool_args_shared.so
@@ -292,7 +292,7 @@ exact coverage and supported runtime expectations.
 | `kernel/src/fs/` | Filesystem primitives, archive import, VFS and file-cache residency |
 | `kernel/build_support/` | Shared build-time configuration parsing |
 | `sdk/abi/` | Native ABI schema, generated Rust definitions, C header, and reference |
-| `stdlib/hyper/` | Freestanding Native C runtime and architecture syscall veneers |
+| `stdlib/system/` | Freestanding Native C runtime and architecture syscall veneers |
 | `svc/` | Formal background services, root component-manager, system-startup, journal and retirement |
 | `bootstrap/stage1/` | Static bootstrap services, recovery tools and initial executable loader |
 | `lib/dynamic-loader/elf/` | Shared bounded ELF mapping and initial stack construction |

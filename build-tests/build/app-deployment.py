@@ -185,7 +185,7 @@ class DeploymentTests(unittest.TestCase):
             output.mkdir()
             (output / 'init').write_bytes(b'previous image')
             for options in ({'interpreter': '/lib64/ld-hyper-aarch64.so'},
-                            {'needed': ['libhyper.so']}, {'soname': 'libbad.so'}):
+                            {'needed': ['libsystem.so']}, {'soname': 'libbad.so'}):
                 (build / 'hyper-bootstrap-stage1-init').write_bytes(elf_fixtures.elf())
                 (build / 'hyper-fallback-sh').write_bytes(elf_fixtures.elf(**options))
                 result = subprocess.run([
@@ -240,7 +240,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(system[link - 1:link + 2], ['symlink', 'lib', 'lib64'])
         self.assertTrue({'bin/sh', 'bin/cp', 'bin/vmm', 'bin/ldd', 'svc/vm-manager',
                          'lib', 'lib64/ld-hyper-riscv64.so',
-                         'lib64/riscv64-hyper-hyper/libhyper.so'} <= system_names)
+                         'lib64/riscv64-hyper-hyper/libsystem.so'} <= system_names)
         # Rust libraries are selected from DT_NEEDED after executable overrides.
         self.assertNotIn('lib64/riscv64-hyper-hyper/libhyper_clap_shared.so', system_names)
         libraries = [entry for entry in deployment.load(MANIFEST) if 'library' in entry]

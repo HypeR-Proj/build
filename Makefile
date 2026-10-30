@@ -21,7 +21,7 @@ KERNEL_OUTPUT = $(abspath $(KERNEL_BUILD_ROOT))/$(KERNEL_TARGET)/$(KERNEL_PROFIL
 KERNEL_IMAGE = $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
-SDK_LIB_SOURCE := $(CURDIR)/stdlib/hyper
+SDK_LIB_SOURCE := $(CURDIR)/stdlib/system
 SDK_MUSL_SOURCE := $(if $(wildcard stdlib/musl/hyper/build.py),$(CURDIR)/stdlib/musl)
 SDK_CXX_SOURCE := $(if $(wildcard stdlib/cxx/hyper/build.py),$(CURDIR)/stdlib/cxx)
 SDK_USERSPACE_LOADER_SOURCE := $(CURDIR)/bootstrap/stage1/userspace-loader
@@ -33,7 +33,7 @@ SDK_VERSION ?= source
 # SDK build-tool revision; installed component contents have separate input hashes.
 SDK_SOURCE_REVISION ?= $(shell git -C sdk/toolchain describe --always --dirty 2>/dev/null || echo unknown)
 SDK_ABI_TARGET := $(CURDIR)/target/sdk-abi
-SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/stdlib/hyper-tests
+SDK_LIB_TEST_OUTPUT := $(CURDIR)/target/stdlib/system-tests
 APP_FEATURES ?=
 APP_EXTRA_BINS ?=
 APP_DEPLOYMENT := $(CURDIR)/mk/components.mk
@@ -96,7 +96,7 @@ NATIVE_SERVICE_MANIFEST := $(CURDIR)/bootstrap/stage1/init/tests/config/services
 NATIVE_INITRAMFS := $(APP_OUTPUT)/initramfs.cpio
 NATIVE_USERSPACE_LOADER := $(SDK_OUTPUT)/lib64/userspace-loader-hyper-$(NATIVE_ARCH)
 NATIVE_LOADER := $(SDK_OUTPUT)/lib64/ld-hyper-$(NATIVE_ARCH).so
-NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libhyper.so
+NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libsystem.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
