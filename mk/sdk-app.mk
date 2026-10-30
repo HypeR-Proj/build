@@ -31,6 +31,7 @@ sdk:
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" ARCH="$(NATIVE_ARCH)" sysroot \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		MUSL_SOURCE="$(SDK_MUSL_SOURCE)" CXX_SOURCE="$(SDK_CXX_SOURCE)" \
 		DYNAMIC_LOADER_SOURCE="$(SDK_DYNAMIC_LOADER_SOURCE)" \
 		USERSPACE_LOADER_SOURCE="$(SDK_USERSPACE_LOADER_SOURCE)" \
 		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
@@ -67,6 +68,7 @@ toolchain-test: sdk
 		$(MAKE) -C "$(SDK_TOOLCHAIN_SOURCE)" ARCH="$(NATIVE_ARCH)" -o sysroot check \
 		ABI_SOURCE="$(SDK_ABI_SOURCE)" \
 		LIB_SOURCE="$(SDK_LIB_SOURCE)" \
+		MUSL_SOURCE="$(SDK_MUSL_SOURCE)" CXX_SOURCE="$(SDK_CXX_SOURCE)" \
 		DYNAMIC_LOADER_SOURCE="$(SDK_DYNAMIC_LOADER_SOURCE)" \
 		USERSPACE_LOADER_SOURCE="$(SDK_USERSPACE_LOADER_SOURCE)" \
 		RUST_SOURCE="$(SDK_RUST_SOURCE)" \
@@ -161,6 +163,14 @@ app-boot: app-fetch
 .PHONY: app-fixtures app-sdk-test
 app-fixtures: APP_BUILD_PROFILE = development
 app-fixtures: app
+ifneq ($(SDK_MUSL_SOURCE)$(SDK_CXX_SOURCE),)
+	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-cc" -std=c17 -D_GNU_SOURCE=1 -O2 \
+		stdlib/musl/hyper/test.c -o "$(NATIVE_C_TEST)"
+	HYPER_CXX="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
+		"$(SDK_OUTPUT)/bin/hyper-clang++" -O2 -DHYPER_TEST_DYNAMIC_INITIALIZATION=1 -Wl,-z,stack-size=524288 \
+		stdlib/cxx/hyper/test.cc -o "$(NATIVE_CXX_TEST)"
+endif
 	HYPER_LINK_MODE=static HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-clang" -std=c17 -Wall -Wextra -Werror \

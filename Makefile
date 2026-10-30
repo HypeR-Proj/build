@@ -22,6 +22,8 @@ KERNEL_IMAGE = $(KERNEL_OUTPUT)/hyper.img
 
 SDK_ABI_SOURCE := $(CURDIR)/sdk/abi
 SDK_LIB_SOURCE := $(CURDIR)/stdlib/hyper
+SDK_MUSL_SOURCE := $(if $(wildcard stdlib/musl/hyper/build.py),$(CURDIR)/stdlib/musl)
+SDK_CXX_SOURCE := $(if $(wildcard stdlib/cxx/hyper/build.py),$(CURDIR)/stdlib/cxx)
 SDK_USERSPACE_LOADER_SOURCE := $(CURDIR)/bootstrap/stage1/userspace-loader
 SDK_DYNAMIC_LOADER_SOURCE := $(CURDIR)/lib/dynamic-loader
 SDK_RUST_SOURCE := $(CURDIR)/stdlib/rust
@@ -86,6 +88,8 @@ NATIVE_PS_IMAGE ?= $(APP_OUTPUT)/ps
 NATIVE_VM_MANAGER := $(APP_OUTPUT)/vm-manager
 NATIVE_VM_RUNTIME := $(APP_OUTPUT)/vm-runtime
 NATIVE_DYNAMIC_TEST := $(APP_OUTPUT)/dynamic-test
+NATIVE_C_TEST := $(APP_OUTPUT)/c-standard-test
+NATIVE_CXX_TEST := $(APP_OUTPUT)/cxx-standard-test
 NATIVE_DYNAMIC_PLUGIN := $(APP_OUTPUT)/libdynamic-probe.so
 NATIVE_STD_TEST_OUTPUT := $(CURDIR)/target/std-check/$(NATIVE_ARCH)
 NATIVE_SERVICE_MANIFEST := $(CURDIR)/bootstrap/stage1/init/tests/config/services.json
