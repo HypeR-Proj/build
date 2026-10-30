@@ -5,6 +5,7 @@
 """Validate ABI ownership and bootstrap/system dependency boundaries as TOML."""
 
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -144,6 +145,20 @@ def check_index(index):
             raise ValueError('in-tree components must not have cross-repository revision locks')
 
 
+def check_source_indexes(root, components):
+    provenance = root / 'modules.json'
+    sources = json.loads(provenance.read_bytes()) if provenance.is_file() else {}
+    for name, (directory, _) in components.items():
+        directory = Path(sources.get(name, {}).get('source', directory))
+        # Generated views have no Git metadata. Inspect their owning source
+        # checkout; archives have none, and must not inherit an enclosing repo.
+        if not (directory / '.git').exists():
+            continue
+        index = subprocess.run(['git', 'ls-files', '--stage', '-z'], cwd=directory,
+                               check=True, stdout=subprocess.PIPE).stdout
+        check_index(index)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
@@ -154,10 +169,7 @@ def main():
     check_stdlib(root)
     sys.path.insert(0, str(root))
     import project
-    for directory, _ in project.components(root).values():
-        index = subprocess.run(['git', 'ls-files', '--stage', '-z'], cwd=directory,
-                               check=True, stdout=subprocess.PIPE).stdout
-        check_index(index)
+    check_source_indexes(root, project.components(root))
     print('workspace dependency declarations verified')
 
 

@@ -5,7 +5,9 @@
 """Exercise dependency policy with manifests, including aliases and cfg tables."""
 
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -179,6 +181,20 @@ class WorkspaceTests(unittest.TestCase):
         for entry in (b'160000 abc 0\tmodule\0', b'100644 abc 0\tsdk/components.lock\0'):
             with self.assertRaises(ValueError):
                 workspace.check_index(entry)
+
+    def test_generated_views_check_the_owner_and_archives_ignore_enclosing_git(self):
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        subprocess.run(['git', 'update-index', '--add', '--cacheinfo',
+                        '160000,' + '1' * 40 + ',forbidden-submodule'], cwd=self.root, check=True)
+        view = self.root / 'generated'
+        view.mkdir()
+        components = {'build': (view, {})}
+        # A Git-less source export or view must not discover the enclosing Git index.
+        workspace.check_source_indexes(view, components)
+        (view / 'modules.json').write_text(json.dumps({'build': {'source': str(self.root)}}))
+        # A generated view still enforces repository policy on the real source.
+        with self.assertRaisesRegex(ValueError, 'Git submodules'):
+            workspace.check_source_indexes(view, components)
 
 
 if __name__ == '__main__':
