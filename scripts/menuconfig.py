@@ -28,9 +28,10 @@ spec.loader.exec_module(widgets)
 
 
 class Configuration:
-    def __init__(self, output, entries):
+    def __init__(self, output, entries, modules=None):
         self.output = output.resolve()
         self.entries = entries
+        self.modules = modules
         self.saved = self.output.read_bytes() if self.output.exists() else None
         product = system_config.load(self.output, entries) if self.saved is not None else system_config.ProductConfig({'version': 1})
         self.value = product.value
@@ -50,6 +51,13 @@ class Configuration:
             'help': 'Kernel settings save CONFIG_FILE independently. Discarding product edits '
                     'does not undo a saved kernel configuration.',
         }]
+        if self.modules is not None:
+            entries = [{'name': 'module:' + module.name, 'kind': 'action', 'value': '', 'range': None,
+                        'section': 'Module configuration', 'prompt': module.name,
+                        'help': 'Configure this module in its own namespace. Its saved settings '
+                                'are independent of product selection.'}
+                       for module in sorted(self.modules.values(), key=lambda m: m.name)
+                       if module.kconfig is not None]
         programs = {(entry['environment'], entry['staged']): entry
                     for entry in self.entries if 'binary' in entry}
         for name, definition in kconfig.schema().items():
@@ -154,18 +162,21 @@ class ProductMenu(widgets.Menu):
             environment = dict(os.environ)
             for name in ('MAKEFLAGS', 'MFLAGS', 'MAKELEVEL', 'MAKEOVERRIDES'):
                 environment.pop(name, None)
-            result = subprocess.run(
-                ['make', '--no-print-directory', '-C', str(ROOT / 'kernel'), 'menuconfig',
-                 'ARCH=' + self.arch, 'CONFIG_FILE=' + str(self.kernel_config)],
-                env=environment, check=False)
+            if entry['name'].startswith('module:') and entry['name'] != 'module:kernel':
+                command = [sys.executable, '-B', str(ROOT / 'scripts/module-menu.py'),
+                           entry['name'].split(':', 1)[1], '--arch', self.arch]
+            else:
+                command = ['make', '--no-print-directory', '-C', str(ROOT / 'kernel'), 'menuconfig',
+                           'ARCH=' + self.arch, 'CONFIG_FILE=' + str(self.kernel_config)]
+            result = subprocess.run(command, env=environment, check=False)
         finally:
             curses.reset_prog_mode()
             curses.curs_set(0)
             self.screen.clear()
             self.screen.refresh()
-        self.notice = ('Returned from kernel menu; kernel saves are independent.'
+        self.notice = ('Returned from module menu; module saves are independent.'
                        if result.returncode == 0 else
-                       f'Kernel menu exited with status {result.returncode}; product edits retained.')
+                       f'Module menu exited with status {result.returncode}; product edits retained.')
 
 
 def main():
@@ -177,7 +188,11 @@ def main():
     if not sys.stdin.isatty() or not sys.stdout.isatty() or os.environ.get('TERM') in (None, '', 'dumb'):
         parser.error('menuconfig needs an interactive terminal with TERM set')
     entries = load_registry(ROOT / 'mk/components.mk')['entries']
-    config = Configuration(args.output, entries)
+    modules = None
+    if (ROOT / 'modules.json').is_file():
+        from buildsystem.model import discover
+        modules = discover(ROOT)
+    config = Configuration(args.output, entries, modules)
     curses.wrapper(lambda screen: ProductMenu(screen, config, args.kernel_config.resolve(), args.arch).run())
 
 

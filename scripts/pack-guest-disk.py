@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Create a disposable Alpine ext4 root disk sized by board policy."""
 import argparse
+import fcntl
+import json
 import importlib.util
 import os
 import stat
@@ -18,6 +20,31 @@ spec.loader.exec_module(packer)
 
 
 def build(board, archive, output):
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.with_name(output.name + '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _build(board, archive, output)
+
+
+def publish(template, output):
+    # Each caller receives a fresh disposable disk. Only the immutable template
+    # is cached; guest writes are never mistaken for reusable build outputs.
+    with tempfile.NamedTemporaryFile(dir=output.parent, prefix='.guest-copy-', delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            os.fchmod(stream.fileno(), template.stat().st_mode & 0o777)
+            stream.truncate(template.stat().st_size)
+            packer.sparse_copy(template, stream, 0, template.stat().st_size)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _build(board, archive, output):
     volumes = [part for part in board.partitions if part.image == 'alpine-rootfs']
     if not volumes:
         return
@@ -27,6 +54,19 @@ def build(board, archive, output):
     mkfs = packer.image_tool('mke2fs', 'mke2fs', 'e2fsprogs')
     debugfs = packer.image_tool('debugfs', 'debugfs', 'e2fsprogs')
     output.parent.mkdir(parents=True, exist_ok=True)
+    size = sizes.pop()
+    requested = {'archive': packer.digest(archive), 'size': size, 'builder': packer.digest(Path(__file__)),
+                 'mkfs': packer.digest(Path(mkfs)), 'debugfs': packer.digest(Path(debugfs))}
+    template = output.with_name(output.name + '.template')
+    receipt = output.with_name(output.name + '.state.json')
+    try:
+        saved = json.loads(receipt.read_bytes())
+        if saved['inputs'] == requested and saved['template'] == packer.digest(template):
+            publish(template, output)
+            print(f'Restored disposable Alpine disk from cached template: {output}')
+            return
+    except (OSError, ValueError, KeyError):
+        pass
     with tempfile.TemporaryDirectory(dir=output.parent, prefix='.guest-disk-') as temporary:
         temporary = Path(temporary)
         root = temporary / 'root'
@@ -35,7 +75,7 @@ def build(board, archive, output):
             source.extractall(root, filter='data')
         disk = temporary / 'root.ext4'
         with disk.open('wb') as stream:
-            stream.truncate(sizes.pop())
+            stream.truncate(size)
         subprocess.run([mkfs, '-q', '-t', 'ext4', '-F', '-L', 'alpine-root',
                         '-E', 'lazy_itable_init=0,lazy_journal_init=0,root_owner=0:0',
                         '-d', str(root), str(disk)], check=True)
@@ -53,7 +93,11 @@ def build(board, archive, output):
                     script.write(f'set_inode_field "{path}" {field} {value}\n')
         subprocess.run([debugfs, '-w', '-f', str(commands), str(disk)],
                        check=True, stdout=subprocess.DEVNULL)
-        os.replace(disk, output)
+        if packer.digest(archive) != requested['archive']:
+            raise ValueError('guest rootfs input changed during construction; retry')
+        os.replace(disk, template)
+        receipt.write_text(json.dumps({'inputs': requested, 'template': packer.digest(template)}) + '\n')
+        publish(template, output)
     print(f'Prepared Alpine ext4 root disk: {output}')
 
 

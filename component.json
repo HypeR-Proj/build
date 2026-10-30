@@ -104,6 +104,49 @@
       "python3",
       "-B",
       "tests/build/source-archive.py"
+    ],
+    [
+      "python3",
+      "{component}/scripts/check-workspace.py"
     ]
-  ]
+  ],
+  "build": {
+    "makefile": "mk/system.mk"
+  },
+  "artifacts": [
+    {
+      "symlink": "lib64",
+      "destination": "lib",
+      "mode": "0777",
+      "profiles": [
+        "system",
+        "development"
+      ],
+      "environment": "system"
+    }
+  ],
+  "workspace": {
+    "cargo": {
+      "system": {
+        "module": "build",
+        "template": "mk/workspace/app/Cargo.toml",
+        "directory": "app"
+      },
+      "boot": {
+        "module": "bootstrap",
+        "template": "Cargo.toml",
+        "directory": "bootstrap/stage1"
+      }
+    },
+    "product_policy": "mk/workspace/product.Kconfig",
+    "files": {
+      "mk/workspace/.clang-format": ".clang-format",
+      "mk/workspace/.vscode": ".vscode",
+      "mk/workspace/app/.cargo": "app/.cargo",
+      "mk/workspace/app/Cargo.lock": "app/Cargo.lock",
+      "mk/workspace/configs": "configs",
+      "build-tests/build": "tests/build"
+    }
+  },
+  "config": null
 }

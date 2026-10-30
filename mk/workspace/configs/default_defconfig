@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+# Application defaults come from the domain Kconfig files.
+# Kernel defaults remain owned by kernel/.config and kernel/Cargo.toml.

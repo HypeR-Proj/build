@@ -424,12 +424,15 @@ class EntrypointTests(unittest.TestCase):
                         '"std":os.getenv("HYPER_RUST_STD"),"link":os.getenv("HYPER_LINK_MODE"),"cwd":os.getcwd()},f)\n')
             (fake / 'cargo').write_text(recorder)
             (fake / 'cargo').chmod(0o755)
-            native = root / 'target/sdk/aarch64/bin'
+            build_output = root / 'custom-output'
+            native = build_output / 'sdk/aarch64/bin'
             native.mkdir(parents=True)
             (native / 'hyper-cargo').write_text(recorder)
             (native / 'hyper-cargo').chmod(0o755)
             output = root / 'probe.json'
             env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH'], PROBE=str(output))
+            env.update(HYPER_BUILD_OUTPUT=str(build_output), ARCH='aarch64')
+            env.pop('SDK_OUTPUT', None)
             env.pop('HYPER_CONFIG', None)
             env['HYPER_LINK_MODE'] = 'static'
             workspaces = ('kernel', 'tools/fit-pack', 'app', 'bootstrap/stage1', 'tests/native/io-smoke',

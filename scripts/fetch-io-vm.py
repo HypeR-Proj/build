@@ -207,6 +207,11 @@ def fetch_materials(reference, platform, directory, oras=""):
 
 
 def main():
+    root = Path(__file__).resolve().parents[1]
+    if not os.environ.get('HYPER_BUILD_VIEW') and (root / 'scripts/build.py').is_file():
+        subprocess.run([sys.executable, str(root / 'project.py'), 'exec', '--', sys.executable,
+                        'scripts/fetch-io-vm.py', *sys.argv[1:]], check=True)
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", help="explicit immutable package; default: latest qualified main release")
     parser.add_argument("--platform", required=True, choices=("qemu", "rpi5"))

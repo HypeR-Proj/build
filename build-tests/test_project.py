@@ -39,15 +39,24 @@ class WorkspaceTests(unittest.TestCase):
                 </project></manifest>''')
             original = (root / 'kernel/source.txt').stat().st_mtime_ns
             commits = {n: project.git(p, 'rev-parse', 'HEAD') for n, (p, _) in project.components(root).items()}
-            project.prepare(root)
+            build_output = root / 'out'
+            view = project.prepare(root, build_output)
             self.assertEqual((root / 'kernel/source.txt').stat().st_mtime_ns, original)
             self.assertEqual(commits, {n: project.git(p, 'rev-parse', 'HEAD') for n, (p, _) in project.components(root).items()})
             self.assertFalse((root / 'out/system').exists())
+            self.assertFalse((root / 'config.txt').exists())
+            self.assertEqual((view / 'config.txt').read_text(), 'manifest')
+            state = root / 'out/state/aarch64/prepare.json'
+            unchanged = {p: p.stat().st_mtime_ns for p in (state, view / 'config.txt', view / 'component.json')}
+            self.assertEqual(project.prepare(root, build_output), view)
+            self.assertEqual(unchanged, {p: p.stat().st_mtime_ns for p in unchanged})
             output = root / 'sources.tar.xz'
-            project.archive(root, output)
+            project.archive(root, output, build_output)
             with tarfile.open(output) as archive:
                 self.assertEqual(archive.extractfile('HypeR/kernel/source.txt').read(), b'kernel')
-                self.assertEqual(archive.extractfile('HypeR/config.txt').read(), b'manifest')
+                self.assertEqual(archive.extractfile('HypeR/.workspace/source.txt').read(), b'manifest')
+                self.assertNotIn('HypeR/config.txt', archive.getnames())
+                self.assertFalse(any('/out/' in name for name in archive.getnames()))
                 self.assertIn('HypeR/source-inventory.json', archive.getnames())
 
 

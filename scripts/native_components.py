@@ -33,7 +33,7 @@ def load_registry(path):
     for record in result.stdout.splitlines():
         fields = record.split('|')
         kind = fields[0]
-        if kind in ('binary', 'library') and len(fields) in (6, 7, 8):
+        if kind in ('binary', 'library') and len(fields) in (6, 7, 8, 9):
             _, source, artifact, staged, destination, profiles = fields[:6]
             runtime = fields[6] if len(fields) >= 7 else 'std'
             if runtime not in ('std', 'core') or (kind == 'library' and runtime != 'std'):
@@ -42,7 +42,11 @@ def load_registry(path):
             if directory not in members:
                 raise ValueError(f'component is not a Native workspace member: {source}')
             manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
-            static = directory.is_relative_to(ROOT / 'bootstrap/stage1')
+            environment = fields[8] if len(fields) == 9 else (
+                'boot' if directory.is_relative_to(ROOT / 'bootstrap/stage1') else 'system')
+            if environment not in ('boot', 'system'):
+                raise ValueError(f'invalid Rust component environment: {record}')
+            static = environment == 'boot'
             if static and kind == 'library':
                 raise ValueError(f'bootstrap/stage1 cannot provide a shared library: {source}')
             if kind == 'binary':
@@ -56,7 +60,7 @@ def load_registry(path):
                 if symbol not in settings or settings[symbol]['kind'] != 'bool':
                     raise ValueError(f'component {staged} requires boolean {symbol} in Kconfig')
                 if 'system' in profiles.split():
-                    raise ValueError(f'{staged}: normal defaults belong in Kconfig, not component.mk')
+                    raise ValueError(f'{staged}: delivery defaults belong in component.json')
                 if settings[symbol]['default'] == 'y':
                     profiles += ' system'
             else:
@@ -65,13 +69,13 @@ def load_registry(path):
                 if 'dylib' not in library.get('crate-type', []) or artifact != f'lib{name}.so':
                     raise ValueError(f'component is not the declared Rust dylib: {artifact}')
             entry = {kind: artifact, 'staged': staged, 'destination': destination,
-                     'mode': '0755', 'profiles': profiles.split(),
+                     'mode': fields[7] if len(fields) == 9 else '0755', 'profiles': profiles.split(),
                      'package': manifest['package']['name'],
                      'link_mode': 'static' if static else 'dynamic',
                      'rust_runtime': runtime, 'environment': 'boot' if static else 'system',
                      'cargo_binaries': [item['name'] for item in manifest.get('bin', [])]}
             if len(fields) == 8 and fields[7]:
-                raise ValueError('executable dependencies belong in Kconfig, not component.mk')
+                raise ValueError('runtime dependencies belong in component.json')
         elif kind in ('source', 'symlink') and len(fields) in (5, 6):
             _, source, destination, mode, profiles = fields[:5]
             entry = {kind: source, 'destination': destination, 'mode': mode,

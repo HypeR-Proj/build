@@ -5,6 +5,7 @@
 """Compose a static bootstrap archive and an independent formal root filesystem."""
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import os
@@ -197,6 +198,38 @@ def compose_entries(args, native):
 def stage_system(records, destination, strip, checksums):
     """Publish a complete payload; never leave files from a previous profile."""
     destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.with_name(destination.name + '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _stage_system(records, destination, strip, checksums)
+
+
+def staged_identity(directory):
+    result = {}
+    for path in directory.rglob('*'):
+        name = str(path.relative_to(directory))
+        if path.is_symlink():
+            result[name] = ['symlink', os.readlink(path)]
+        else:
+            result[name] = [path.stat().st_mode & 0o7777,
+                            archive.digest(path) if path.is_file() else 'directory']
+    return result
+
+
+def _stage_system(records, destination, strip, checksums):
+    if destination.is_symlink():
+        raise ValueError(f'system staging directory must not be a symlink: {destination}')
+    tool = Path(shutil.which(strip) or strip)
+    requested = {'records': records, 'contents': checksums, 'builder': archive.digest(__file__),
+                 'strip': archive.digest(tool) if tool.is_file() else str(tool)}
+    receipt = destination.with_name(destination.name + '.state.json')
+    try:
+        saved = json.loads(receipt.read_bytes())
+        if (saved['inputs'] == requested and destination.is_dir()
+                and saved['outputs'] == staged_identity(destination)
+                and checksums == {source: archive.digest(source) for source in checksums}):
+            return
+    except (OSError, ValueError, KeyError):
+        pass
     with tempfile.TemporaryDirectory(prefix='.system-root-', dir=destination.parent) as temporary:
         staging = Path(temporary) / 'payload'
         staging.mkdir()
@@ -225,6 +258,7 @@ def stage_system(records, destination, strip, checksums):
         if destination.exists():
             shutil.rmtree(destination)
         staging.rename(destination)
+    write_json(receipt, {'inputs': requested, 'outputs': staged_identity(destination)})
 
 
 def selected_manifests(profiles, boot, generated):

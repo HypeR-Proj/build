@@ -56,7 +56,7 @@ with open(os.environ['CMAKE_TEST_LOG'], 'a') as log:
     log.write(args[0] + '\\n')
 if args[0] == '-S':
     directory = Path(args[args.index('-B') + 1])
-    directory.mkdir(parents=True)
+    directory.mkdir(parents=True, exist_ok=True)
     (directory / 'source').write_text(args[1])
 elif args[0] == '--install':
     source = Path((Path(args[1]) / 'source').read_text())

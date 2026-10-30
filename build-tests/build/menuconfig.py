@@ -162,7 +162,7 @@ input()
         terminal.send(b'/CONFIG_SYSTEM_APP_EDITOR\nnq\n\n')
         terminal.expect(b'Kernel submenu probe')
         terminal.send(b'q\n')
-        terminal.expect(b'Returned from kernel menu')
+        terminal.expect(b'Returned from module menu')
         terminal.send(b'sqq')
         terminal.finish()
         self.assertIn('CONFIG_FILE=' + str((self.directory / 'kernel.config').resolve()),
@@ -189,9 +189,11 @@ input()
         probe = self.directory / 'probe.mk'
         probe.write_text('__product:\n\t@printf "%s\\n" "$(SYSTEM_CONFIG)" "$(APP_BOOT_COMPONENTS)"\n')
         def make(*arguments):
+            environment = dict(os.environ)
+            environment.pop('SYSTEM_CONFIG', None)
             return subprocess.check_output(
                 ['make', '--no-print-directory', '-s', '-f', 'Makefile', '-f', str(probe),
-                 '__product', *arguments], cwd=workspace, text=True).splitlines()
+                 '__product', *arguments], cwd=workspace, text=True, env=environment).splitlines()
         selected = make()
         self.assertEqual(selected[0], '.config')
         self.assertNotIn('fs-fat', selected[1].split())

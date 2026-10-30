@@ -2,116 +2,117 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-"""Inspect and test a workspace laid out directly by the repo manifest."""
+"""Inspect, prepare and test a manifest workspace without generated source files."""
 
 import argparse
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+import os
+from pathlib import Path
 import subprocess
+import sys
 import tarfile
+import tempfile
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
+from buildsystem import files
+from buildsystem.model import discover, manifest_path, relative
+from buildsystem.prepare import prepare as prepare_view
 
 LICENSE = {'SPDX-FileCopyrightText': '2026 roolrz', 'SPDX-License-Identifier': 'Apache-2.0'}
 
 
-def relative(value):
-    path = PurePosixPath(value)
-    if (not value or path.is_absolute() or '..' in path.parts
-            or any(part in ('.git', '.repo') for part in path.parts)):
-        raise ValueError(f'invalid workspace path: {value!r}')
-    return path
-
-
 def manifest(workspace):
-    path = workspace / '.workspace/default.xml'
-    if not path.is_file():
-        path = workspace / '.repo/manifests/default.xml'
-    return ET.parse(path).getroot()
+    return ET.parse(manifest_path(workspace)).getroot()
 
 
 def components(workspace):
-    result = {}
-    paths = set()
-    for item in manifest(workspace).findall('project'):
-        name = item.attrib['name']
-        path = str(relative(item.get('path', name)))
-        if name in result or path in paths:
-            raise ValueError('duplicate manifest project or checkout path')
-        paths.add(path)
-        root = workspace / path
-        metadata = json.loads((root / 'component.json').read_text())
-        if metadata['name'] != name or metadata['version'] != 1:
-            raise ValueError(f'component metadata differs from manifest: {name}')
-        result[name] = (root, metadata)
-    return result
+    return {name: (module.source, module.metadata) for name, module in discover(workspace).items()}
 
 
 def git(root, *arguments):
     return subprocess.check_output(['git', *arguments], cwd=root, text=True).strip()
 
 
-def source_files(workspace):
-    """List tracked sources across projects, including manifest-provided links."""
-    result = {}
-    for item in manifest(workspace).findall('project'):
-        root = workspace / relative(item.get('path', item.attrib['name']))
-        for name in git(root, 'ls-files', '-z').split('\0'):
-            if not name:
-                continue
-            source = root / relative(name)
-            if source.is_file():
-                result[str(source.relative_to(workspace))] = source
-        for link in list(item.findall('linkfile')) + list(item.findall('copyfile')):
-            source = root / relative(link.attrib['src'])
-            destination = relative(link.attrib['dest'])
-            if source.is_dir():
-                for name in git(root, 'ls-files', '-z', '--', link.attrib['src']).split('\0'):
-                    if name and (root / name).is_file():
-                        result[str(destination / (root / name).relative_to(source))] = root / name
-            else:
-                result[str(destination)] = source
-    return result
+def output_path(workspace, output=None):
+    return Path(output or os.environ.get('OUT', workspace / 'out')).resolve()
 
 
-def prepare(workspace):
-    """Record provenance in place; never copy, rewrite, or commit source files."""
-    workspace = workspace.resolve()
+def source_files(workspace, output=None):
+    """Enumerate owners once, including the implicit repo manifest checkout."""
+    output = output_path(workspace, output)
+    return {str(module.path / name): module.source / name
+            for module in discover(workspace).values() for name in module.files(output)}
+
+
+def prepare(workspace, output=None):
+    view, _, _, _ = prepare_view(workspace.resolve(), output_path(workspace, output),
+                                os.environ.get('ARCH', 'aarch64'))
+    return view
+
+
+def inventory(workspace, output, excluded=()):
     inputs = {}
-    for name, (root, _) in components(workspace).items():
-        files = {}
-        for file in git(root, 'ls-files', '-z').split('\0'):
-            if file and (root / file).is_file():
-                files[file] = hashlib.sha256((root / file).read_bytes()).hexdigest()
-        inputs[name] = {'commit': git(root, 'rev-parse', 'HEAD'),
-                        'path': str(root.relative_to(workspace)), 'files': files}
+    exported = workspace / 'source-inventory.json'
+    provenance = json.loads(exported.read_bytes()).get('components', {}) if exported.exists() else {}
+    for name, module in discover(workspace).items():
+        content = {str(file): hashlib.sha256((module.source / file).read_bytes()).hexdigest()
+                   for file in module.files(output) if (module.source / file).resolve() not in (*excluded, exported)}
+        commit = (git(module.source, 'rev-parse', 'HEAD') if (module.source / '.git').exists()
+                  else provenance.get(name, {}).get('commit'))
+        filters = ['.'] + [':(exclude,literal)' + str(path.relative_to(module.source))
+                          for path in (*excluded, exported, output) if path.is_relative_to(module.source)]
+        dirty = (bool(git(module.source, 'status', '--porcelain=v1', '--untracked-files=all', '--', *filters))
+                 if (module.source / '.git').exists() else
+                 bool(provenance.get(name, {}).get('dirty')
+                      or content != provenance.get(name, {}).get('files', content)))
+        inputs[name] = {'commit': commit, 'dirty': dirty,
+                        'path': str(module.path), 'files': content}
     identity = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
-    inventory = {**LICENSE, 'version': 1, 'identity': identity, 'components': inputs}
-    (workspace / 'source-inventory.json').write_text(json.dumps(inventory, indent=2) + '\n')
-    return workspace
+    return {**LICENSE, 'version': 1, 'identity': identity, 'components': inputs}
 
 
-def archive(workspace, output):
-    prepare(workspace)
-    with tarfile.open(output, 'w:xz', dereference=True) as stream:
-        for destination, source in sorted(source_files(workspace).items()):
-            stream.add(source, arcname='HypeR/' + destination, recursive=False)
-        stream.add(workspace / 'source-inventory.json', arcname='HypeR/source-inventory.json')
+def archive(workspace, destination, output=None):
+    workspace, destination = workspace.resolve(), destination.resolve()
+    output = output_path(workspace, output)
+    record = inventory(workspace, output, excluded=(destination,))
+    source = source_files(workspace, output)
+    path = output / 'state/source-inventory.json'
+    files.write(path, json.dumps(record, indent=2) + '\n')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.source-archive-', delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        with tarfile.open(temporary, 'w:xz', dereference=True) as stream:
+            for name, body in sorted(source.items()):
+                if body.resolve() != destination:
+                    stream.add(body, arcname='HypeR/' + name, recursive=False)
+            stream.add(path, arcname='HypeR/source-inventory.json')
+        if inventory(workspace, output, excluded=(destination, temporary)) != record:
+            raise ValueError('sources changed during archive construction; retry')
+        temporary.chmod(0o644)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def module_tests(workspace, name):
-    root, metadata = components(workspace)[name]
-    commands = metadata.get('tests', [])
-    if not commands:
-        raise ValueError(f'{name}: module tests are not declared')
-    for command in commands:
-        subprocess.run([arg.replace('{component}', str(root)).replace('{system}', str(workspace))
-                        for arg in command], cwd=workspace, check=True)
+def module_tests(workspace, name, output=None):
+    if os.environ.get('HYPER_BUILD_VIEW') == '1' and str(workspace) == os.environ.get('HYPER_BUILD_VIEW_PATH'):
+        module = discover(workspace)[name]
+        for command in module.metadata.get('tests', []):
+            subprocess.run([value.replace('{component}', str(module.source)).replace('{system}', str(workspace))
+                            for value in command], cwd=workspace, check=True)
+        return
+    command = [sys.executable, str(workspace / 'scripts/build.py'), '--workspace', str(workspace),
+               '--out', str(output_path(workspace, output)), '--module', name, 'test']
+    subprocess.run(command, check=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument('--out', type=Path)
     actions = parser.add_subparsers(dest='action', required=True)
     actions.add_parser('prepare')
     actions.add_parser('files')
@@ -119,17 +120,31 @@ def main():
     test.add_argument('component')
     pack = actions.add_parser('archive')
     pack.add_argument('output', type=Path)
+    actions.add_parser('inventory')
+    execute = actions.add_parser('exec')
+    execute.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     workspace = args.workspace.resolve()
     if args.action == 'test':
-        module_tests(workspace, args.component)
+        module_tests(workspace, args.component, args.out)
     elif args.action == 'files':
-        print('\n'.join(sorted(source_files(workspace))))
+        print('\n'.join(sorted(source_files(workspace, args.out))))
     elif args.action == 'archive':
-        archive(workspace, args.output)
+        archive(workspace, args.output, args.out)
+    elif args.action == 'inventory':
+        output = output_path(workspace, args.out)
+        path = output / 'state/source-inventory.json'
+        files.write(path, json.dumps(inventory(workspace, output), indent=2) + '\n')
+        print(path)
+    elif args.action == 'exec':
+        subprocess.run([sys.executable, str(workspace / 'scripts/build.py'), '--workspace', str(workspace),
+                        '--out', str(output_path(workspace, args.out)), 'exec', *args.command], check=True)
     else:
-        print(prepare(workspace))
+        print(prepare(workspace, args.out))
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        sys.exit(f'project: {error}')

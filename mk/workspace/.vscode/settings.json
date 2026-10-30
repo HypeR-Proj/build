@@ -1,0 +1,44 @@
+// "SPDX-FileCopyrightText": "2026 roolrz"
+// "SPDX-License-Identifier": "Apache-2.0"
+
+{
+    "editor.tabSize": 8,
+    "editor.detectIndentation": false,
+    "[rust]": {
+        "editor.tabSize": 4
+    },
+    "[c]": {
+        "editor.tabSize": 8
+    },
+    "[cpp]": {
+        "editor.tabSize": 8
+    },
+    "rust-analyzer.linkedProjects": [
+        // Includes all seven kernel crates; Cargo discovers their module layout.
+        "kernel/Cargo.toml",
+        "sdk/abi/Cargo.toml",
+        "stdlib/rust/Cargo.toml",
+        // app also owns svc/, lib/ and tests/app/; do not link those members twice.
+        // Bootstrap and standalone Native init fixtures have independent workspaces.
+        "app/Cargo.toml",
+        "bootstrap/stage1/Cargo.toml",
+        "tests/native/io-smoke/Cargo.toml",
+        "sdk/toolchain/tests/rust-smoke/Cargo.toml",
+        "sdk/toolchain/tests/std-smoke/Cargo.toml",
+        "tools/fit-pack/Cargo.toml"
+    ],
+    "rust-analyzer.cargo.configPath": ".vscode/rust-analyzer.toml",
+    "rust-analyzer.cargo.sysrootSrc": "target/sdk/aarch64/share/hyper/rust-src/library",
+    "rust-analyzer.cargo.extraEnv": {
+        "RUSTC_BOOTSTRAP": "1",
+        "CARGO_UNSTABLE_JSON_TARGET_SPEC": "true"
+    },
+    "rust-analyzer.cargo.buildScripts.invocationStrategy": "per_workspace",
+    "rust-analyzer.cargo.buildScripts.overrideCommand": [
+        "sh", "-c", "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; exec sh \"$root/scripts/rust-analyzer-check.sh\""
+    ],
+    "rust-analyzer.check.invocationStrategy": "per_workspace",
+    "rust-analyzer.check.overrideCommand": [
+        "sh", "-c", "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; exec sh \"$root/scripts/rust-analyzer-check.sh\""
+    ]
+}

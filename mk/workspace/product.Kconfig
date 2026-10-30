@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 roolrz
+# SPDX-License-Identifier: Apache-2.0
+
+menu "Build policy"
+
+config KERNEL_FEATURES
+    string "Kernel feature override (advanced)"
+    default "default"
+    help
+        Normally leave this at default and use the Kernel submenu. default
+        follows kernel/.config (or the architecture defconfig). An explicit
+        comma-separated production feature list replaces that feature selection;
+        empty disables optional features. Numeric kernel settings remain in
+        kernel/.config. Test features are rejected here.
+
+config BOOT_POLICY
+    string "Boot policy file"
+    default ""
+    help
+        Optional repository-relative or absolute JSON path with boot-profiles
+        and storage-providers. Empty follows the board policy. Runtime policy
+        cannot select applications or kernel features.
+
+endmenu
