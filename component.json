@@ -99,6 +99,11 @@
       "python3",
       "-B",
       "tests/build/system-config.py"
+    ],
+    [
+      "python3",
+      "-B",
+      "tests/build/source-archive.py"
     ]
   ]
 }
