@@ -381,8 +381,18 @@ class ProductTests(unittest.TestCase):
             directory = boot if entry.get('environment') == 'boot' else apps
             path = (Path(entry['source'].format_map(roots)) if 'source' in entry
                     else directory / entry['staged'])
+            if not path.resolve().is_relative_to(self.root.resolve()):
+                # Literal component sources are repository payloads, not build
+                # outputs. Copy them into this fixture; never replace source
+                # notices or configuration with the synthetic executable.
+                payload = path.read_bytes()
+                path = self.root / 'payloads' / entry['destination']
+                entry['source'] = str(path)
+            else:
+                payload = elf
+            self.assertTrue(path.resolve().is_relative_to(self.root.resolve()))
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(elf)
+            path.write_bytes(payload)
         manifest = self.root / 'registry.json'
         manifest.write_text(json.dumps({'version': 1, 'entries': self.entries}))
         output = self.root / 'output'
