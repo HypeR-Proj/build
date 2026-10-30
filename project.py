@@ -56,7 +56,9 @@ def inventory(workspace, output, excluded=()):
     inputs = {}
     exported = workspace / 'source-inventory.json'
     provenance = json.loads(exported.read_bytes()).get('components', {}) if exported.exists() else {}
-    for name, module in discover(workspace).items():
+    modules = discover(workspace)
+    selected = str(modules['manifest'].path / manifest_path(workspace).resolve().relative_to(modules['manifest'].source.resolve()))
+    for name, module in modules.items():
         content = {str(file): hashlib.sha256((module.source / file).read_bytes()).hexdigest()
                    for file in module.files(output) if (module.source / file).resolve() not in (*excluded, exported)}
         commit = (git(module.source, 'rev-parse', 'HEAD') if (module.source / '.git').exists()
@@ -69,8 +71,8 @@ def inventory(workspace, output, excluded=()):
                       or content != provenance.get(name, {}).get('files', content)))
         inputs[name] = {'commit': commit, 'dirty': dirty,
                         'path': str(module.path), 'files': content}
-    identity = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
-    return {**LICENSE, 'version': 1, 'identity': identity, 'components': inputs}
+    identity = hashlib.sha256(json.dumps({'components': inputs, 'manifest': selected}, sort_keys=True).encode()).hexdigest()
+    return {**LICENSE, 'version': 1, 'identity': identity, 'components': inputs, 'manifest': selected}
 
 
 def archive(workspace, destination, output=None):

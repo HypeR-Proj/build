@@ -51,6 +51,37 @@ class PreparationTests(unittest.TestCase):
                          (self.root / '.repo/manifests/default.xml').read_bytes())
         self.assertEqual(prepare(self.root, self.output)[2], False)
 
+    def test_current_repo_wrapper_and_selected_nested_manifest_round_trip(self):
+        checkout = self.root / '.repo/manifests'
+        (checkout / 'profiles').mkdir()
+        (checkout / 'profiles/selected.xml').write_text('<manifest><include name="projects.xml"/></manifest>')
+        (checkout / 'projects.xml').write_bytes((checkout / 'default.xml').read_bytes())
+        (checkout / 'default.xml').write_text('<manifest><project name="absent"/></manifest>')
+        public = self.root / '.repo/manifest.xml'
+        public.unlink()
+        public.write_text('<manifest><include name="profiles/selected.xml"/></manifest>')
+        view, modules, _, _ = prepare(self.root, self.output)
+        self.assertEqual(set(modules), {'build', 'alpha', 'beta', 'manifest'})
+        self.assertEqual(modules['manifest'].source, checkout)
+        self.assertEqual(set(discover(view)), set(modules))
+        sys.path.insert(0, str(ROOT))
+        import project
+        import tarfile
+        archive = self.root.parent / 'source.tar.xz'
+        project.archive(self.root, archive, self.output)
+        extracted = self.root.parent / 'extracted'
+        with tarfile.open(archive) as stream:
+            stream.extractall(extracted, filter='data')
+        restored = extracted / 'HypeR'
+        self.assertEqual(set(discover(restored)), set(modules))
+        self.assertEqual(project.inventory(restored, self.output)['manifest'], 'manifest/profiles/selected.xml')
+
+    def test_manifest_include_cycles_are_rejected(self):
+        checkout = self.root / '.repo/manifests'
+        (checkout / 'default.xml').write_text('<manifest><include name="default.xml"/></manifest>')
+        with self.assertRaisesRegex(ValueError, 'cyclic manifest include'):
+            discover(self.root)
+
     def test_generated_controls_are_repaired_without_editing_sources(self):
         view, _, _, _ = prepare(self.root, self.output)
         (view / 'policy.py').write_text('altered generated file\n')

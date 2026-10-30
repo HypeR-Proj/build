@@ -134,8 +134,7 @@ def generate(root, output, modules, inputs, arch):
     link('target', output / 'build' / 'build')
 
     manifest = manifest_path(root)
-    if 'manifest/default.xml' not in planned and '.workspace/default.xml' not in planned:
-        regular('manifest/default.xml', manifest.read_bytes())
+    regular(modules['manifest'].path / 'default.xml', manifest.read_bytes())
     provenance = {name: {'path': str(m.path), 'source': str(m.source)} for name, m in modules.items()}
     regular('modules.json', json.dumps(provenance, indent=2) + '\n')
     editor = {'folders': [{'name': 'HypeR', 'path': str(view)}]}

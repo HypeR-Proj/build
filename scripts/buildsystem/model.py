@@ -22,8 +22,20 @@ def relative(value):
 
 
 def manifest_path(root):
-    for path in (root / '.repo/manifest.xml', root / '.repo/manifests/default.xml', root / 'manifest/default.xml',
-                 root / '.workspace/default.xml'):
+    public = root / '.repo/manifest.xml'
+    if public.is_file():
+        if public.is_symlink():
+            return public.resolve()
+        # Current repo releases write a wrapper, not a symbolic link. Its
+        # include is relative to the manifest checkout, not .repo itself.
+        document = ET.parse(public).getroot()
+        if len(document) != 1 or document[0].tag != 'include':
+            raise ValueError(f'unsupported repo manifest wrapper: {public}')
+        return root / '.repo/manifests' / relative(document[0].attrib['name'])
+    exported = root / 'source-inventory.json'
+    if exported.is_file() and (selected := json.loads(exported.read_bytes()).get('manifest')):
+        return root / relative(selected)
+    for path in (root / '.repo/manifests/default.xml', root / 'manifest/default.xml', root / '.workspace/default.xml'):
         if path.is_file():
             return path
     raise ValueError(f'no source manifest in {root}; initialize a repo workspace first')
@@ -99,22 +111,30 @@ class Module:
                 yield Path(name)
 
 
-def read_manifest(path, seen=None):
+def manifest_directory(path):
+    for parent in path.resolve().parents:
+        description = parent / 'component.json'
+        if description.is_file() and json.loads(description.read_bytes()).get('name') == 'manifest':
+            return parent
+    return path.resolve().parent
+
+
+def read_manifest(path, seen=None, include_root=None):
     seen = set() if seen is None else seen
     path = path.resolve()
+    include_root = manifest_directory(path) if include_root is None else include_root
     if path in seen:
         raise ValueError(f'cyclic manifest include: {path}')
     seen.add(path)
     root = ET.parse(path).getroot()
     projects = list(root.findall('project'))
     for include in root.findall('include'):
-        projects.extend(read_manifest(path.parent / relative(include.attrib['name']), seen))
+        projects.extend(read_manifest(include_root / relative(include.attrib['name']), seen, include_root))
     seen.remove(path)
     return projects
 
 
 def discover(root):
-    # repo's public manifest.xml is a link into its single manifest checkout.
     manifest = manifest_path(root).resolve()
     result, paths = {}, set()
     for project in read_manifest(manifest):
@@ -132,8 +152,11 @@ def discover(root):
             raise ValueError(f'{name}: module description differs from the manifest')
         result[name] = Module(name, source, path, data)
     if 'manifest' not in result:
-        data = json.loads((manifest.parent / 'component.json').read_bytes())
-        result['manifest'] = Module('manifest', manifest.parent, Path('manifest'), data)
+        directory = manifest_directory(manifest)
+        data = json.loads((directory / 'component.json').read_bytes())
+        if data.get('version') != 1 or data.get('name') != 'manifest':
+            raise ValueError('invalid manifest module description')
+        result['manifest'] = Module('manifest', directory, Path('manifest'), data)
     if 'build' not in result:
         raise ValueError('manifest must include the build tools')
     return {name: replace(module, nested=tuple(other.source for other in result.values()
