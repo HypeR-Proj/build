@@ -14,6 +14,10 @@ import subprocess
 import sys
 import tomllib
 
+# Bootstrap runs in the source checkout; leave bytecode out of its directories.
+sys.dont_write_bytecode = True
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+
 from buildsystem.model import dependency_order, find_workspace
 from buildsystem.prepare import execution
 

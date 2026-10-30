@@ -15,6 +15,10 @@ import tarfile
 import tempfile
 import xml.etree.ElementTree as ET
 
+# Bootstrap runs in the source checkout; leave bytecode out of its directories.
+sys.dont_write_bytecode = True
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
 from buildsystem import files
 from buildsystem.model import discover, manifest_path, relative
