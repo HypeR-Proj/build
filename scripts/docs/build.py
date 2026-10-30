@@ -15,6 +15,7 @@ import sys
 import yaml
 
 from check_links import check_site
+from catalog import render as catalog
 
 
 def build(root, output, repository, revision=None):
@@ -29,8 +30,9 @@ def build(root, output, repository, revision=None):
                    and not name.startswith(('legacy/', 'third_party/')))
     pages = [name for name in files if name.endswith('.md')]
     metadata = root / 'component.json'
+    description = json.loads(metadata.read_text()) if metadata.is_file() else {}
     if metadata.is_file():
-        selected = json.loads(metadata.read_text()).get('documentation', {}).get('pages')
+        selected = description.get('documentation', {}).get('pages')
         if selected is not None:
             if (not isinstance(selected, list) or any(not isinstance(name, str) for name in selected)
                     or len(selected) != len(set(selected))
@@ -48,6 +50,11 @@ def build(root, output, repository, revision=None):
         destination = source / mapping.get(name, name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / name, destination)
+    if manifest := description.get('documentation', {}).get('catalog'):
+        if 'modules.md' in mapping:
+            raise ValueError('modules.md is reserved for the generated documentation catalog')
+        (source / 'modules.md').write_text(catalog(root, manifest, description))
+        mapping['modules.md'] = 'modules.md'
     tools = Path(__file__).resolve().parent
     (source / '_docs_assets').mkdir()
     shutil.copyfile(tools / 'mermaid.js', source / '_docs_assets/mermaid.js')
