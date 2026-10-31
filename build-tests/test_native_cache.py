@@ -81,6 +81,57 @@ class NativeCacheTests(unittest.TestCase):
             self.cache.publish('program', self.command, self.environment, self.log, before)
         self.assertFalse(self.restored())
 
+    def publish_directory(self, directory):
+        escaped = str(directory).replace(' ', '\\ ')
+        self.binary.with_suffix('.d').write_text(f'program: {escaped}\n')
+        self.cache.publish('program', self.command, self.environment, self.log,
+                           {'program': self.cache.source('program')})
+
+    def test_directory_watch_tracks_nested_edits_additions_and_removals(self):
+        directory = self.root / 'include'
+        nested = directory / 'nested'
+        nested.mkdir(parents=True)
+        header = nested / 'header.h'
+        header.write_text('old')
+        self.publish_directory(directory)
+        self.assertTrue(self.restored())
+        previous = header.stat()
+        header.write_text('new')
+        os.utime(header, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        self.assertFalse(self.restored())
+        self.publish_directory(directory)
+        added = nested / 'added.h'
+        added.write_text('added')
+        self.assertFalse(self.restored())
+        self.publish_directory(directory)
+        added.unlink()
+        self.assertFalse(self.restored())
+        self.publish_directory(directory)
+        header.rename(nested / 'renamed.h')
+        self.assertFalse(self.restored())
+
+    def test_directory_watch_follows_links_and_declines_cycles(self):
+        directory = self.root / 'include'
+        directory.mkdir()
+        external = self.root / 'external'
+        external.mkdir()
+        header = external / 'header.h'
+        header.write_text('old')
+        (directory / 'linked').symlink_to(external, target_is_directory=True)
+        self.publish_directory(directory)
+        self.assertTrue(self.restored())
+        header.write_text('new')
+        self.assertFalse(self.restored())
+        self.publish_directory(directory)
+        (external / 'cycle').symlink_to(directory, target_is_directory=True)
+        self.assertFalse(self.restored())
+        self.publish_directory(directory)
+        self.assertFalse(self.restored())
+
+    def test_missing_watched_input_does_not_fail_successful_compile(self):
+        self.publish_directory(self.root / 'missing.h')
+        self.assertFalse(self.restored())
+
     def test_graph_cache_requires_matching_controls_and_valid_body(self):
         calls = []
         def create():

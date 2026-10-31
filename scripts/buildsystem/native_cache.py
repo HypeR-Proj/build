@@ -53,6 +53,23 @@ class Cache:
         self.memo[str(path)] = stamp, value
         return value
 
+    def input(self, path, ancestors=frozenset()):
+        """Cargo rerun-if-changed may name a directory, including linked trees."""
+        path = Path(path)
+        if not path.is_dir():
+            if not path.is_file():
+                raise ValueError(f'uncacheable build dependency: {path}')
+            return self.file(path)
+        info = path.stat()
+        identity = info.st_dev, info.st_ino
+        if identity in ancestors:
+            raise ValueError(f'cyclic build dependency: {path}')
+        # Directory mtimes do not track edits to existing descendants. Inventory
+        # names and hash contents on each check, following links without cycles.
+        children = [(child.name, self.input(child, ancestors | {identity}))
+                    for child in sorted(path.iterdir())]
+        return digest(json.dumps(['directory', children]).encode())
+
     def owner(self, path):
         path = Path(path)
         candidates = [module for module in self.modules.values() if path.is_relative_to(module.source)]
@@ -141,7 +158,7 @@ class Cache:
             return (saved['key'] == self.key(command, environment)
                     and saved['record'] == self.file(log)
                     and all(self.source(owner) == value for owner, value in saved['owners'].items())
-                    and all(self.file(Path(name)) == value for name, value in saved['inputs'].items())
+                    and all(self.input(Path(name)) == value for name, value in saved['inputs'].items())
                     and all(self.file(Path(name)) == value for name, value in saved['outputs'].items()))
         except (OSError, ValueError, KeyError):
             return False
@@ -172,8 +189,15 @@ class Cache:
                         if len(parts) == 2:
                             dependencies.update(directory / value.replace('$$', '$')
                                                 for value in shlex.split(parts[1]))
+        try:
+            inputs = {str(path): self.input(path) for path in dependencies}
+        except (OSError, ValueError):
+            # Missing or cyclic build-script watches cannot establish reuse.
+            # Leave the successful compile intact and let Cargo check next time.
+            (self.directory / 'results' / (label + '.json')).unlink(missing_ok=True)
+            return
         value = {'key': self.key(command, environment), 'owners': before,
                  'record': self.file(log),
-                 'inputs': {str(path): self.file(path) for path in dependencies},
+                 'inputs': inputs,
                  'outputs': {str(path): self.file(path) for path in outputs}}
         files.write(self.directory / 'results' / (label + '.json'), json.dumps(value, sort_keys=True).encode())
