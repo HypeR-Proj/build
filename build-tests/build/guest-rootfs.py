@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -48,6 +49,14 @@ class GuestDiskTests(unittest.TestCase):
             subprocess.run([debugfs, '-R', f'dump /owned {restored}', str(output)],
                            check=True, capture_output=True)
             self.assertEqual(restored.read_bytes(), b'proof')
+            original = guest_disk.packer.digest(output)
+            with output.open('r+b') as disk:
+                disk.write(b'guest changes')
+            with patch.object(guest_disk.subprocess, 'run', wraps=subprocess.run) as commands:
+                guest_disk.build(guest_disk.Board.parse(board), archive, output)
+            self.assertFalse(any(Path(call.args[0][0]).name in ('mke2fs', 'debugfs')
+                                 for call in commands.call_args_list))
+            self.assertEqual(guest_disk.packer.digest(output), original)
             before = output.stat().st_ino
             archive.write_bytes(b'not a tar')
             with self.assertRaises(tarfile.ReadError):

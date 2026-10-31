@@ -4,7 +4,7 @@
 # Incremental builds
 
 Use the normal `make image`, `make app`, and `make native-initramfs` commands.
-Keep `target/` and `kernel/target/` between builds. The first build after changing
+Keep the common OUT directory between builds, including its SDK and build caches. The first build after changing
 the cache layout populates new Cargo directories; subsequent builds reuse them.
 No special incremental-build flag is required.
 
@@ -38,25 +38,37 @@ therefore invalidate these caches. Inputs are checked again before publication;
 if they change during construction, the build fails and should be retried.
 Cargo retains its own upstream freshness rules for Rust compilation.
 
+C runtime translation units retain their objects and compiler depfiles across
+SDK staging directories. Cache keys use source/header contents and compiler
+identity; generated temporary paths do not invalidate unchanged objects. A C
+source edit rebuilds that translation unit, and a header edit rebuilds its users.
+CMake adapters retain a stable source/dependency mirror and build directory per
+configuration, so a changed input does not discard every compiled object.
+
+Formal-system staging validates both inputs and previously stripped outputs.
+Unchanged payloads retain their files and timestamps. The Alpine image builder
+caches an immutable template but always publishes a fresh disposable disk;
+guest writes are never reused as a clean build result.
+
 ## Recovery and costs
 
 Removing an SDK or initramfs output (or its adjacent `.build-state.json`) causes
 reconstruction on the next invocation. Missing extracted guest images are
-regenerated from the guest download cache. `make clean` removes both `target/`
-and `kernel/target/`, including the default persistent board and diagnostic
-disks, and requires a fresh build afterward. Keep disks outside these output
-trees with `BOARD_IMAGE` or `IO_VM_DISK` if they must survive cleaning.
+regenerated from the guest download cache. Root `make clean` removes generated builds, SDKs, views and images inside OUT,
+including default persistent board disks. Saved configurations remain. Keep
+persistent disks outside OUT with `BOARD_IMAGE` or `IO_VM_DISK` if they must
+survive cleaning.
 
 The additional kallsyms and std-mode Cargo directories trade disk space and a
 larger first build for stable subsequent builds. Content validation and small
-host-tool invocations still run on an unchanged build. SDK source changes may
-rebuild its small C runtime, but unchanged installed Rust sources retain their
-Cargo caches. This is not a remote build cache.
+host-tool invocations still run on an unchanged build. SDK source changes rebuild affected Native translation units, while unchanged
+installed Rust sources retain their Cargo caches. This is not a remote build cache.
 
 Do not run independent builds that publish the same output concurrently. SDK
-publication rejects concurrent publishers; kernel architectures also share the
-default `.config`. Build architectures serially, or use separate checkouts.
+publication rejects concurrent publishers. Architectures have separate saved
+configurations and caches; use separate OUT directories for incompatible builds
+of the same architecture.
 
-Run `python3 tests/build/incremental.py` for cache invalidation and failure-path
+Run `python3 project.py exec -- python3 tests/build/incremental.py` for cache invalidation and failure-path
 regressions. It is also included in `python3 project.py test build`. SDK publication
 rollback and publisher exclusion remain covered by `make sdk-check`.

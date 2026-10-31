@@ -7,6 +7,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -313,7 +314,7 @@ def main():
     # Record the installed set only after every copy succeeds. This is
     # provenance for the exact staged files, not a separate dependency graph.
     record = {
-        'source_revision': subprocess.check_output(
+        'source_revision': os.environ.get('HYPER_SOURCE_REVISION') or subprocess.check_output(
             ['git', 'describe', '--always', '--dirty'], cwd=Path(__file__).resolve().parents[1],
             text=True).strip(),
         'rustc': subprocess.check_output(['rustc', '-vV'], text=True),

@@ -1,233 +1,38 @@
-<!--
-SPDX-FileCopyrightText: 2026 roolrz
-SPDX-License-Identifier: Apache-2.0
--->
+<!-- SPDX-FileCopyrightText: 2026 roolrz -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Native component builds
+# Native component composition
 
-The root Makefile is the developer entry point. Cargo owns Rust dependency
-resolution, CMake owns native compilation, and the component registry owns
-delivery metadata. `make app-manifest` prints the selected registry without
-building an SDK. Its first invocation builds the small host Kconfig parser.
+The root Makefile and module Makefiles enter the common build frontend.
+`make prepare` creates an execution view under OUT and installs `mk/system.mk`
+as its backend. Do not edit the generated view.
 
-Make recipes and their phony declarations live with their owner:
-`kernel/Makefile` builds and tests the kernel; `mk/sdk-app.mk` builds the SDK
-and Native programs; `mk/native-tests.mk` owns Native fixtures, including stack
-and GICv2 probes; `mk/boards.mk` composes board images and I/O fixtures. The root
-forwards kernel build/test commands and provides configuration, build, run and
-clean entry points. Cross-component test aggregates live only in
-[`tests/ci/run.sh`](https://github.com/HypeR-Proj/ci/blob/main/ci/README.md), shared by local runs and CI.
+Each repository owns `component.json`, with Cargo membership, explicit build
+steps and image artifact declarations. `mk/components.mk` translates these
+metadata records into the delivery validator's input. Product Kconfig program
+choices are generated from artifact defaults and runtime prerequisites; module
+Kconfig namespaces stay independent.
 
-Kernel target triples, build profile and baseline QEMU settings are owned by
-`kernel/mk/platform.mk`, shared by both Make entry points. Product Make adds
-Native payloads and board devices without maintaining a second platform table.
-
-`make menuconfig` saves component selection to `.config`, which subsequent
-root Make commands read automatically. `SYSTEM_CONFIG=path/to/product.config`
-selects an alternative saved file rather than merging another selection over
-it. See [product configuration](https://hyper-proj.github.io/manifest/docs/configuration.html) for the menus, saved
-format and I/O profile validation. `make app-manifest` prints the resulting
-registry for `APP_BUILD_PROFILE` (normally `system`). Kconfig files own normal defaults and executable dependencies;
-component.mk owns build and delivery metadata. The registry checks that every
-program has a matching boolean option and rejects orphaned Kconfig program options.
-
-Each Native program and shared library declares delivery in its own
-`component.mk`. `mk/components.mk` discovers `app/*/component.mk`, `svc/*/component.mk`,
-`tests/app/*/component.mk`, `bootstrap/stage1/*/component.mk`, `lib/*/component.mk` and
-`stdlib/*/component.mk`, then applies the
-shared templates under `mk/components/`.
-Acceptance-only payloads are declared in `tests/native/component.mk`.
-
-```make
-# source directory, Cargo binary, staged filename, destination, image profiles
-$(eval $(call native-rust-app,app/echo,hyper-echo,echo,bin/echo,development))
-
-# source directory, library filename; the template supplies the library layout
-$(eval $(call native-rust-shared,lib/clap,libhyper_clap_shared.so))
+```sh
+make app-manifest
+make -C app/top OUT=/work/hyper-output
+make native-initramfs OUT=/work/hyper-output
+make menuconfig OUT=/work/hyper-output
 ```
 
-`native-rust-app` also accepts an optional sixth argument (`std` or `core`).
-Its profile argument describes explicit development/IO fixtures; normal-product
-membership is derived from Kconfig. Declare deployed-program prerequisites with
-`depends on` in Kconfig, separately from Cargo crate dependencies. They constrain
-product selection and do not implicitly enable absent programs.
+Cargo owns package dependencies and features. `artifacts.requires` expresses
+installed-program prerequisites, independently of crate dependencies. Normal
+products select enabled artifacts; development and I/O fixtures may explicitly
+request additional profiles. Admission rejects missing required programs and
+invalid storage/profile combinations before publication.
 
-The registry checks each declaration against its Cargo manifest and workspace
-membership. Cargo package names are read from those manifests. Dependencies,
-features and crate types remain in Cargo; the Make templates do not duplicate
-them. Native-only dylib declarations also supply the host-test exclusion list.
-Programs under `app/*/` are discovered by Cargo's member glob; app's `.cargo/`
-and `target/` are excluded. Acceptance programs are separate members under
-`tests/app/*/`, using `workspace = "../../../app"`; ordinary profiles do not
-include them. Add a new program's `Cargo.toml` and `component.mk`
-in its directory. Stage-1 programs select their own workspace with `workspace = ".."`.
-Their device/format implementations belong to the owning executable package;
-`bootstrap/stage1/contracts/` contains protocol source modules rather than a
-separate library workspace. There is no separately maintained deployment JSON
-or test library list.
+Stage 1 and formal userspace use distinct Cargo workspaces and output caches.
+Their artifact `environment` is `boot` or `system`. Native SDK assembly and
+immutable publication remain owned by toolchain adapters. The formal root
+filesystem, boot archive and persistent board partitions retain their separate
+packaging rules.
 
-Each package owns its dependencies and features. Keep dependencies used by only
-one app in that app's manifest (for example, shell's `shlex` and grep's `regex`).
-The workspace supplies shared dependency versions, package metadata, lints and
-build profiles. `app/Cargo.lock` pins formal applications and DSOs;
-`bootstrap/stage1/Cargo.lock` independently pins bootstrap. Source-only changes
-do not require editing either lockfile. Dependency
-changes should update only the relevant lock entries, without unrelated upgrades.
-
-`native-file` registers an explicit SDK, configuration or fixture file, with
-source, destination, mode and profiles, plus an optional `boot` or `system`
-environment (default `system`). Sources can use `{apps}`, `{sdk}`,
-`{std}` and `{arch}` placeholders. `native-symlink` takes target, destination
-and profiles, with the same optional environment. These declarations are repository-controlled Make source, not an
-input format for untrusted manifests.
-
-## Build and composition
-
-`make app` separates static programs owned by `bootstrap/stage1/` from
-ordinary applications and shared libraries. The
-component registry derives this policy from source ownership. Package-qualified
-`APP_FEATURES` and optional probe binaries are routed to their owning graph;
-bootstrap features cannot be unified with shared-library consumers. Installation
-stages the combined application/library set. Compilation selects executable
-roots and lets Cargo build their shared-library dependencies; unrelated dylibs
-are not unconditional Cargo roots. An explicitly requested shared-library
-`APP_FEATURES` entry adds that provider as a build root; a feature for an omitted
-application is rejected instead of silently adding the application back.
-Installation uses Cargo's compiler-artifact
-records from the completed build to identify library providers, instead of
-scanning a directory that may contain stale libraries. The recorded install set
-also retires artifacts from a previous selection in an explicitly reused output
-directory. Installation records its managed paths before replacing files. If it
-fails or is interrupted, packaging rejects the incomplete staging tree; rerunning
-the application build finishes installation and removes unselected artifacts,
-including files copied by the interrupted attempt. Each link graph also separates
-components declared with the optional sixth `native-rust-app` argument `core`
-from the default `std` components. Freestanding components use the SDK's
-`no_std` target directory independently of std feature unification. `make app-check` checks the same component graphs.
-The staging directory's `build-manifest.json` records the source revision,
-compiler, SDK fingerprints, features and exact artifact hashes and sizes.
-Implementation rlibs remain usable by host tests. Native delivery crates select
-their shared dependencies explicitly, including the single Rust std owner.
-The optional probe binaries are selected with `APP_EXTRA_BINS` and installed
-with their `hyper-` prefix removed.
-
-`APP_FEATURES` and `APP_EXTRA_BINS` automatically select a deterministic variant
-subdirectory under both `target/app/<arch>/` and `target/app-cargo/<arch>/`.
-The empty/default configuration retains the ordinary output paths. A
-`SYSTEM_CONFIG` adds its normalized content identity before the feature-variant
-subdirectory; changing the file in place therefore changes both compile and
-staging outputs. Feature, binary and component-set ordering does not affect
-variant identity. Explicit `APP_OUTPUT` and
-`APP_CARGO_OUTPUT` overrides remain available for external test orchestration.
-Architecture is part of the path; the SDK's link/std fingerprints and Rust
-compiler configuration remain Cargo inputs. Do not mix artifacts from separate
-Rust feature graphs, SDKs or compiler builds.
-
-`make app-boot` builds only `APP_BOOT_COMPONENTS` with default Cargo features
-disabled and `HYPER_LINK_MODE=static`. The default selection contains init,
-console-raw, fallback-sh, io-runtime, fs-backend,
-fs-erofs, fs-fat, mount and umount, using their staged names from the same
-component registry. The init, shell and I/O runtime packages use implementation
-rlibs and have no shared-delivery feature. `fs-fat` is compiled statically and
-packaged in boot RAM by default. Omitting a boot component removes it from the
-boot payload. Formal providers are separate components from `svc/`, with distinct
-staged names such as `fs-fat-system`; they are selected independently. Both may
-install as `svc/fs-fat` inside their respective environment. Fstab determines
-the mount phase independently of worker placement.
-
-Bootstrap Cargo artifacts use `APP_BOOT_CARGO_OUTPUT` (by default
-`$(APP_CARGO_OUTPUT)/boot-static`) and are staged under `APP_BOOT_OUTPUT`
-(`$(APP_OUTPUT)/boot-static`). This separate package selection and target
-directory prevent normal workspace builds from enabling shared-library features
-in bootstrap executables. Installation checks every selected ELF for the
-static-image contract before replacing any staged executable. Debug information
-is retained, and the build manifest records static linking and the exact
-component selection. Normal `make app` uses `APP_BUILD_PROFILE=system` and installs stage-1 components
-from the static build tree, excluding development-only probes from compilation
-and installation. Native acceptance and `app-fixtures` explicitly select the
-development profile. The SDK linker rejects dynamic linking
-for packages under `bootstrap/stage1/`, independently of the Make entry point;
-explicit dynamic builds through `hyper-cargo` fail. Static linking checks the
-final ELF as well as the requested flags.
-
-Image composition uses the same product selection as executable compilation.
-Both boot and formal defaults come from registry profile membership. The saved
-configuration filters each environment independently; `APP_BOOT_COMPONENTS`
-is derived from it for the bootstrap build. Recovery/test targets may provide
-a restricted boot selection explicitly. Generated formal service declarations follow the selected
-executables. A required runtime child or bootstrap/adoption program cannot be
-silently omitted. Every selectable boot profile is checked against the actual
-boot archive, including explicitly required workers; undeclared filesystem
-formats discovered only at runtime can still fail mount. Explicit boot
-files such as the loader also declare their image profiles. Rust components derive their environment from their
-source directory. Duplicate destinations within one environment are errors; a
-boot and formal provider can share a relative path. `--replace boot:svc/fs-fat=...`
-and `--replace system:svc/fs-fat=...` select the intended copy. Additional
-`MODE PATH SOURCE` entries accept the same prefixes. An unqualified override is
-accepted only when its destination belongs to one selected environment. New
-additional ELF programs default to `system`; new data entries default to `boot`.
-Rust shared libraries are providers: the packer follows each final ELF's
-`DT_NEEDED` and interpreter to add only its transitive dependencies. Providers
-come from the staged applications and the selected SDK. Standalone fixtures use
-`--library-dir` explicitly. Missing or ambiguous providers fail; host system
-libraries are never used as a fallback. Libraries opened through `dlopen` must
-be explicit `native-file` entries because they do not appear in `DT_NEEDED`.
-
-The final payload is checked for architecture, SONAME and symbol closure before
-publication. Existing symbol policy is preserved: release build artifacts retain
-debug information, and packaging runs only `--strip-debug` on temporary copies.
-The original ELF files, ordinary symbols and dynamic symbols are retained.
-
-## Boot and system images
-
-Default board builds compose static bootstrap executables directly in the
-initial RAM archive root and stage the ordinary executable/DSO closure at
-`system-root/`. The archive becomes `/boot` when stage-1 switches to the independent system root.
-The image
-packer formats that staging as a dedicated EROFS volume; the configuration FAT
-volume remains separate and writable at `/data`. `EROFS_MKFS` selects the host
-`mkfs.erofs` executable. The generated image uses uncompressed 4096-byte core
-format with xattrs disabled. FAT may be selected for a generated system volume;
-its payload must not contain symlinks other than the optional `lib` alias which
-the packer can omit.
-
-The system payload is always independent of the boot archive. The removed
-`BOARD_SYSTEM_LAYOUT` selector is rejected. The bootstrap manifest and generated
-formal units are validated with their production parsers and capability policy,
-without pretending that formal executables live in the archive. The
-bootstrap loader is the only loader in the archive. The formal loader lives
-in the system filesystem with the ordinary executables and libraries. The kernel
-initially mounts the archive at `/`; stage-1 temporarily mounts the system volume
-at `/system`, then switches it to `/` before launching formal init. The image
-contains `/boot`, `/tmp` and `/data` mountpoint directories for the transition.
-`make rpi5-bringup` deliberately builds only static stage-1 recovery, without a
-formal payload. These paths remain userspace policy.
-
-System payload hashing checks for concurrent source changes during composition
-and stale system volumes during subsequent builds. The sidecar record is a
-build consistency check, not runtime authenticity. `board-build` refreshes
-generated EROFS contents while preserving all disk bytes outside that partition;
-it validates GPT, stages a replacement and publishes atomically. Unchanged
-payloads do not rewrite the disk. `board-run` remains validation-only. Resetting
-persistent volumes remains explicit through `make rebuild` or `make board-rebuild`. Default QEMU
-outputs remain under `target/board/qemu/`, and Pi 5 uses
-`target/board/rpi5-native/`. Custom products append their configuration identity
-to the board output, keeping their disks separate from the default product.
-See [boot layout](https://hyper-proj.github.io/bootstrap/docs/boot-layout.html) for deployment policy,
-artifacts, recovery behavior and build commands.
-
-## SDK component cache
-
-The SDK builder uses one CMake invocation template for libsystem, dynamic-loader
-and userspace-loader. Their installed outputs are cached independently beside
-the SDK in `<sdk-output>.components/`, keyed by source/dependency contents,
-compiler/tool identities, configuration and relevant environment. Cache hits
-verify output contents before restoring them into a fresh staging SDK.
-Each loader owns its `elf/` implementation below its source root. Changes to
-that mapper invalidate only its owning loader cache.
-
-This cache does not publish SDKs. The existing SDK publisher continues to
-serialize writers, check inputs again, preserve unchanged timestamps and replace
-the installed SDK only after the entire assembly succeeds. A Rust-source or SDK
-version change can therefore reuse unchanged native components. Removing the
-cache affects build time only.
+See [module metadata and outputs](../docs/module-builds.md),
+[product configuration](https://hyper-proj.github.io/manifest/docs/configuration.html),
+[board storage](../docs/deployment/board-storage.md), and
+[system test cases](https://github.com/HypeR-Proj/system-tests).

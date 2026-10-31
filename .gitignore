@@ -12,7 +12,7 @@
 !/component.json
 !/Makefile
 !/project.py
-!/toml_output.py
+!/rust-toolchain.toml
 !/scripts/
 !/mk/
 !/build-tests/

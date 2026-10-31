@@ -132,10 +132,10 @@ only a runtime binary can leave its Rust generic symbols incompatible with
 previously staged libraries, even when their SONAMEs match.
 
 [Component declarations and templates](https://github.com/HypeR-Proj/build/blob/main/mk/README.md) own installation and
-image membership. Each app or library declares its delivery in `component.mk`;
+image membership. Each app or library declares its delivery in `component.json`;
 [the registry](https://github.com/HypeR-Proj/build/blob/main/mk/components.mk) expands those declarations and checks their
 Cargo targets. `make app-manifest` prints the resulting installation manifest.
-Cargo workspace membership and dependencies remain in Cargo. Service manifests
+Cargo workspace membership is generated from module metadata; package dependencies remain in Cargo. Service manifests
 still own startup and capabilities, and board JSON owns storage and device
 deployment. The registry also determines which delivery dylibs to exclude from
 host test linking.
@@ -273,7 +273,7 @@ sh kernel/tests/ci/run.sh x86_64-build
 ```
 
 QEMU tests track and terminate the processes they create. Failed CI runs retain
-serial logs as artifacts. See [the CI contract](https://github.com/HypeR-Proj/ci/blob/main/ci/README.md) for the
+serial logs as artifacts. See [the CI contract](https://github.com/HypeR-Proj/system-tests/blob/main/ci/README.md) for the
 exact coverage and supported runtime expectations.
 
 ## Repository guide
@@ -411,9 +411,9 @@ appliance and firmware distribution retain their separate provenance and
 corresponding-source requirements.
 
 The root Makefile retains shared defaults and command orchestration; component
-recipes live in `mk/sdk-app.mk`, `mk/native-tests.mk` and `mk/boards.mk`. The
+recipes live in `mk/sdk-app.mk`, `tests/mk/native.mk` and `mk/boards.mk`. The
 console, application and runtime-crash QEMU tests share subprocess ownership,
-serial buffering and deadlines through `tests/qemu/session.py`; their scenario
+serial buffering and deadlines through `test-framework/python/hyper_test/session.py`; their scenario
 assertions stay in each test. Editor metadata and save-time checks use Native
 workspace-local SDK patches; the shared configuration contains no dependency
 patches. Kernel and host-tool lockfiles therefore do not acquire Native

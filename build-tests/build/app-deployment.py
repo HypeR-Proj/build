@@ -772,6 +772,21 @@ class NativePayloadTests(unittest.TestCase):
         self.assertEqual(list(destination.iterdir()), [destination / 'old'])
         self.assertEqual((destination / 'old').read_bytes(), b'previous checked build')
 
+    def test_unchanged_system_payload_reuses_staging_and_rejects_extra_files(self):
+        source = self.root / 'input'
+        source.write_bytes(b'payload')
+        destination = self.root / 'system'
+        checksums = {str(source): split.archive.digest(source)}
+        records = [['0644', 'input', str(source)]]
+        split.stage_system(records, destination, '/unused/strip', checksums)
+        timestamp = (destination / 'input').stat().st_mtime_ns
+        with patch.object(split.shutil, 'copyfile', side_effect=AssertionError('unchanged staging must not recopy')):
+            split.stage_system(records, destination, '/unused/strip', checksums)
+        self.assertEqual((destination / 'input').stat().st_mtime_ns, timestamp)
+        (destination / 'unexpected').write_bytes(b'stale')
+        split.stage_system(records, destination, '/unused/strip', checksums)
+        self.assertFalse((destination / 'unexpected').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

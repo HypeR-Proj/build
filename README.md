@@ -1,30 +1,29 @@
-<!--
-SPDX-FileCopyrightText: 2026 roolrz
-SPDX-License-Identifier: Apache-2.0
--->
+<!-- SPDX-FileCopyrightText: 2026 roolrz -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # HypeR build tools
 
-This repository provides Make rules, build scripts and development tools.
-The [manifest](https://github.com/HypeR-Proj/manifest) checks it out at the
-workspace root and places each source repository at its declared path.
-Product configuration and workspace composition belong to the manifest.
-
-From a synchronized workspace:
+The manifest checks this repository out at the source workspace root. It owns
+build adapters, composition tools and common development commands. Repository
+paths and product descriptions belong to the [manifest](https://github.com/HypeR-Proj/manifest).
 
 ```sh
-make native-initramfs ARCH=aarch64
-python3 project.py test kernel
-python3 project.py prepare
+make prepare OUT=$PWD/out
+make rebuild OUT=$PWD/out ARCH=aarch64
+make -C app/top OUT=$PWD/out
+make menuconfig OUT=$PWD/out
+make test MODULE=build OUT=$PWD/out
 ```
 
-`prepare` records source commits and file hashes in `source-inventory.json`.
-It does not copy sources or change Cargo manifests. Edit files in their checked-out
-repositories and build them directly. `project.py archive OUTPUT.tar.xz` collects
-all tracked project sources and manifest links for redistribution.
+Every normal Make invocation runs preparation automatically. Sources remain in
+their repositories; generated Cargo workspaces, editor settings, configurations,
+caches and images live under `OUT`. Open `out/HypeR-aarch64.code-workspace` in
+VS Code after preparing the SDK with `make sdk`.
 
-Each component owns its test commands in `component.json`; `{component}` is its
-checkout and `{system}` is the workspace root. System acceptance is manually
-started in the [CI repository](https://github.com/HypeR-Proj/ci).
+Each repository declares its build, tests, optional Kconfig and delivered files
+in `component.json`. Adding a module updates that repository and the manifest;
+it does not require a new hard-coded module list here or in HypeR's documentation.
 
-See [HypeR](https://github.com/HypeR-Proj/HypeR) for setup and documentation.
+See [getting started](docs/getting-started.md), [module metadata and outputs](docs/module-builds.md),
+[incremental builds](docs/incremental-builds.md), and [Native composition](mk/README.md).
+System acceptance is started manually in the [CI repository](https://github.com/HypeR-Proj/ci).

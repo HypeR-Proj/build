@@ -309,7 +309,8 @@ class ProductTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f'--kernel-input "{ROOT}/kernel/configs/qemu_aarch64_defconfig"', result.stdout)
-        self.assertIn(f'--kernel-output "{ROOT}/kernel/.config"', result.stdout)
+        output = Path(os.environ.get('HYPER_BUILD_OUTPUT', ROOT / 'target'))
+        self.assertIn(f'--kernel-output "{output}/config/aarch64/modules/kernel.config"', result.stdout)
 
     def test_kernel_generation_and_output_failures_preserve_both_configs(self):
         product = self.root / 'product.config'

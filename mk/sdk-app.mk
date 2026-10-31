@@ -12,7 +12,7 @@ ifeq ($(origin APP_BOOT_COMPONENTS),undefined)
 APP_BOOT_COMPONENTS := $(shell python3 -B scripts/app-deployment.py boot-components --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS))
 endif
 APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
-APP_BOOT_CARGO_OUTPUT ?= $(APP_CARGO_OUTPUT)/boot-static
+APP_BOOT_CARGO_OUTPUT ?= $(if $(HYPER_BUILD_OUTPUT),$(HYPER_BUILD_OUTPUT)/build/native/$(NATIVE_ARCH)/boot$(APP_VARIANT),$(APP_CARGO_OUTPUT)/boot-static)
 APP_BOOT_SELECTION = $(addprefix --component ,$(APP_BOOT_COMPONENTS))
 
 .PHONY: sdk sdk-check sdk-test app app-fetch app-check app-test app-manifest
@@ -98,7 +98,7 @@ rust-std-test: sdk
 		"$(SDK_OUTPUT)" "$(CURDIR)/target/module-rust-std" sdk/toolchain/tests/std-smoke/Cargo.toml
 
 app-fetch: sdk
-	python3 -B .workspace/tests/check-workspace.py
+	python3 -B scripts/check-workspace.py
 	@set -e; for workspace in app bootstrap/stage1; do \
 	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
 		"$(SDK_OUTPUT)/bin/hyper-cargo" fetch --manifest-path "$$workspace/Cargo.toml" --locked; \

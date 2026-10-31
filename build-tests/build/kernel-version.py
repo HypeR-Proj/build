@@ -7,6 +7,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -71,6 +72,14 @@ class Version(unittest.TestCase):
     def test_archive_is_explicitly_unknown(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIn("HYPER_BUILD_REVISION=unknown\n", self.metadata(Path(directory)))
+
+    def test_archive_inside_another_repository_uses_its_own_provenance(self):
+        root = self.root / 'archive/kernel'
+        root.mkdir(parents=True)
+        self.assertIn('HYPER_BUILD_REVISION=unknown\n', self.metadata(root))
+        (root.parent / 'source-inventory.json').write_text(json.dumps({'components': {'kernel': {
+            'commit': 'f' * 40, 'dirty': True, 'files': {'source.rs': 'modified'}}}}))
+        self.assertIn('HYPER_BUILD_REVISION=ffffffffffff-dirty\n', self.metadata(root))
 
     def test_reproducible_timestamp_and_invalid_input(self):
         self.assertIn("HYPER_BUILD_TIMESTAMP=1970-01-01T00:00:00Z", self.metadata())
