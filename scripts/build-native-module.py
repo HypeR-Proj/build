@@ -13,6 +13,7 @@ import sys
 import tomllib
 
 from buildsystem.model import discover, relative
+from buildsystem.toolchain import native_environment
 
 
 def main():
@@ -41,7 +42,7 @@ def main():
         caches[domain] = cache
         log = output / 'build' / module.name / f'artifacts-{domain}-{runtime}.jsonl'
         log.parent.mkdir(parents=True, exist_ok=True)
-        environment = {**os.environ, 'CARGO_TARGET_DIR': str(cache), 'HYPER_SYSROOT': str(sdk),
+        environment = {**native_environment(root), 'CARGO_TARGET_DIR': str(cache), 'HYPER_SYSROOT': str(sdk),
                        'HYPER_ARCH': arch, 'HYPER_LINK_MODE': 'static' if domain == 'boot' else 'dynamic',
                        'HYPER_RUST_STD': '0' if runtime == 'core' else '1'}
         command = [str(sdk / 'bin/hyper-cargo'), 'check' if args.action == 'check' else 'build',

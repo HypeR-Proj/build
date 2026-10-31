@@ -1040,3 +1040,31 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "hyper-f2fs-smoke"
+version = "0.0.0"
+dependencies = [
+ "hyper-fs-f2fs",
+ "hyper-os",
+ "hyper-rt",
+]
+
+[[package]]
+name = "hyper-fs-f2fs"
+version = "0.0.0"
+dependencies = [
+ "hyper-os",
+]
+
+[[package]]
+name = "hyper-fs-f2fs-system"
+version = "0.0.0"
+dependencies = [
+ "hyper-filesystem",
+ "hyper-fs-f2fs",
+ "hyper-fs-service",
+ "hyper-os",
+ "hyper-rt",
+ "hyper-service",
+]
