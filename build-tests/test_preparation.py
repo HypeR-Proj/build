@@ -106,8 +106,8 @@ class PreparationTests(unittest.TestCase):
         other = self.root.parent / 'another-source'
         other.mkdir()
         (other / 'manifest').symlink_to(self.root / '.repo/manifests', target_is_directory=True)
-        for path in ('component.json', 'modules'):
-            (other / path).symlink_to(self.root / path)
+        (other / 'component.json').write_bytes((self.root / 'component.json').read_bytes())
+        (other / 'modules').symlink_to(self.root / 'modules')
         with self.assertRaisesRegex(ValueError, 'another workspace'):
             prepare(other, self.output)
         with self.assertRaisesRegex(ValueError, 'must not contain'):
@@ -221,7 +221,7 @@ with execution(Path(sys.argv[1]), Path(sys.argv[2])):
         self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
         configuration.write_text('before')
         self.assertIsNone(cached(self.root, self.output, 'riscv64', launch=True))
-        self.describe('alpha', 'modules/alpha', description='changed metadata')
+        self.describe('alpha', 'modules/alpha', documentation={'title': 'changed metadata'})
         self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
         prepare(self.root, self.output)
         (self.output / 'workspace-owner.json').write_text('{"workspace":"another","version":1}')

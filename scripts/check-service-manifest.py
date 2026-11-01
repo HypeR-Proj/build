@@ -53,11 +53,15 @@ def main():
     # Source deployments may mix boot and formal services. Their composition
     # belongs to formal service management; the core graph uses bootstrap policy.
     system = not bootstrap and ('--components' in arguments or '--core' in arguments or includes_formal_services(Path(sys.argv[1])))
-    workspace = 'app' if system else 'bootstrap/stage1'
+    workspace = 'svc/system-startup' if system else 'bootstrap/stage1'
     package = 'hyper-system-startup' if system else 'hyper-bootstrap-stage1-init'
+    patches = []
+    for name, path in [('hyper-abi', root / 'sdk/abi'), *[(name, root / 'stdlib/rust' / name)
+                       for name in ('hyper-os', 'hyper-filesystem', 'hyper-rt', 'hyper-sys')]]:
+        patches += ['--config', f'patch.crates-io.{name}.path={str(path)!r}']
     result = subprocess.run([
         'cargo', 'run', '--quiet', '--locked', '--target', host,
-        '-p', package, '--example', 'check-services', '--',
+        *patches, '-p', package, '--example', 'check-services', '--',
         *profile, str(Path(sys.argv[1]).resolve()), *arguments,
     ], cwd=root / workspace, env=environment)
     raise SystemExit(result.returncode)

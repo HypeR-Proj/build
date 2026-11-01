@@ -3,9 +3,9 @@
 
 # HypeR build tools
 
-The manifest checks this repository out at `build/` inside the source workspace.
-The workspace root has no Git repository; repo creates only the `Makefile` and
-`project.py` entry links there. It owns
+The manifest checks this repository out at `build/system/` inside the source workspace.
+The workspace root has no Git repository; repo creates the `Makefile`,
+`project.py`, `.vscode` and `.clang-format` links there. It owns
 build adapters, composition tools and common development commands. Repository
 paths and product descriptions belong to the [manifest](https://github.com/HypeR-Proj/manifest).
 
@@ -18,7 +18,7 @@ make test MODULE=build OUT=$PWD/out
 ```
 
 Every normal Make invocation runs preparation automatically. Sources remain in
-their repositories; generated Cargo workspaces, editor settings, configurations,
+their repositories; prepared build controls, editor settings, configurations,
 caches and images live under `OUT`. Open `out/HypeR-aarch64.code-workspace` in
 VS Code after preparing the SDK with `make sdk`.
 
@@ -26,6 +26,6 @@ Each repository declares its build, tests, optional Kconfig and delivered files
 in `component.json`. Adding a module updates that repository and the manifest;
 it does not require a new hard-coded module list here or in HypeR's documentation.
 
-See [getting started](docs/getting-started.md), [module metadata and outputs](docs/module-builds.md),
+See [getting started](https://hyper-proj.github.io/HypeR/docs/learn/getting-started.html), [module metadata and outputs](docs/module-builds.md),
 [incremental builds](docs/incremental-builds.md), and [Native composition](mk/README.md).
 System acceptance is started manually in the [CI repository](https://github.com/HypeR-Proj/ci).

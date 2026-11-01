@@ -100,32 +100,14 @@ rust-std-test: sdk
 
 app-fetch: sdk
 	python3 -B scripts/check-workspace.py
-	@set -e; for workspace in app bootstrap/stage1; do \
-	HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" fetch --manifest-path "$$workspace/Cargo.toml" --locked; \
-	done
+	SDK_OUTPUT="$(SDK_OUTPUT)" python3 -B scripts/build-native-module.py --action fetch
 
 app: app-fetch
 	mkdir -p "$(APP_OUTPUT)" "$(APP_CARGO_OUTPUT)"
-	@set -e; for link_mode in static dynamic; do for rust_runtime in core std; do \
-	workspace=app; build_directory="$(APP_CARGO_OUTPUT)"; \
-	if test "$$link_mode" = static; then workspace=bootstrap/stage1; build_directory="$(APP_BOOT_CARGO_OUTPUT)"; fi; \
-	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
-	record="$(APP_CARGO_OUTPUT)/artifacts-$$link_mode-$$rust_runtime.jsonl"; : > "$$record"; \
-	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
-		--manifest "$(APP_DEPLOYMENT)" --profile "$(APP_BUILD_PROFILE)" \
-		$(SYSTEM_CONFIG_ARGS) --executable-roots \
-		--link-mode "$$link_mode" --rust-runtime "$$rust_runtime" \
-		--features "$(APP_FEATURES)" \
-		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))) || exit $$?; \
-	test -n "$$app_targets" || continue; \
-	CARGO_TARGET_DIR="$$build_directory" HYPER_LINK_MODE="$$link_mode" \
-		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD="$$rust_std" "$(SDK_OUTPUT)/bin/hyper-cargo" build \
-		--manifest-path "$$workspace/Cargo.toml" --release --locked --offline \
-		--message-format=json-render-diagnostics $$app_targets > "$$record"; \
-	done; done
+	SDK_OUTPUT="$(SDK_OUTPUT)" python3 -B scripts/build-native-module.py \
+		--profile "$(APP_BUILD_PROFILE)" $(SYSTEM_CONFIG_ARGS) --features "$(APP_FEATURES)" \
+		--system-cache "$(APP_CARGO_OUTPUT)" --boot-cache "$(APP_BOOT_CARGO_OUTPUT)" \
+		$(addprefix --extra-bin ,$(APP_EXTRA_BINS))
 	python3 -B scripts/app-deployment.py install --manifest "$(APP_DEPLOYMENT)" \
 		$(SYSTEM_CONFIG_ARGS) \
 		--profile "$(APP_BUILD_PROFILE)" \
@@ -190,37 +172,14 @@ endif
 		"$(NATIVE_STD_TEST_OUTPUT)" sdk/toolchain/tests/std-smoke/Cargo.toml
 
 app-check: app-fetch
-	$(CARGO) fmt --manifest-path "app/Cargo.toml" --all -- --check
-	$(CARGO) fmt --manifest-path "bootstrap/stage1/Cargo.toml" --all -- --check
-	@set -e; for link_mode in static dynamic; do for rust_runtime in core std; do \
-	workspace=app; if test "$$link_mode" = static; then workspace=bootstrap/stage1; fi; \
-	rust_std=1; if test "$$rust_runtime" = core; then rust_std=0; fi; \
-	app_targets=$$(python3 -B scripts/app-deployment.py cargo-targets \
-		--manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS) --executable-roots \
-		--link-mode "$$link_mode" --rust-runtime "$$rust_runtime") || exit $$?; \
-	test -n "$$app_targets" || continue; \
-	CARGO_TARGET_DIR="$(APP_CARGO_OUTPUT)" HYPER_LINK_MODE="$$link_mode" \
-		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
-		HYPER_RUST_STD="$$rust_std" "$(SDK_OUTPUT)/bin/hyper-cargo" clippy \
-		--manifest-path "$$workspace/Cargo.toml" --locked --offline $$app_targets -- -D warnings; \
-	done; done
+	python3 -B scripts/native-host.py --action fmt
+	SDK_OUTPUT="$(SDK_OUTPUT)" python3 -B scripts/build-native-module.py --action check $(SYSTEM_CONFIG_ARGS)
 
-# APP_TEST_WORKSPACE selects a domain for a targeted APP_TEST_PACKAGE run.
-APP_TEST_WORKSPACE ?= app
-NATIVE_HOST_WORKSPACES = $(if $(APP_TEST_PACKAGE),$(APP_TEST_WORKSPACE),app bootstrap/stage1)
+# Resolve a selected package to its owning repository, never a global Cargo workspace.
 define native-host-tests
-	@set -e; for workspace in $(NATIVE_HOST_WORKSPACES); do \
-	excludes=; if test "$$workspace" = app; then excludes='$(APP_HOST_EXCLUDES)'; fi; \
-	CARGO_TARGET_DIR="$(CURDIR)/target/app-host-tests" $(CARGO) test \
-		--manifest-path "$$workspace/Cargo.toml" $(if $(APP_TEST_PACKAGE),-p "$(APP_TEST_PACKAGE)",--workspace $$excludes) \
-		--target "$(HOST_TARGET)" --locked $(3) $(APP_TEST_ARGS) \
-		--config "patch.crates-io.hyper-abi.path = '$(1)'" \
-		--config "patch.crates-io.hyper-os.path = '$(2)/hyper-os'" \
-		--config "patch.crates-io.hyper-filesystem.path = '$(2)/hyper-filesystem'" \
-		--config "patch.crates-io.hyper-rt.path = '$(2)/hyper-rt'" \
-		--config "patch.crates-io.hyper-sys.path = '$(2)/hyper-sys'"; \
-	done
+	python3 -B scripts/native-host.py --action test --target "$(HOST_TARGET)" \
+		--abi "$(1)" --rust "$(2)" $(if $(APP_TEST_PACKAGE),--package "$(APP_TEST_PACKAGE)") \
+		-- $(3) $(APP_TEST_ARGS)
 endef
 
 app-test:
@@ -229,11 +188,8 @@ app-test:
 .PHONY: component-check
 component-check: sdk
 	@test -n "$(APP_TEST_PACKAGE)" || { echo "APP_TEST_PACKAGE is required" >&2; exit 2; }
-	CARGO_TARGET_DIR="$(CURDIR)/target/component-check" \
-		HYPER_ARCH="$(NATIVE_ARCH)" HYPER_SYSROOT="$(SDK_OUTPUT)" \
-		HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" HYPER_RUST_STD=1 \
-		"$(SDK_OUTPUT)/bin/hyper-cargo" check --manifest-path "$(APP_TEST_WORKSPACE)/Cargo.toml" \
-		--locked -p "$(APP_TEST_PACKAGE)"
+	SDK_OUTPUT="$(SDK_OUTPUT)" python3 -B scripts/native-host.py --action check \
+		--package "$(APP_TEST_PACKAGE)"
 
 app-sdk-test: app-fetch
 	$(call native-host-tests,$(SDK_OUTPUT)/share/hyper/abi,$(SDK_OUTPUT)/share/hyper/rust,--offline)

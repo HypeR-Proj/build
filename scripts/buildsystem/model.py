@@ -11,6 +11,8 @@ import re
 import subprocess
 import xml.etree.ElementTree as ET
 
+from .components import load as load_components
+
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*\Z')
 
 
@@ -35,7 +37,7 @@ def manifest_path(root):
     exported = root / 'source-inventory.json'
     if exported.is_file() and (selected := json.loads(exported.read_bytes()).get('manifest')):
         return root / relative(selected)
-    for path in (root / '.repo/manifests/default.xml', root / 'manifest/default.xml', root / '.workspace/default.xml'):
+    for path in (root / '.repo/manifests/default.xml', root / 'manifest/default.xml'):
         if path.is_file():
             return path
     raise ValueError(f'no source manifest in {root}; initialize a repo workspace first')
@@ -66,7 +68,12 @@ class Module:
 
     @property
     def build(self):
-        return self.metadata.get('build', {})
+        recipe = self.metadata.get('build', {})
+        if recipe.get('type') == 'group':
+            return {**recipe, 'requires': list(dict.fromkeys([
+                *recipe.get('requires', []),
+                *[item['project'] for item in self.metadata.get('include', [])]]))}
+        return recipe
 
     @property
     def configuration(self):
@@ -150,10 +157,7 @@ def discover(root):
         description = source / 'component.json'
         if not description.is_file():
             raise ValueError(f'{name}: missing component.json; run repo sync')
-        data = json.loads(description.read_bytes())
-        if data.get('version') != 1 or data.get('name') != name:
-            raise ValueError(f'{name}: module description differs from the manifest')
-        result[name] = Module(name, source, path, data)
+        result[name] = Module(name, source, path, {})
     if 'manifest' not in result:
         directory = manifest_directory(manifest)
         data = json.loads((directory / 'component.json').read_bytes())
@@ -162,6 +166,14 @@ def discover(root):
         result['manifest'] = Module('manifest', directory, Path('manifest'), data)
     if 'build' not in result:
         raise ValueError('manifest must include the build tools')
+    # System catalogs explicitly register projects. Small standalone fixtures
+    # can use a flat manifest without an include catalog.
+    entry = ('build' if 'include' in json.loads((result['build'].source / 'component.json').read_text())
+             else list(result))
+    metadata, _ = load_components({name: module.source for name, module in result.items()}, entry)
+    if missing := result.keys() - metadata.keys():
+        raise ValueError(f'manifest projects missing from component catalogs: {sorted(missing)}')
+    result = {name: replace(module, metadata=metadata[name]) for name, module in result.items()}
     return {name: replace(module, nested=tuple(other.source for other in result.values()
                                                if other.source != module.source
                                                and other.source.is_relative_to(module.source)))

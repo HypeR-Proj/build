@@ -96,10 +96,13 @@ class BuildLocationTests(unittest.TestCase):
         self.command(restored / 'modules/alpha', 'make')
         self.assertEqual((restored / 'out/build/alpha/result').read_text(), 'built')
 
-    def test_source_documentation_uses_build_owner_without_preparation(self):
-        checker = self.tools / 'scripts/docs/check-source.py'
+    def test_source_documentation_uses_docs_owner_without_preparation(self):
+        checker = self.root / 'docs/tools/check-source.py'
         checker.parent.mkdir(parents=True)
-        shutil.copy2(ROOT / 'scripts/docs/check-source.py', checker)
+        shutil.copy2(discover(find_workspace(ROOT))['docs'].source / 'tools/check-source.py', checker)
+        (self.root / 'docs/component.json').write_text(json.dumps({'name': 'docs', 'version': 1}))
+        manifest = self.root / '.repo/manifests/default.xml'
+        manifest.write_text(manifest.read_text().replace('</manifest>', '<project name="docs" path="docs"/></manifest>'))
         readme = self.module / 'README.md'
         readme.write_text('[Metadata](component.json)\n')
         result = self.command(self.root, sys.executable, 'project.py', 'check-docs', str(self.module))

@@ -11,6 +11,10 @@ import sys
 
 def native_environment(root, environment=None):
     result = dict(os.environ if environment is None else environment)
+    # Launcher metadata is not part of the Native build contract. Do not let
+    # build scripts observe values deliberately excluded from cache identity.
+    for name in ('SHLVL', 'XPC_SERVICE_NAME'):
+        result.pop(name, None)
     upstream = Path('/opt/homebrew/opt/llvm/bin/clang')
     default = str(upstream) if sys.platform == 'darwin' and upstream.is_file() else 'clang'
     compiler = result.get('HYPER_CLANG') or result.get('CLANG') or default

@@ -13,20 +13,7 @@
     "[cpp]": {
         "editor.tabSize": 8
     },
-    "rust-analyzer.linkedProjects": [
-        // Includes all seven kernel crates; Cargo discovers their module layout.
-        "kernel/Cargo.toml",
-        "sdk/abi/Cargo.toml",
-        "stdlib/rust/Cargo.toml",
-        // app also owns svc/, lib/ and tests/app/; do not link those members twice.
-        // Bootstrap and standalone Native init fixtures have independent workspaces.
-        "app/Cargo.toml",
-        "bootstrap/stage1/Cargo.toml",
-        "tests/native/io-smoke/Cargo.toml",
-        "sdk/toolchain/tests/rust-smoke/Cargo.toml",
-        "sdk/toolchain/tests/std-smoke/Cargo.toml",
-        "build/tools/fit-pack/Cargo.toml"
-    ],
+    "rust-analyzer.linkedProjects": [],
     "rust-analyzer.cargo.configPath": ".vscode/rust-analyzer.toml",
     "rust-analyzer.cargo.sysrootSrc": "target/sdk/aarch64/share/hyper/rust-src/library",
     "rust-analyzer.cargo.extraEnv": {
@@ -35,10 +22,14 @@
     },
     "rust-analyzer.cargo.buildScripts.invocationStrategy": "per_workspace",
     "rust-analyzer.cargo.buildScripts.overrideCommand": [
-        "sh", "-c", "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; exec sh \"$root/scripts/rust-analyzer-check.sh\""
+        "sh",
+        "-c",
+        "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; script=\"$root/scripts/rust-analyzer-check.sh\"; if [ ! -f \"$script\" ]; then script=\"$(python3 \"$root/project.py\" path build)/scripts/rust-analyzer-check.sh\"; fi; exec sh \"$script\""
     ],
     "rust-analyzer.check.invocationStrategy": "per_workspace",
     "rust-analyzer.check.overrideCommand": [
-        "sh", "-c", "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; exec sh \"$root/scripts/rust-analyzer-check.sh\""
+        "sh",
+        "-c",
+        "root=$PWD; while [ ! -f \"$root/project.py\" ]; do [ \"$root\" != / ] || exit 2; root=$(dirname \"$root\"); done; script=\"$root/scripts/rust-analyzer-check.sh\"; if [ ! -f \"$script\" ]; then script=\"$(python3 \"$root/project.py\" path build)/scripts/rust-analyzer-check.sh\"; fi; exec sh \"$script\""
     ]
 }

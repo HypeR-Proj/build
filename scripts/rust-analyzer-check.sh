@@ -2,54 +2,6 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
 
-# rust-analyzer runs this from each linked Cargo workspace. Use the same Native
-# driver as production, while preserving kernel/tool workspace target settings.
 set -eu
 script_directory=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
-root=$(CDPATH='' cd -- "$script_directory/.." && pwd -P)
-PATH="$PATH:$HOME/.cargo/bin"
-arch=${ARCH:-aarch64}
-output=${HYPER_BUILD_OUTPUT:-$root/target}
-
-# Resolve ownership, not directory ancestry: bootstrap/stage1 owns its static workspace;
-# svc, system libraries and tests/app belong to app/, while Native bindings own stdlib/rust/.
-# External members do not inherit app/.cargo/config.toml from their directory.
-# A direct invocation from the product root checks its Native workspace.
-if [ "$(pwd -P)" = "$root" ]; then
-    cd "$root/app"
-fi
-manifest=$(cargo locate-project --workspace --message-format plain)
-workspace=$(CDPATH='' cd -- "$(dirname "$manifest")" && pwd -P)
-cd "$workspace"
-config=$workspace/.cargo/config.toml
-
-case "$workspace" in
-    "$root/app" | "$root/bootstrap/stage1" | "$root/tests/native/io-smoke" | "$root/sdk/toolchain/tests/std-smoke" | "$root/sdk/toolchain/tests/rust-smoke")
-        sdk=${SDK_OUTPUT:-$output/sdk/$arch}
-        if [ ! -x "$sdk/bin/hyper-cargo" ]; then
-            echo "rust-analyzer: run make sdk ARCH=$arch to prepare Native std" >&2
-            exit 2
-        fi
-        export HYPER_SYSROOT="$sdk" HYPER_ARCH="$arch" HYPER_RUST_STD=1 HYPER_LINK_MODE=dynamic
-        if [ "$workspace" = "$root/sdk/toolchain/tests/rust-smoke" ]; then
-            HYPER_RUST_STD=0
-        fi
-        case "$workspace" in
-            "$root/bootstrap/stage1" | "$root/tests/native/io-smoke")
-                export HYPER_LINK_MODE=static
-                ;;
-        esac
-        # Keep navigation on repository SDK sources, not the installed copies.
-        # Native executables have no host test harness.
-        exec "$sdk/bin/hyper-cargo" check --workspace --locked --message-format=json \
-            --config "$config" --target-dir "$output/build/rust-analyzer/$arch/native"
-        ;;
-    *)
-        # Kernel/tool workspaces must not receive app SDK patches: in those
-        # workspaces they create unused-patch warnings and alter resolution.
-        # Preserve the board configuration needed by the kernel build script.
-        export HYPER_CONFIG="${HYPER_CONFIG:-$root/kernel/configs/qemu_aarch64_defconfig}"
-        exec cargo check --workspace --all-targets --locked --message-format=json \
-            --target-dir "$output/build/rust-analyzer/$arch/host"
-        ;;
-esac
+exec python3 -B "$script_directory/rust-analyzer-check.py"

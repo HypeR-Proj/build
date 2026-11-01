@@ -1,0 +1,73 @@
+{
+  "SPDX-FileCopyrightText": "2026 roolrz",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "version": 1,
+  "include": [
+    {
+      "project": "lib-block"
+    },
+    {
+      "project": "lib-bootstrap-handoff"
+    },
+    {
+      "project": "lib-clap"
+    },
+    {
+      "project": "lib-component"
+    },
+    {
+      "project": "lib-component-config"
+    },
+    {
+      "project": "lib-dynamic-loader"
+    },
+    {
+      "project": "lib-fs-service"
+    },
+    {
+      "project": "lib-journal-client"
+    },
+    {
+      "project": "lib-service"
+    },
+    {
+      "project": "lib-service-ipc"
+    },
+    {
+      "project": "lib-terminal"
+    },
+    {
+      "project": "lib-text-ui"
+    },
+    {
+      "project": "lib-tool-args"
+    },
+    {
+      "project": "lib-vm-image"
+    },
+    {
+      "project": "lib-vm-policy"
+    },
+    {
+      "project": "lib-vm-support"
+    },
+    {
+      "project": "lib-system"
+    },
+    {
+      "project": "lib-musl"
+    },
+    {
+      "project": "lib-cxx"
+    },
+    {
+      "project": "lib-rust"
+    },
+    {
+      "project": "lib-rust-std"
+    },
+    {
+      "project": "lib-rust-fatfs"
+    }
+  ]
+}

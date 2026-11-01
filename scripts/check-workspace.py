@@ -45,7 +45,7 @@ def check_abi(root):
         raise ValueError('kernel core must consume the in-tree hyper-abi crate')
 
 
-def check_native_workspace(root, relative, allowed, forbidden=()):
+def check_native_workspace(root, relative, allowed, forbidden=(), registered=None):
     app = root / relative
     workspace_manifest = read_manifest(app / 'Cargo.toml')
     inherited_dependencies = workspace_manifest.get('workspace', {}).get('dependencies', {})
@@ -55,6 +55,7 @@ def check_native_workspace(root, relative, allowed, forbidden=()):
             raise ValueError(f'Native workspace member escapes {relative} dependency boundary: {directory}')
         members[directory] = read_manifest(directory / 'Cargo.toml')
     pending = [(app, workspace_manifest), *members.items()]
+    providers = {**members, **(registered or {})}
     visited = set()
     # Walk every dependency context, including optional, build, dev and cfg
     # edges. A currently inactive feature must not bypass the ownership rule.
@@ -82,21 +83,26 @@ def check_native_workspace(root, relative, allowed, forbidden=()):
                     raise ValueError(f'{target}: dependency package name does not match {name}')
                 pending.append((target, dependency))
                 continue
-            if target not in members or members[target]['package']['name'] != name:
+            if target not in providers or providers[target]['package']['name'] != name:
                 raise ValueError(f'{directory}/Cargo.toml: {alias} must use the installed SDK '
-                                 'or a member of its own Native workspace')
+                                 'or a registered Native repository')
+            pending.append((target, providers[target]))
 
 
 def check_apps(root):
-    # Real execution views use repository declarations; compact unit fixtures
-    # can still exercise boundary checks without constructing a repo checkout.
-    allowed = ('app', 'svc', 'tests/app', 'lib', 'stdlib/rust-std')
-    if (root / 'modules.json').is_file():
-        from buildsystem.model import discover
-        allowed = tuple(module.path / Path(entry['manifest']).parent
-                        for module in discover(root).values()
-                        for entry in module.metadata.get('cargo', []) if entry['domain'] == 'system')
-    check_native_workspace(root, 'app', allowed)
+    from buildsystem.model import discover
+    modules = discover(root)
+    registered = {(module.source / Path(entry['manifest']).parent).resolve():
+                  read_manifest(module.source / entry['manifest'])
+                  for module in modules.values() for entry in module.metadata.get('cargo', [])
+                  if entry['domain'] == 'system'}
+    for module in modules.values():
+        if not any(entry['domain'] == 'system' for entry in module.metadata.get('cargo', [])):
+            continue
+        declared = {module.source / Path(entry['manifest']).parent for entry in module.metadata['cargo']}
+        if member_directories(module.source / 'Cargo.toml') != declared:
+            raise ValueError(f'{module.name}: Cargo workspace members must match repository component declarations')
+        check_native_workspace(root, str(module.path), (module.path,), registered=registered)
 
 
 def check_bootstrap(root):

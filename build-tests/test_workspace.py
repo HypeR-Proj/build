@@ -29,6 +29,10 @@ class WorkspaceTests(unittest.TestCase):
         self.write('kernel/core/Cargo.toml', '[dependencies]\n'
                    'abi = {package = "hyper-abi", path = "../../sdk/abi"}\n')
 
+    def check_component(self):
+        # This fixture is one repository with several Cargo members.
+        workspace.check_native_workspace(self.root, 'app', ('app',))
+
     def write(self, relative, content):
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +42,7 @@ class WorkspaceTests(unittest.TestCase):
         # An explanation or a URL is not a dependency declaration.
         with (self.root / 'app/tool/Cargo.toml').open('a') as stream:
             stream.write('# hyper-sys is intentionally unavailable here\n')
-        workspace.check_apps(self.root)
+        self.check_component()
         workspace.check_abi(self.root)
 
     def test_glob_members_still_enforce_dependency_policy(self):
@@ -47,11 +51,11 @@ class WorkspaceTests(unittest.TestCase):
         self.write('app/README.md', 'not a package')
         self.write('app/.cargo/config.toml', '')
         self.write('app/target/Cargo.toml', 'not a package manifest')
-        workspace.check_apps(self.root)
+        self.check_component()
         self.write('app/new-tool/Cargo.toml', '[package]\nname = "new-tool"\n'
                    '[dependencies]\nhyper-sys = "=0.0.0"\n')
         with self.assertRaisesRegex(ValueError, 'raw syscalls'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
     def test_aliased_raw_syscalls_in_every_dependency_context(self):
         for section in ('dependencies', 'dev-dependencies', 'build-dependencies',
@@ -61,28 +65,28 @@ class WorkspaceTests(unittest.TestCase):
                 self.write('app/tool/Cargo.toml', '[package]\nname = "tool"\n'
                            f'[{section}]\nraw = {{package = "hyper-sys", version = "0"}}\n')
                 with self.assertRaisesRegex(ValueError, 'raw syscalls'):
-                    workspace.check_apps(self.root)
+                    self.check_component()
 
     def test_inherited_raw_syscall_dependency(self):
         self.write('app/Cargo.toml', '[workspace]\nmembers = ["tool", "policy"]\n'
                    '[workspace.dependencies]\nraw = {package = "hyper-sys", version = "0"}\n')
         with self.assertRaisesRegex(ValueError, 'raw syscalls'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
     def test_sdk_path_cannot_bypass_installed_sdk(self):
         self.write('app/tool/Cargo.toml', '[package]\nname = "tool"\n[dependencies]\n'
                    'os = {package = "hyper-os", path = "../../stdlib/rust/hyper-os"}\n')
         with self.assertRaisesRegex(ValueError, 'installed SDK'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
     def test_member_alias_resolves_package_identity(self):
         self.write('app/tool/Cargo.toml', '[package]\nname = "tool"\n[dependencies]\n'
                    'shared = {package = "policy", path = "../policy"}\n')
-        workspace.check_apps(self.root)
+        self.check_component()
         self.write('app/tool/Cargo.toml', '[package]\nname = "tool"\n[dependencies]\n'
                    'shared = {package = "wrong", path = "../policy"}\n')
-        with self.assertRaisesRegex(ValueError, 'own Native workspace'):
-            workspace.check_apps(self.root)
+        with self.assertRaisesRegex(ValueError, 'registered Native repository'):
+            self.check_component()
 
     def test_member_cannot_escape_through_symlink(self):
         outside = self.root / 'outside'
@@ -90,22 +94,20 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / 'app/escape').symlink_to(outside, target_is_directory=True)
         self.write('app/Cargo.toml', '[workspace]\nmembers = ["escape"]\n')
         with self.assertRaisesRegex(ValueError, 'escapes app'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
-    def test_external_members_obey_the_same_sdk_boundary(self):
-        for member, sdk_path in [('lib/args', '../../stdlib/rust/hyper-os'),
-                                 ('stdlib/rust-std', '../rust/hyper-os'),
-                                 ('tests/app/probe', '../../../stdlib/rust/hyper-os')]:
-            self.write('app/Cargo.toml', '[workspace]\n'
-                       f'members = ["tool", "policy", "../{member}"]\n')
-            self.write(f'{member}/Cargo.toml', '[package]\nname = "external"\n')
-            self.write('app/tool/Cargo.toml', '[package]\nname = "tool"\n[dependencies]\n'
-                       f'external = {{path = "../../{member}"}}\n')
-            workspace.check_apps(self.root)
-            self.write(f'{member}/Cargo.toml', '[package]\nname = "external"\n[dependencies]\n'
-                       f'os = {{package = "hyper-os", path = "{sdk_path}"}}\n')
-            with self.subTest(member=member), self.assertRaisesRegex(ValueError, 'installed SDK'):
-                workspace.check_apps(self.root)
+    def test_registered_repository_dependencies_obey_the_same_sdk_boundary(self):
+        self.write('lib/args/Cargo.toml', '[package]\nname="external"\n')
+        self.write('app/tool/Cargo.toml', '[package]\nname="tool"\n[dependencies]\n'
+                   'external={path="../../lib/args"}\n')
+        def check():
+            workspace.check_native_workspace(self.root, 'app', ('app',), registered={
+                self.root / 'lib/args': workspace.read_manifest(self.root / 'lib/args/Cargo.toml')})
+        check()
+        self.write('lib/args/Cargo.toml', '[package]\nname="external"\n[dependencies]\n'
+                   'os={package="hyper-os",path="../../stdlib/rust/hyper-os"}\n')
+        with self.assertRaisesRegex(ValueError, 'installed SDK'):
+            check()
 
     def test_shared_library_cannot_escape_through_symlink(self):
         (self.root / 'outside').mkdir()
@@ -113,7 +115,7 @@ class WorkspaceTests(unittest.TestCase):
         self.write('lib/args/Cargo.toml', '[package]\nname = "args"\n')
         self.write('app/Cargo.toml', '[workspace]\nmembers = ["../lib/args"]\n')
         with self.assertRaisesRegex(ValueError, 'escapes app'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
     def bootstrap(self):
         self.write('bootstrap/stage1/Cargo.toml', '[workspace]\nmembers = ["init", "private"]\n'
@@ -149,7 +151,7 @@ class WorkspaceTests(unittest.TestCase):
             workspace.check_bootstrap(self.root)
         self.write('app/Cargo.toml', '[workspace]\nmembers=["../bootstrap/stage1/init"]\n')
         with self.assertRaisesRegex(ValueError, 'escapes app'):
-            workspace.check_apps(self.root)
+            self.check_component()
 
     def test_stdlib_cannot_smuggle_system_policy_into_bootstrap(self):
         self.bootstrap()

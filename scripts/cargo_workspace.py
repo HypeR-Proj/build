@@ -16,12 +16,13 @@ def member_directories(manifest_path):
     while ordinary files are ignored. Non-package directories must be excluded.
     """
     manifest_path = Path(manifest_path)
-    workspace = tomllib.loads(manifest_path.read_text())['workspace']
+    document = tomllib.loads(manifest_path.read_text())
+    workspace = document.get('workspace', {})
     base = manifest_path.parent
     excluded = {path.resolve() for pattern in workspace.get('exclude', [])
                 for path in base.glob(pattern)}
-    members = set()
-    for pattern in workspace['members']:
+    members = {base.resolve()} if 'package' in document else set()
+    for pattern in workspace.get('members', []):
         directories = [path.resolve() for path in base.glob(pattern) if path.is_dir()]
         if not directories:
             raise ValueError(f'workspace member does not exist: {pattern}')

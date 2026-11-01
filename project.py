@@ -39,6 +39,18 @@ def git(root, *arguments):
     return subprocess.check_output(['git', *arguments], cwd=root, text=True).strip()
 
 
+def git_commit(root):
+    head = subprocess.run(['git', 'rev-parse', '--verify', '--quiet', 'HEAD'],
+                          cwd=root, capture_output=True, text=True)
+    if not head.returncode:
+        return head.stdout.strip()
+    branch = git(root, 'symbolic-ref', '--quiet', 'HEAD')
+    absent = subprocess.run(['git', 'show-ref', '--verify', '--quiet', branch], cwd=root)
+    if absent.returncode == 1:
+        return None  # A new repository still has exact content provenance.
+    raise ValueError(f'{root}: cannot resolve repository HEAD')
+
+
 def output_path(workspace, output=None):
     return Path(output or os.environ.get('OUT', workspace / 'out')).resolve()
 
@@ -69,7 +81,7 @@ def inventory(workspace, output, excluded=()):
     for name, module in modules.items():
         content = {str(file): hashlib.sha256((module.source / file).read_bytes()).hexdigest()
                    for file in module.files(output) if (module.source / file).resolve() not in (*excluded, exported)}
-        commit = (git(module.source, 'rev-parse', 'HEAD') if (module.source / '.git').exists()
+        commit = (git_commit(module.source) if (module.source / '.git').exists()
                   else provenance.get(name, {}).get('commit'))
         filters = ['.'] + [':(exclude,literal)' + str(path.relative_to(module.source))
                           for path in (*excluded, exported, output) if path.is_relative_to(module.source)]
@@ -108,8 +120,10 @@ def archive(workspace, destination, output=None):
                         continue
                     target = relative(link.attrib['dest'])
                     origin = relative(item.get('path', item.attrib['name'])) / relative(link.attrib['src'])
+                    directory_link = (link.tag == 'linkfile'
+                                      and any(Path(name).is_relative_to(origin) for name in source))
                     if (any(target.is_relative_to(path) or path.is_relative_to(target)
-                            for path in destinations) or str(origin) not in source):
+                            for path in destinations) or (str(origin) not in source and not directory_link)):
                         raise ValueError(f'invalid exported manifest entry: {target}')
                     destinations.add(target)
                     if link.tag == 'copyfile':
@@ -150,6 +164,7 @@ def main():
     locate.add_argument('component')
     docs = actions.add_parser('check-docs', help='check source links without preparing build outputs')
     docs.add_argument('source', type=Path)
+    actions.add_parser('check-components', help='validate the source catalogs and dependency graph')
     actions.add_parser('files')
     test = actions.add_parser('test')
     test.add_argument('component')
@@ -167,8 +182,11 @@ def main():
     elif args.action == 'path':
         print(discover(workspace)[args.component].source)
     elif args.action == 'check-docs':
-        checker = discover(workspace)['build'].source / 'scripts/docs/check-source.py'
+        checker = discover(workspace)['docs'].source / 'tools/check-source.py'
         subprocess.run([sys.executable, str(checker), str(args.source.resolve())], check=True)
+    elif args.action == 'check-components':
+        checker = discover(workspace)['build'].source / 'scripts/check-components.py'
+        subprocess.run([sys.executable, str(checker), '--workspace', str(workspace)], check=True)
     elif args.action == 'test':
         module_tests(workspace, args.component, args.out)
     elif args.action == 'files':

@@ -1,23 +1,7 @@
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
-# Build tools own this checkout. Nested tools such as fit-pack have their own
-# repositories and must never be included in this index.
-/*
-!/.github/
-!/.gitignore
-!/LICENSE
-!/README.md
-!/SECURITY.md
-!/CONTRIBUTING.md
-!/component.json
-!/Makefile
-!/project.py
-!/rust-toolchain.toml
-!/scripts/
-!/mk/
-!/build-tests/
-!/tools/
-/tools/*
-!/tools/newc-pack.c
+# The manifest places peer repositories outside this checkout.
+/out/
+/target/
+.DS_Store
 **/__pycache__/
-!/docs/

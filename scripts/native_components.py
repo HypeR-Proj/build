@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import tomllib
 
-from cargo_workspace import member_directories
+from buildsystem.model import discover
 import kconfig
 
 
@@ -25,8 +25,8 @@ def load_registry(path):
     result = subprocess.run(
         ['make', '--no-print-directory', '-s', '-f', str(Path(path).resolve()),
          'component-records'], cwd=ROOT, env=env, check=True, capture_output=True, text=True)
-    members = (member_directories(ROOT / 'app/Cargo.toml')
-               | member_directories(ROOT / 'bootstrap/stage1/Cargo.toml'))
+    members = {module.source / Path(entry['manifest']).parent
+               for module in discover(ROOT).values() for entry in module.metadata.get('cargo', [])}
     entries = []
     settings = kconfig.schema()
     declared = set()
@@ -133,6 +133,8 @@ def cargo_targets(entries, selected, mode, features, extra_bins, runtime=None, e
         if not separator or not name or package not in owners:
             raise ValueError(f'feature must name a registered package: {feature}')
         owner = owners[package]
+        if 'library' in owner:
+            raise ValueError(f'{package}: shared-library features are fixed by its component.json')
         same_graph = ((mode is None or owner.get('link_mode', 'dynamic') == mode)
                       and (runtime is None or owner.get('rust_runtime', 'std') == runtime))
         if executable_roots and same_graph and package not in packages:

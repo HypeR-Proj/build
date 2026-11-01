@@ -1,0 +1,25 @@
+{
+  "SPDX-FileCopyrightText": "2026 roolrz",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "version": 1,
+  "include": [
+    {
+      "project": "pi5-images"
+    },
+    {
+      "project": "ci"
+    },
+    {
+      "project": "test-framework"
+    },
+    {
+      "project": "system-tests"
+    },
+    {
+      "project": "fit-pack"
+    },
+    {
+      "project": "docs"
+    }
+  ]
+}

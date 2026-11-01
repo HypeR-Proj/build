@@ -142,6 +142,9 @@ def execute(args, root, output, arch, view, modules, changed):
             local.update({key: value.format_map(variables) for key, value in recipe.get('environment', {}).items()})
             actions = recipe.get('actions', {})
             steps = actions.get(variables['action'], actions.get('*')) if actions else recipe.get('steps', [])
+            if recipe.get('type') == 'native-rust':
+                steps = [['python3', '{workspace}/scripts/build-native-module.py',
+                          '--module', '{module}', '--action', '{action}']]
             if steps is None:
                 raise ValueError(f'{name}: unsupported build action {variables["action"]}')
             for step in steps:
