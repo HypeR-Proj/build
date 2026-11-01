@@ -7,11 +7,13 @@
 
 `repo init` and `repo sync` create the source layout declared by the manifest.
 The manifest has its single checkout in `.repo/manifests`; the documentation-only
-HypeR repository is not downloaded. The build repository occupies the workspace
-root. Run `make prepare` explicitly, or let any normal Make target prepare first.
+HypeR repository is not downloaded. The build repository occupies `build/`; the workspace root is not a Git
+repository. The manifest creates `Makefile` and `project.py` entry links to the
+build checkout. Run `make prepare` explicitly, or let any normal Make target prepare first.
 
 Preparation discovers `component.json` in each manifest project, checks build
 dependencies and generates an execution view under `OUT/workspace/ARCH`.
+The independent `fit-pack` repository lives at `build/tools/fit-pack`.
 Source bodies are linked to their owning checkout; build control files are
 copied, and workspace manifests are generated from declarations. Edit source
 repositories, not generated control files. Unchanged generated files retain their
@@ -20,6 +22,10 @@ timestamps. Preparation repairs altered or missing generated controls.
 A source archive made with `python3 project.py archive OUTPUT.tar.xz` includes
 module sources, the manifest and provenance. It can prepare its own output view
 without Git or a second manifest checkout. Archives exclude generated build data.
+
+`python3 project.py check-docs PATH` validates a repository's local Markdown
+links using the discovered build tools. This source-only check does not prepare
+a workspace, create output directories or require a Rust toolchain.
 
 ## Output ownership
 

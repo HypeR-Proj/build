@@ -99,6 +99,7 @@ NATIVE_LOADER := $(SDK_OUTPUT)/lib64/ld-hyper-$(NATIVE_ARCH).so
 NATIVE_RUNTIME_LIBRARY := $(SDK_OUTPUT)/lib/libsystem.so
 NEWC_PACK := $(CURDIR)/target/host-tools/newc-pack
 FIT_PACK_TARGET := $(CURDIR)/target/host-tools/fit-pack
+FIT_PACK_SOURCE = $(shell python3 -B project.py path fit-pack)
 FIT_PACK := $(FIT_PACK_TARGET)/release/hyper-fit-pack
 NATIVE_GUEST_ITB := $(KERNEL_DIRECTORY)/target/guest/$(ARCH)/alpine.itb
 # AArch64 Alpine exercises SMP by default; RISC-V guests remain single-vCPU.

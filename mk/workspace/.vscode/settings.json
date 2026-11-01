@@ -25,7 +25,7 @@
         "tests/native/io-smoke/Cargo.toml",
         "sdk/toolchain/tests/rust-smoke/Cargo.toml",
         "sdk/toolchain/tests/std-smoke/Cargo.toml",
-        "tools/fit-pack/Cargo.toml"
+        "build/tools/fit-pack/Cargo.toml"
     ],
     "rust-analyzer.cargo.configPath": ".vscode/rust-analyzer.toml",
     "rust-analyzer.cargo.sysrootSrc": "target/sdk/aarch64/share/hyper/rust-src/library",

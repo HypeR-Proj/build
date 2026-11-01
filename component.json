@@ -107,7 +107,9 @@
     ],
     [
       "python3",
-      "{component}/scripts/check-workspace.py"
+      "{component}/scripts/check-workspace.py",
+      "--root",
+      "{system}"
     ]
   ],
   "build": {
@@ -145,7 +147,12 @@
       "mk/workspace/app/.cargo": "app/.cargo",
       "mk/workspace/app/Cargo.lock": "app/Cargo.lock",
       "mk/workspace/configs": "configs",
-      "build-tests/build": "tests/build"
+      "build-tests/build": "tests/build",
+      "scripts": "scripts",
+      "mk": "mk",
+      "tools": "tools",
+      "docs": "docs",
+      "rust-toolchain.toml": "rust-toolchain.toml"
     }
   },
   "config": null

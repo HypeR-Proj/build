@@ -55,7 +55,7 @@ class WorkspaceTests(unittest.TestCase):
             with tarfile.open(output) as archive:
                 self.assertEqual(archive.extractfile('HypeR/kernel/source.txt').read(), b'kernel')
                 self.assertEqual(archive.extractfile('HypeR/.workspace/source.txt').read(), b'manifest')
-                self.assertNotIn('HypeR/config.txt', archive.getnames())
+                self.assertTrue(archive.getmember('HypeR/config.txt').issym())
                 self.assertFalse(any('/out/' in name for name in archive.getnames()))
                 self.assertIn('HypeR/source-inventory.json', archive.getnames())
 

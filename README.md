@@ -3,7 +3,9 @@
 
 # HypeR build tools
 
-The manifest checks this repository out at the source workspace root. It owns
+The manifest checks this repository out at `build/` inside the source workspace.
+The workspace root has no Git repository; repo creates only the `Makefile` and
+`project.py` entry links there. It owns
 build adapters, composition tools and common development commands. Repository
 paths and product descriptions belong to the [manifest](https://github.com/HypeR-Proj/manifest).
 

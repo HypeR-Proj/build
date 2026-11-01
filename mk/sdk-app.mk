@@ -53,9 +53,9 @@ sdk-check: toolchain-test
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys -p hyper-filesystem --features hyper-os/std \
 		--all-targets -- -D warnings
-	$(CARGO) fmt --manifest-path "tools/fit-pack/Cargo.toml" -- --check
+	$(CARGO) fmt --manifest-path "$(FIT_PACK_SOURCE)/Cargo.toml" -- --check
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) clippy \
-		--manifest-path "tools/fit-pack/Cargo.toml" \
+		--manifest-path "$(FIT_PACK_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" --all-targets -- -D warnings
 
 .PHONY: toolchain-test
@@ -84,7 +84,7 @@ sdk-test:
 		--manifest-path "$(SDK_RUST_SOURCE)/Cargo.toml" \
 		--target "$(HOST_TARGET)" -p hyper-os -p hyper-sys -p hyper-filesystem --features hyper-os/std
 	CARGO_TARGET_DIR="$(FIT_PACK_TARGET)" $(CARGO) test \
-		--manifest-path "tools/fit-pack/Cargo.toml" --target "$(HOST_TARGET)"
+		--manifest-path "$(FIT_PACK_SOURCE)/Cargo.toml" --target "$(HOST_TARGET)"
 	cmake -S "$(SDK_LIB_SOURCE)/tests/unit" -B "$(SDK_LIB_TEST_OUTPUT)" \
 		-DCMAKE_C_COMPILER="$(HOST_CC)" \
 		-DHYPER_ABI_INCLUDE_DIR="$(SDK_ABI_SOURCE)/include"

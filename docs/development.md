@@ -206,7 +206,7 @@ check also runs before an incremental packaging cache hit.
 For a standalone configuration check (without image membership checks), run:
 
 ```sh
-python3 scripts/check-service-manifest.py bootstrap/stage1/init/config/services-with-vms.json
+python3 project.py exec -- python3 scripts/check-service-manifest.py bootstrap/stage1/init/config/services-with-vms.json
 ```
 
 This uses the source workspace and host Rust toolchain; it does not need a built
@@ -397,7 +397,7 @@ the normal SDK preparation and consumer checks, rather than committing a source
 patch overlay into their production manifests. The repository owner reviews
 these updates and new external inputs.
 
-`sh scripts/audit-dependencies.sh` runs cargo-audit 0.22.2 against every tracked
+`python3 project.py exec -- sh scripts/audit-dependencies.sh` runs cargo-audit 0.22.2 against every tracked
 Cargo lockfile, including those consumers. CI runs it on lockfile changes and
 weekly so newly published advisories are noticed without a code change. It checks
 known RustSec advisories, not reachability or non-Rust appliance packages. Any
