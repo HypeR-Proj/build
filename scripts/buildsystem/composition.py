@@ -4,7 +4,6 @@
 """Compose workspace manifests and delivery policy from module declarations."""
 
 import json
-import os
 from pathlib import Path
 import re
 import tomllib
@@ -94,32 +93,28 @@ def records(modules):
         yield '|'.join(fields)
 
 
-def cargo_manifests(modules, templates):
+def cargo_manifests(modules):
+    from .shared import configure, providers
+
+    registry = providers(modules)
     result = {}
-    for domain, definition in templates.items():
-        owner = modules[definition['module']]
-        data = tomllib.loads((owner.source / relative(definition['template'])).read_text())
-        directory = relative(definition['directory'])
-        members, providers = [], {}
-        for module in modules.values():
-            for entry in module.metadata.get('cargo', []):
-                if entry['domain'] != domain:
-                    continue
-                manifest = relative(entry['manifest'])
-                source = module.source / manifest
-                package = tomllib.loads(source.read_text())['package']
-                path = module.path / manifest.parent
-                members.append(os.path.relpath(path, directory))
-                name = package['name']
-                if name in providers:
-                    raise ValueError(f'duplicate Cargo package in {domain}: {name}')
-                providers[name] = path
-        data['workspace']['members'] = sorted(members)
-        for name, value in data['workspace'].get('dependencies', {}).items():
-            if isinstance(value, dict) and 'path' in value:
-                package = value.get('package', name)
-                if package not in providers:
-                    raise ValueError(f'{domain}: missing workspace dependency provider {package}')
-                value['path'] = os.path.relpath(providers[package], directory)
-        result[str(directory / 'Cargo.toml')] = toml_document(data)
+    names = set()
+    for module in modules.values():
+        for entry in module.metadata.get('cargo', []):
+            manifest = relative(entry['manifest'])
+            data = tomllib.loads((module.source / manifest).read_text())
+            identity = entry['domain'], data['package']['name']
+            if identity in names:
+                raise ValueError(f'duplicate Cargo package in {identity[0]}: {identity[1]}')
+            names.add(identity)
+            if entry['domain'] != 'system':
+                continue
+            paths = [manifest]
+            if entry.get('link_probe'):
+                paths.append(relative(entry['link_probe']))
+            for path in paths:
+                data = tomllib.loads((module.source / path).read_text())
+                configured = configure(data, registry, f'{module.name}/{path}')
+                if configured != data:
+                    result[str(module.path / path)] = toml_document(configured)
     return result

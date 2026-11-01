@@ -342,151 +342,113 @@ class EntrypointTests(unittest.TestCase):
         self.assertIn('--recovery', pack)
         self.assertNotIn('--system-root', pack)
 
-    def test_editor_and_build_keep_lockfiles_stable(self):
-        # Exercise Cargo resolution, not just configuration spelling. No network,
-        # installed SDK or Native compiler artifacts are needed for this fixture.
+    def test_editor_and_build_keep_owned_lockfiles_stable(self):
+        from buildsystem.editor import native_configs
+        from buildsystem.model import Module
         with tempfile.TemporaryDirectory(prefix='hyper lockfiles ') as directory:
             root = Path(directory).resolve()
             shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
-            shared = root / '.vscode/rust-analyzer.toml'
-            shared.parent.mkdir()
-            shutil.copyfile(ROOT / '.vscode/rust-analyzer.toml', shared)
-            workspaces = ('tools/fit-pack', 'app', 'bootstrap/stage1', 'tests/native/io-smoke', 'sdk/toolchain/tests/std-smoke',
-                          'sdk/toolchain/tests/rust-smoke')
-            patches = {
-                workspace: tuple(name.removeprefix('hyper-') for name in
-                                 tomllib.loads((ROOT / workspace / '.cargo/config.toml')
-                                               .read_text())['patch']['crates-io'])
-                for workspace in workspaces if workspace != 'tools/fit-pack'
-            }
-            crates = sorted({name for names in patches.values() for name in names})
-            for name in crates:
-                paths = [root / ('sdk/abi' if name == 'abi' else f'stdlib/rust/hyper-{name}'),
-                         root / f'installed/hyper-{name}']
-                for path in paths:
-                    path.mkdir(parents=True)
-                    (path / 'Cargo.toml').write_text(
-                        f'[package]\nname="hyper-{name}"\nversion="0.0.0"\n'
-                        '[lib]\npath="lib.rs"\n')
-                    (path / 'lib.rs').write_text('')
-            for workspace in workspaces:
-                cwd = root / workspace
-                cwd.mkdir(parents=True)
-                native = workspace != 'tools/fit-pack'
-                # Every Native workspace must resolve the complete SDK set.
-                # Using each workspace's own subset hid missing editor patches
-                # when hyper-cargo supplied newly installed crates at check time.
-                deps = ''.join(f'hyper-{name}="=0.0.0"\n' for name in crates) if native else (
-                    'hyper-abi={path="../../sdk/abi"}\n')
-                (cwd / 'Cargo.toml').write_text(
-                    '[package]\nname="probe"\nversion="0.0.0"\n'
-                    '[workspace]\n[lib]\npath="lib.rs"\n[dependencies]\n' + deps)
-                (cwd / 'lib.rs').write_text('')
-                if native:
-                    (cwd / '.cargo').mkdir()
-                    shutil.copyfile(ROOT / workspace / '.cargo/config.toml',
-                                    cwd / '.cargo/config.toml')
+            sdk = root / 'out/sdk/aarch64/share/hyper'
+            for name in ('hyper-abi', 'hyper-os', 'hyper-rt', 'hyper-sys', 'hyper-filesystem'):
+                path = sdk / ('abi' if name == 'hyper-abi' else 'rust/' + name)
+                path.mkdir(parents=True)
+                (path / 'Cargo.toml').write_text(f'[package]\nname="{name}"\nversion="0.0.0"\n[lib]\npath="lib.rs"\n')
+                (path / 'lib.rs').write_text('')
+            modules = {}
+            for name, native in [('app/tool', True), ('lib/tool', True), ('tools/host', False)]:
+                path = root / name
+                path.mkdir(parents=True)
+                (path / 'Cargo.toml').write_text(
+                    f'[package]\nname="{name.replace("/", "-")}"\nversion="0.1.0"\n'
+                    '[workspace]\n[lib]\npath="lib.rs"\n' +
+                    ('[dependencies]\nhyper-os="=0.0.0"\n' if native else ''))
+                (path / 'lib.rs').write_text('')
+                metadata = {'cargo': [{'manifest': 'Cargo.toml', 'domain': 'system'}]} if native else {}
+                modules[name] = Module(name, path, Path(name), metadata)
+            for path, body in native_configs(modules, {}, root / 'out', 'aarch64').items():
+                destination = root / path
+                destination.parent.mkdir(parents=True)
+                destination.write_text(body)
+            for module in modules.values():
                 command = ['cargo', 'metadata', '--offline', '--format-version=1',
                            '--config', 'build.target="aarch64-unknown-none"']
-                result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                lock = (cwd / 'Cargo.lock').read_bytes()
-                for mode in ('editor', 'installed', 'editor'):
-                    args = command + ['--locked', '--config', str(shared)]
-                    if native and mode == 'installed':
-                        for name in crates:
-                            args += ['--config', f'patch.crates-io.hyper-{name}.path="'
-                                     f'{root}/installed/hyper-{name}"']
-                    result = subprocess.run(args, cwd=cwd, check=True,
-                                            capture_output=True, text=True)
-                    self.assertEqual((cwd / 'Cargo.lock').read_bytes(), lock)
-                    if native:
-                        crate = next(p for p in json.loads(result.stdout)['packages']
-                                     if p['name'] == 'hyper-os')
-                        expected = root / ('installed/hyper-os' if mode == 'installed'
-                                           else 'stdlib/rust/hyper-os') / 'Cargo.toml'
-                        self.assertEqual(Path(crate['manifest_path']), expected)
+                subprocess.run(command, cwd=module.source, check=True, capture_output=True)
+                lock = (module.source / 'Cargo.lock').read_bytes()
+                for _ in range(2):
+                    result = subprocess.run([*command, '--locked'], cwd=module.source,
+                                            check=True, capture_output=True, text=True)
+                    self.assertEqual((module.source / 'Cargo.lock').read_bytes(), lock)
+                    if module.metadata:
+                        package = next(item for item in json.loads(result.stdout)['packages'] if item['name'] == 'hyper-os')
+                        self.assertEqual(Path(package['manifest_path']), sdk / 'rust/hyper-os/Cargo.toml')
+                    else:
+                        self.assertFalse((module.source / '.cargo/config.toml').exists())
 
-    def test_analyzer_patches_only_native_workspaces(self):
+    def test_analyzer_routes_independent_native_and_host_workspaces(self):
         with tempfile.TemporaryDirectory(prefix='hyper editor ') as directory:
             root = Path(directory).resolve()
             shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
-            (root / 'scripts').mkdir()
-            script = root / 'scripts/rust-analyzer-check.sh'
-            shutil.copyfile(ROOT / 'scripts/rust-analyzer-check.sh', script)
+            shutil.copytree(ROOT / 'scripts/buildsystem', root / 'scripts/buildsystem')
+            for name in ('rust-analyzer-check.py', 'rust-analyzer-check.sh'):
+                shutil.copyfile(ROOT / 'scripts' / name, root / 'scripts' / name)
             fake = root / 'bin'
             fake.mkdir()
             recorder = ('#!' + sys.executable + '\nimport os,json,sys\n'
                         'if sys.argv[1:2] == ["locate-project"]:\n'
-                        f' os.execv({shutil.which("cargo")!r}, '
-                        f'[{shutil.which("cargo")!r}, *sys.argv[1:]])\n'
+                        f' os.execv({shutil.which("cargo")!r}, [{shutil.which("cargo")!r}, *sys.argv[1:]])\n'
                         'with open(os.environ["PROBE"],"w") as f: '
                         'json.dump({"argv":sys.argv[1:],"config":os.getenv("HYPER_CONFIG"),'
                         '"std":os.getenv("HYPER_RUST_STD"),"link":os.getenv("HYPER_LINK_MODE"),"cwd":os.getcwd()},f)\n')
             (fake / 'cargo').write_text(recorder)
             (fake / 'cargo').chmod(0o755)
-            build_output = root / 'custom-output'
-            native = build_output / 'sdk/aarch64/bin'
-            native.mkdir(parents=True)
-            (native / 'hyper-cargo').write_text(recorder)
-            (native / 'hyper-cargo').chmod(0o755)
-            output = root / 'probe.json'
-            env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH'], PROBE=str(output))
-            env.update(HYPER_BUILD_OUTPUT=str(build_output), ARCH='aarch64')
-            env.pop('SDK_OUTPUT', None)
-            env.pop('HYPER_CONFIG', None)
-            env['HYPER_LINK_MODE'] = 'static'
-            workspaces = ('kernel', 'tools/fit-pack', 'app', 'bootstrap/stage1', 'tests/native/io-smoke',
-                          'sdk/toolchain/tests/std-smoke', 'sdk/toolchain/tests/rust-smoke')
-            for workspace in workspaces:
-                cwd = root / workspace
-                cwd.mkdir(parents=True)
-                (cwd / 'Cargo.toml').write_text('[workspace]\n[package]\n'
-                                               'name="probe"\nversion="0.0.0"\n')
-                (cwd / 'src').mkdir()
-                (cwd / 'src/lib.rs').write_text('')
-            (root / 'app/Cargo.toml').write_text(
-                '[workspace]\nmembers=["cmd", "../svc/*", "../tests/app/*", "../lib/args", "../lib/args/shared"]\n')
-            for member, owner in [('app/cmd', '..'), ('svc/system-startup', '../../app'),
-                                  ('svc/io-runtime', '../../app'), ('svc/fs-backend', '../../app'),
-                                  ('tests/app/probe', '../../../app'), ('lib/args', '../../app'),
-                                  ('lib/args/shared', '../../../app'),
-                                  ('bootstrap/stage1/init', '..')]:
-                cwd = root / member
+            output = root / 'out'
+            driver = output / 'sdk/aarch64/bin/hyper-cargo'
+            driver.parent.mkdir(parents=True)
+            driver.write_text(recorder)
+            driver.chmod(0o755)
+            probe = root / 'probe.json'
+            environment = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ['PATH'],
+                               PROBE=str(probe), HYPER_BUILD_OUTPUT=str(output), ARCH='aarch64',
+                               HYPER_LD='ld.lld', LLVM_AR='llvm-ar')
+            for name in ('SDK_OUTPUT', 'HYPER_CONFIG'):
+                environment.pop(name, None)
+            cases = [('kernel', None, None), ('build/tools/fit-pack', None, None),
+                     ('app/tool', 'dynamic', '1'), ('svc/service', 'dynamic', '1'),
+                     ('lib/provider', 'dynamic', '1'), ('bootstrap/stage1', 'static', '1'),
+                     ('sdk/toolchain/tests/rust-smoke', 'dynamic', '0')]
+            projects = []
+            for path, mode, runtime in cases:
+                cwd = root / path
                 (cwd / 'src').mkdir(parents=True)
                 (cwd / 'src/lib.rs').write_text('')
-                (cwd / 'Cargo.toml').write_text(
-                    f'[package]\nname="{member.replace("/", "-")}"\nversion="0.0.0"\n'
-                    f'workspace="{owner}"\n')
-            (root / 'bootstrap/stage1/Cargo.toml').write_text('[workspace]\nmembers=["init"]\n')
-            for relative in ('bootstrap/stage1/contracts',
-                             'bootstrap/stage1/init/src/manifest'):
-                (root / relative).mkdir(parents=True)
-            for workspace in (*workspaces, '.', 'app/cmd/src', 'lib/args', 'lib/args/shared/src',
-                              'bootstrap/stage1/init/src', 'bootstrap/stage1/contracts',
-                              'bootstrap/stage1/init/src/manifest', 'tests/app/probe/src',
-                              'svc/system-startup/src', 'svc/io-runtime/src', 'svc/fs-backend/src'):
-                cwd = root / workspace
-                subprocess.run(['sh', str(script)], cwd=cwd, env=env, check=True)
-                result = json.loads(output.read_text())
-                owner = (cwd if workspace in workspaces else root / (
-                    'bootstrap/stage1' if workspace.startswith('bootstrap/') else 'app'))
-                self.assertEqual(Path(result['cwd']), owner)
-                self.assertIn('--locked', result['argv'])
-                if workspace.startswith('bootstrap/') or workspace == 'tests/native/io-smoke':
-                    self.assertEqual(result['link'], 'static')
-                if workspace in ('kernel', 'tools/fit-pack'):
-                    self.assertNotIn('--config', result['argv'])
-                    self.assertEqual(result['config'], str(root / 'kernel/configs/qemu_aarch64_defconfig'))
-                else:
-                    index = result['argv'].index('--config')
-                    self.assertEqual(result['argv'][index + 1], str(owner / '.cargo/config.toml'))
-                    self.assertEqual(result['std'], '0' if workspace.endswith('rust-smoke') else '1')
-                    if not workspace.startswith('bootstrap/') and workspace != 'tests/native/io-smoke':
-                        self.assertEqual(result['link'], 'dynamic')
-            env['HYPER_CONFIG'] = '/chosen/board.config'
-            subprocess.run(['sh', str(script)], cwd=root / 'kernel', env=env, check=True)
-            self.assertEqual(json.loads(output.read_text())['config'], '/chosen/board.config')
+                (cwd / 'Cargo.toml').write_text('[workspace]\n[package]\n'
+                                               f'name="{path.replace("/", "-")}"\nversion="0.1.0"\n')
+                name = path.replace('/', '-')
+                metadata = {'name': name, 'version': 1}
+                if mode:
+                    metadata['cargo'] = [{'manifest': 'Cargo.toml', 'domain': 'boot' if mode == 'static' else 'system'}]
+                    (cwd / '.cargo').mkdir()
+                    (cwd / '.cargo/config.toml').write_text(
+                        f'[env]\nHYPER_LINK_MODE="{mode}"\nHYPER_RUST_STD="{runtime}"\n')
+                (cwd / 'component.json').write_text(json.dumps(metadata))
+                projects.append(f'<project name="{name}" path="{path}"/>')
+            (root / 'manifest').mkdir()
+            (root / 'manifest/component.json').write_text(json.dumps({'name': 'manifest', 'version': 1}))
+            (root / 'build/component.json').write_text(json.dumps({'name': 'build', 'version': 1}))
+            projects.append('<project name="build" path="build"/>')
+            (root / 'manifest/default.xml').write_text('<manifest>' + ''.join(projects) + '</manifest>')
+            script = root / 'scripts/rust-analyzer-check.sh'
+            for path, mode, runtime in cases:
+                for nested in ('', '/src'):
+                    subprocess.run(['sh', str(script)], cwd=root / (path + nested), env=environment, check=True)
+                    result = json.loads(probe.read_text())
+                    self.assertEqual(Path(result['cwd']), root / path)
+                    self.assertIn('--locked', result['argv'])
+                    if mode:
+                        self.assertEqual((result['link'], result['std']), (mode, runtime))
+                    else:
+                        self.assertIn('--all-targets', result['argv'])
+                        self.assertEqual(result['config'], str(output / 'config/aarch64/modules/kernel.config'))
 
 
 if __name__ == '__main__':

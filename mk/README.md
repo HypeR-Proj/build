@@ -26,7 +26,9 @@ products select enabled artifacts; development and I/O fixtures may explicitly
 request additional profiles. Admission rejects missing required programs and
 invalid storage/profile combinations before publication.
 
-Stage 1 and formal userspace use distinct Cargo workspaces and output caches.
+Each repository owns its Cargo workspace and lockfile. Stage 1 retains a separate
+static output cache. System shared libraries have one fixed feature contract;
+applications validate their compile graph against the canonical provider set.
 Their artifact `environment` is `boot` or `system`. Native SDK assembly and
 immutable publication remain owned by toolchain adapters. The formal root
 filesystem, boot archive and persistent board partitions retain their separate
@@ -34,5 +36,5 @@ packaging rules.
 
 See [module metadata and outputs](../docs/module-builds.md),
 [product configuration](https://hyper-proj.github.io/manifest/docs/configuration.html),
-[board storage](../docs/deployment/board-storage.md), and
+[board storage](https://hyper-proj.github.io/HypeR/docs/usage/board-storage.html), and
 [system test cases](https://github.com/HypeR-Proj/system-tests).

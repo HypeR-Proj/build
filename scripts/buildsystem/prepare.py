@@ -14,9 +14,10 @@ import xml.etree.ElementTree as ET
 from . import files
 from .model import NAME, dependency_order, discover, manifest_path, read_manifest, relative
 from .composition import cargo_manifests, product_schema
+from .editor import native_configs
 
 COPY_SUFFIXES = {'.py', '.sh', '.mk', '.toml', '.lock', '.json', '.yml', '.yaml', '.config'}
-STATE_VERSION = 3
+STATE_VERSION = 4
 
 
 def collect(modules, output):
@@ -101,7 +102,15 @@ def generate(root, output, modules, inputs, arch):
                 else:
                     regular(destination, value, mode)
             elif any(name.startswith(source + '/') for name in planned):
-                link(destination, view / source)
+                # The source workspace receives repo's directory link. The
+                # output view owns its copies, including generated editor paths.
+                for name in [name for name in planned if name.startswith(source + '/')]:
+                    kind, value, mode = planned[name]
+                    target = destination / Path(name).relative_to(source)
+                    if kind == 'link':
+                        link(target, value)
+                    else:
+                        regular(target, value, mode)
             else:
                 raise ValueError(f'missing workspace input: {source}')
 
@@ -123,7 +132,10 @@ def generate(root, output, modules, inputs, arch):
                 regular(target, read_source(body), stat.S_IMODE(body.stat().st_mode))
 
     policy = modules['build'].metadata.get('workspace', {})
-    for name, content in cargo_manifests(modules, policy.get('cargo', {})).items():
+    for name, content in cargo_manifests(modules).items():
+        regular(name, content)
+    native_editor = native_configs(modules, inputs, output, arch)
+    for name, content in native_editor.items():
         regular(name, content)
     if policy.get('product_policy'):
         source = modules['build'].source / relative(policy['product_policy'])
@@ -134,6 +146,10 @@ def generate(root, output, modules, inputs, arch):
     if '.vscode/settings.json' in planned:
         body = planned['.vscode/settings.json'][1].decode()
         settings = json.loads('\n'.join(line for line in body.splitlines() if not line.lstrip().startswith('//')))
+        settings['rust-analyzer.linkedProjects'] = sorted({
+            str(module.path / 'Cargo.toml') for module in modules.values()
+            if (module.source / 'Cargo.toml').is_file()} | {
+                str(Path(name).parent.parent / 'Cargo.toml') for name in native_editor})
         settings['rust-analyzer.cargo.sysrootSrc'] = str(output / 'sdk' / arch / 'share/hyper/rust-src/library')
         settings['rust-analyzer.cargo.extraEnv'].update({
             'ARCH': arch, 'OUT': str(output), 'HYPER_BUILD_OUTPUT': str(output),

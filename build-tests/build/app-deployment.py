@@ -152,22 +152,13 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('required link mode', result.stderr)
 
-    def test_executable_roots_preserve_explicit_shared_library_features(self):
-        # This tests argument routing, independently of any current Cargo feature.
-        arguments = [sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
-                     '--executable-roots', '--features',
-                     'hyper-vm-support-shared/routing-test']
-        result = subprocess.check_output([
-            *arguments, '--link-mode', 'dynamic', '--component', 'echo'], text=True).split()
-        self.assertIn('hyper-echo', result)
-        self.assertIn('hyper-vm-support-shared', result)
-        self.assertIn('--lib', result)
-        self.assertIn('hyper-vm-support-shared/routing-test', result)
-        static = subprocess.check_output([
-            *arguments, '--link-mode', 'static', '--component', 'init'], text=True).split()
-        self.assertNotIn('hyper-vm-support-shared', static)
-        self.assertNotIn('--lib', static)
-        self.assertNotIn('--features', static)
+    def test_executable_roots_reject_consumer_shared_library_features(self):
+        result = subprocess.run([
+            sys.executable, str(SCRIPT), 'cargo-targets', '--manifest', str(MANIFEST),
+            '--executable-roots', '--features', 'hyper-vm-support-shared/routing-test',
+            '--link-mode', 'dynamic', '--component', 'echo'], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('fixed by its component.json', result.stderr)
 
     def test_executable_roots_reject_features_for_an_omitted_application(self):
         result = subprocess.run([
