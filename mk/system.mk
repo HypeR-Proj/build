@@ -60,11 +60,12 @@ ifneq ($(filter $(PRODUCT_CONFIG_TARGETS),$(MAKECMDGOALS)),)
 # Menu entry must also work for a new product path or an invalid selection.
 SYSTEM_CONFIG_ARGS :=
 else ifneq ($(strip $(SYSTEM_CONFIG)),)
-SYSTEM_CONFIG_ID := $(shell python3 -B scripts/app-deployment.py config-id --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS) || printf INVALID)
+SYSTEM_MAKE_CONFIG := $(shell python3 -B scripts/app-deployment.py make-config --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS) || printf INVALID)
+SYSTEM_CONFIG_ID := $(word 1,$(SYSTEM_MAKE_CONFIG))
 ifeq ($(SYSTEM_CONFIG_ID),INVALID)
 $(error invalid SYSTEM_CONFIG '$(SYSTEM_CONFIG)')
 endif
-SYSTEM_KERNEL_FEATURES := $(shell python3 -B scripts/app-deployment.py kernel-features --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS))
+SYSTEM_KERNEL_FEATURES := $(word 2,$(SYSTEM_MAKE_CONFIG))
 ifneq ($(SYSTEM_KERNEL_FEATURES),default)
 ifneq ($(origin KERNEL_FEATURES),undefined)
 $(error select kernel features in SYSTEM_CONFIG or KERNEL_FEATURES, not both)
@@ -241,14 +242,15 @@ $(NEWC_PACK): tools/newc-pack.c
 
 include tests/mk/native.mk
 
+ifeq ($(RUN_PROFILE),board)
+run: board-run
+else
 run:
 	@test -n "$(INITRAMFS)" || { \
 		echo "INITRAMFS must name a newc archive containing an executable /init" >&2; \
 		exit 2; \
 	}
-ifeq ($(RUN_PROFILE),board)
-	$(MAKE) board-run
-else ifeq ($(RUN_PROFILE),io)
+ifeq ($(RUN_PROFILE),io)
 	@test "$(ARCH)" = aarch64 || { echo "I/O VM run profile requires aarch64" >&2; exit 2; }
 	$(NATIVE_QEMU_ENV) python3 -B scripts/run-io-vm.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" \
@@ -256,6 +258,7 @@ else ifeq ($(RUN_PROFILE),io)
 else
 	$(MAKE) -C "$(KERNEL_DIRECTORY)" run \
 		$(SYSTEM_KERNEL_ARGS) ARCH="$(ARCH)" INITRAMFS="$(abspath $(INITRAMFS))"
+endif
 endif
 
 clean:

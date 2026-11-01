@@ -41,7 +41,10 @@ def main():
     toolchain = Path(__file__).resolve().parents[1] / 'rust-toolchain.toml'
     if toolchain.is_file():
         os.environ.setdefault('RUSTUP_TOOLCHAIN', tomllib.loads(toolchain.read_text())['toolchain']['channel'])
-    with execution(root, output, arch, exclusive='config' in args.action or args.action == 'clean') as (view, modules, changed):
+    launch = args.action in ('run', 'board-run') and not args.module and (
+        not args.module_source or args.module_source.resolve() in (root, Path(__file__).resolve().parents[1]))
+    with execution(root, output, arch, exclusive='config' in args.action or args.action == 'clean',
+                   launch=launch) as (view, modules, changed):
         execute(args, root, output, arch, view, modules, changed)
 
 

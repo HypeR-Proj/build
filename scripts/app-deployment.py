@@ -170,7 +170,7 @@ def require_complete_install(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['binaries', 'cargo-targets', 'install', 'manifest', 'host-excludes',
-                                          'config-id', 'boot-components', 'kernel-features'])
+                                          'config-id', 'make-config', 'boot-components', 'kernel-features'])
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--build', type=Path)
     parser.add_argument('--static-build', type=Path,
@@ -207,9 +207,15 @@ def main():
     if args.action == 'config-id':
         print(product.identity() if product else '')
         return
-    if args.action == 'kernel-features':
+    if args.action in ('kernel-features', 'make-config'):
         kernel = product.value.get('kernel') if product else None
-        print(','.join(kernel['features']) if kernel is not None else 'default')
+        features = ','.join(kernel['features']) if kernel is not None else 'default'
+        if args.action == 'make-config':
+            if product is None:
+                parser.error('make-config requires --system-config')
+            print(product.identity(), features)
+        else:
+            print(features)
         return
     if args.action == 'boot-components':
         selection = product or system_config.ProductConfig({'version': 1})

@@ -55,6 +55,19 @@ class ProductTests(unittest.TestCase):
             if entry.get('environment') == 'boot' and 'binary' in entry:
                 self.assertEqual(entry['link_mode'], 'static')
 
+    def test_make_configuration_preserves_default_empty_and_explicit_kernel_features(self):
+        for kernel, features in ((None, 'default'), ({'features': []}, ''),
+                                 ({'features': ['runtime-symbols']}, 'runtime-symbols')):
+            with self.subTest(kernel=kernel):
+                value = {'version': 1}
+                if kernel is not None:
+                    value['kernel'] = kernel
+                product = self.config(value)
+                result = subprocess.check_output([
+                    sys.executable, str(DEPLOYMENT), 'make-config', '--manifest', str(REGISTRY),
+                    '--system-config', str(self.root / 'product.config')], text=True)
+                self.assertEqual(result.rstrip('\n'), product.identity() + ' ' + features)
+
     def test_saved_product_does_not_implicitly_enable_development_programs(self):
         self.config({'version': 1})
         command = [sys.executable, str(DEPLOYMENT), 'manifest', '--manifest', str(REGISTRY)]

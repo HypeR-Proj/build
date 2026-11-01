@@ -10,6 +10,11 @@ The manifest has its single checkout in `.repo/manifests`; the documentation-onl
 HypeR repository is not downloaded. The build repository occupies `build/`; the workspace root is not a Git
 repository. The manifest creates `Makefile` and `project.py` entry links to the
 build checkout. Run `make prepare` explicitly, or let any normal Make target prepare first.
+`make run` and `make board-run` launch existing images without scanning compiler
+inputs or querying every source repository. They still validate configuration,
+module declarations, launch controls and output links; changed controls or file
+inventories trigger preparation. Source-body edits are picked up by the next
+build. Launching never builds images or refreshes a persistent disk implicitly.
 
 Preparation discovers `component.json` in each manifest project, checks build
 dependencies and generates an execution view under `OUT/workspace/ARCH`.
