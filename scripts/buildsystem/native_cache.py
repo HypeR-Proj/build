@@ -65,7 +65,11 @@ class Cache:
     def key(self, command, environment):
         manifest = Path(command[command.index('--manifest-path') + 1])
         controls = [manifest, manifest.parent / 'Cargo.lock', manifest.parent / 'link-context/Cargo.toml']
-        value = [self.controls, command, environment,
+        # Shell nesting and macOS launch-service identity change between
+        # invocations without changing any compiler or build-script input.
+        build_environment = {name: value for name, value in environment.items()
+                             if name not in ('SHLVL', 'XPC_SERVICE_NAME')}
+        value = [self.controls, command, build_environment,
                  {str(path): self.file(path) for path in controls if path.is_file()}]
         # Only the digest is persisted; environment values may contain credentials.
         return digest(json.dumps(value, sort_keys=True).encode())
@@ -86,7 +90,7 @@ class Cache:
         files.write(path, json.dumps({'graph': graph, 'sha256': digest(body)}).encode())
         return graph
 
-    def fetch(self, commands, environment, run):
+    def fetch(self, commands, environment, run, label='fetch'):
         """Reuse dependency downloads only while Cargo's registry cache exists.
 
         Source changes do not require another fetch. Lock/configuration changes
@@ -95,7 +99,7 @@ class Cache:
         """
         import os
         cargo = Path(environment.get('CARGO_HOME', Path.home() / '.cargo'))
-        path = self.directory / 'fetch.json'
+        path = self.directory / (label + '.json')
         def state():
             registry = []
             for directory in (cargo / 'registry/cache', cargo / 'registry/index', cargo / 'git'):

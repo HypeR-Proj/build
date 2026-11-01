@@ -47,6 +47,14 @@ class NativeCacheTests(unittest.TestCase):
     def test_unchanged_build_reuses_completed_artifacts(self):
         self.assertTrue(self.restored())
 
+    def test_launcher_identity_does_not_hide_compiler_environment_changes(self):
+        self.environment.update(SHLVL='2', XPC_SERVICE_NAME='launcher.123')
+        self.assertTrue(self.restored())
+        self.environment.update(SHLVL='1', XPC_SERVICE_NAME='launcher.456')
+        self.assertTrue(self.restored())
+        self.environment['RUSTFLAGS'] = '-C opt-level=1'
+        self.assertFalse(self.restored())
+
     def test_depfile_input_change_with_preserved_timestamp_invalidates(self):
         previous = self.external.stat()
         self.external.write_text('new')

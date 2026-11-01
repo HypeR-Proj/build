@@ -122,18 +122,17 @@ def source_context(manifest, workspace, destination, controls):
     if not state.is_file() or json.loads(state.read_text()) != {'signature': signature} or not locked.is_file():
         files.write(locked, lock_body)
         files.write(state, json.dumps({'signature': signature}).encode())
-        (destination / 'source-resolved.json').unlink(missing_ok=True)
     return destination / 'Cargo.toml'
 
 
-def preview(manifest, workspace, destination, driver, environment, controls):
+def preview(manifest, workspace, destination, driver, environment, controls, resolve=None):
     """Resolve an output-only view; callers validate the owned dependency closure."""
     context = source_context(manifest, workspace, destination, controls)
-    state = destination / 'source-resolved.json'
-    if not state.is_file():
-        subprocess.run([str(driver), 'fetch', '--offline', '--manifest-path', str(context)],
-                       cwd=destination, env=environment, check=True)
-        files.write(state, '{}\n')
+    command = [str(driver), 'fetch', '--manifest-path', str(context)]
+    if resolve is None:
+        subprocess.run(command, cwd=destination, env=environment, check=True)
+    else:
+        resolve(command)
     return context
 
 

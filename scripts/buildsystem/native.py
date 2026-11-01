@@ -62,8 +62,13 @@ class Builder:
         return self.cache.graph(command, environment, create)
 
     def scoped(self, manifest, workspace, label, command=None, owner=None):
+        environment = self.environment('system')
+        def resolve(command):
+            self.cache.fetch([command], environment,
+                             lambda arguments: subprocess.run(arguments, cwd=self.root, env=environment, check=True),
+                             label='fetch-source-' + label)
         context = preview(manifest, workspace, self.caches['system'] / 'sources' / label,
-                          self.sdk / 'bin/hyper-cargo', self.environment('system'), self.cache.controls)
+                          self.sdk / 'bin/hyper-cargo', environment, self.cache.controls, resolve)
         command = list(command or self.command(manifest))
         command[command.index('--manifest-path') + 1] = str(context)
         while '--package' in command:
@@ -218,6 +223,13 @@ class Builder:
                     command, graph = self.normalized(command, module.source / selected[0]['manifest'],
                                                      module.source / 'Cargo.toml', names[0], initial)
                     verify(self.expected, graph, module.name)
+            else:
+                fetch = [str(self.sdk / 'bin/hyper-cargo'), 'fetch', '--locked', '--manifest-path',
+                         str(module.source / 'Cargo.toml')]
+                environment = self.environment(domain, runtime)
+                self.cache.fetch([fetch], environment,
+                                 lambda command: subprocess.run(command, cwd=self.root, env=environment, check=True),
+                                 label='fetch-' + module.name + '-' + runtime)
             selection = hashlib.sha256(','.join(names).encode()).hexdigest()[:12]
             self.run(command, domain, runtime, module.name + '-' + runtime + '-' + selection, action)
 
