@@ -101,6 +101,8 @@ def generate(root, output, modules, inputs, arch):
             for body in owned:
                 target = destination / body.relative_to(source) if source.is_dir() else destination
                 if str(target) in planned:
+                    if source_name == str(destination) and module.path == Path('.'):
+                        continue
                     raise ValueError(f'{module.name}: workspace overlay conflicts with {target}')
                 regular(target, body.read_bytes(), stat.S_IMODE(body.stat().st_mode))
 

@@ -7,11 +7,13 @@
 
 `repo init` and `repo sync` create the source layout declared by the manifest.
 The manifest has its single checkout in `.repo/manifests`; the documentation-only
-HypeR repository is not downloaded. The build repository occupies the workspace
-root. Run `make prepare` explicitly, or let any normal Make target prepare first.
+HypeR repository is not downloaded. The build repository occupies `build/`; the workspace root is not a Git
+repository. The manifest creates `Makefile` and `project.py` entry links to the
+build checkout. Run `make prepare` explicitly, or let any normal Make target prepare first.
 
 Preparation discovers `component.json` in each manifest project, checks build
 dependencies and generates an execution view under `OUT/workspace/ARCH`.
+The independent `fit-pack` repository lives at `build/tools/fit-pack`.
 Source bodies are linked to their owning checkout; build control files are
 copied, and workspace manifests are generated from declarations. Edit source
 repositories, not generated control files. Unchanged generated files retain their

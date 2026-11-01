@@ -14,7 +14,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from buildsystem.config import backend
-from buildsystem.model import dependency_order, discover
+from buildsystem.model import dependency_order, discover, find_workspace
 from buildsystem.prepare import execution, prepare
 
 
@@ -157,8 +157,9 @@ with execution(Path(sys.argv[1]), Path(sys.argv[2])):
             self.assertEqual(result.stdout.strip(), 'shared')
 
     def test_module_configuration_names_are_independent_and_reach_only_their_build(self):
-        host_output = Path(os.environ.get('HYPER_BUILD_OUTPUT', os.environ.get('OUT', ROOT / 'out')))
-        executable = backend(ROOT, host_output)
+        workspace = find_workspace(ROOT)
+        host_output = Path(os.environ.get('HYPER_BUILD_OUTPUT', os.environ.get('OUT', workspace / 'out')))
+        executable = backend(workspace, host_output)
         for name, default in [('alpha', 'y'), ('beta', 'n')]:
             self.describe(name, 'modules/' + name, config={'schema': 'Kconfig'}, build={'steps': [[
                 sys.executable, '-c', "import os,sys; from pathlib import Path; Path(sys.argv[1]).write_text(os.environ['CONFIG_DEBUG'])",

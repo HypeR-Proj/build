@@ -21,7 +21,7 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
 from buildsystem import files
-from buildsystem.model import discover, manifest_path, relative
+from buildsystem.model import discover, find_workspace, manifest_path, read_manifest, relative
 from buildsystem.prepare import prepare as prepare_view
 
 LICENSE = {'SPDX-FileCopyrightText': '2026 roolrz', 'SPDX-License-Identifier': 'Apache-2.0'}
@@ -41,6 +41,10 @@ def git(root, *arguments):
 
 def output_path(workspace, output=None):
     return Path(output or os.environ.get('OUT', workspace / 'out')).resolve()
+
+
+def build_driver(workspace):
+    return discover(workspace)['build'].source / 'scripts/build.py'
 
 
 def source_files(workspace, output=None):
@@ -95,6 +99,26 @@ def archive(workspace, destination, output=None):
                 if body.resolve() != destination:
                     stream.add(body, arcname='HypeR/' + name, recursive=False)
             stream.add(path, arcname='HypeR/source-inventory.json')
+            # Export the manifest's small entry links as well as source owners.
+            # They are generated at repo sync time in a Git-backed workspace.
+            destinations = {Path(name) for name in source} | {Path('source-inventory.json')}
+            for item in read_manifest(manifest_path(workspace)):
+                for link in item:
+                    if link.tag not in ('linkfile', 'copyfile'):
+                        continue
+                    target = relative(link.attrib['dest'])
+                    origin = relative(item.get('path', item.attrib['name'])) / relative(link.attrib['src'])
+                    if (any(target.is_relative_to(path) or path.is_relative_to(target)
+                            for path in destinations) or str(origin) not in source):
+                        raise ValueError(f'invalid exported manifest entry: {target}')
+                    destinations.add(target)
+                    if link.tag == 'copyfile':
+                        stream.add(source[str(origin)], arcname='HypeR/' + str(target), recursive=False)
+                    else:
+                        entry = tarfile.TarInfo('HypeR/' + str(target))
+                        entry.type = tarfile.SYMTYPE
+                        entry.linkname = os.path.relpath(origin, target.parent)
+                        stream.addfile(entry)
         if inventory(workspace, output, excluded=(destination, temporary)) != record:
             raise ValueError('sources changed during archive construction; retry')
         temporary.chmod(0o644)
@@ -110,17 +134,20 @@ def module_tests(workspace, name, output=None):
             subprocess.run([value.replace('{component}', str(module.source)).replace('{system}', str(workspace))
                             for value in command], cwd=workspace, check=True)
         return
-    command = [sys.executable, str(workspace / 'scripts/build.py'), '--workspace', str(workspace),
+    command = [sys.executable, str(build_driver(workspace)), '--workspace', str(workspace),
                '--out', str(output_path(workspace, output)), '--module', name, 'test']
     subprocess.run(command, check=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--workspace', type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument('--workspace', type=Path)
     parser.add_argument('--out', type=Path)
     actions = parser.add_subparsers(dest='action', required=True)
     actions.add_parser('prepare')
+    actions.add_parser('root')
+    locate = actions.add_parser('path')
+    locate.add_argument('component')
     actions.add_parser('files')
     test = actions.add_parser('test')
     test.add_argument('component')
@@ -130,8 +157,14 @@ def main():
     execute = actions.add_parser('exec')
     execute.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    workspace = args.workspace.resolve()
-    if args.action == 'test':
+    workspace = (args.workspace.resolve() if args.workspace else
+                 Path(os.environ['HYPER_BUILD_VIEW_PATH']) if os.environ.get('HYPER_BUILD_VIEW') == '1' else
+                 find_workspace(Path(__file__).resolve().parent))
+    if args.action == 'root':
+        print(workspace)
+    elif args.action == 'path':
+        print(discover(workspace)[args.component].source)
+    elif args.action == 'test':
         module_tests(workspace, args.component, args.out)
     elif args.action == 'files':
         print('\n'.join(sorted(source_files(workspace, args.out))))
@@ -143,7 +176,7 @@ def main():
         files.write(path, json.dumps(inventory(workspace, output), indent=2) + '\n')
         print(path)
     elif args.action == 'exec':
-        subprocess.run([sys.executable, str(workspace / 'scripts/build.py'), '--workspace', str(workspace),
+        subprocess.run([sys.executable, str(build_driver(workspace)), '--workspace', str(workspace),
                         '--out', str(output_path(workspace, args.out)), 'exec', *args.command], check=True)
     else:
         print(prepare(workspace, args.out))

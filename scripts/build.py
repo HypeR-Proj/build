@@ -38,8 +38,8 @@ def main():
     root = args.workspace.resolve() if args.workspace else find_workspace(Path.cwd())
     output = (args.out or Path(os.environ.get('OUT', root / 'out'))).resolve()
     arch = os.environ.get('ARCH', 'aarch64')
-    toolchain = root / 'mk/workspace/rust-toolchain.toml'
-    if not (root / 'rust-toolchain.toml').is_file() and toolchain.is_file():
+    toolchain = Path(__file__).resolve().parents[1] / 'rust-toolchain.toml'
+    if toolchain.is_file():
         os.environ.setdefault('RUSTUP_TOOLCHAIN', tomllib.loads(toolchain.read_text())['toolchain']['channel'])
     with execution(root, output, arch, exclusive='config' in args.action or args.action == 'clean') as (view, modules, changed):
         execute(args, root, output, arch, view, modules, changed)
@@ -54,7 +54,8 @@ def execute(args, root, output, arch, view, modules, changed):
                                 'configurable': m.kconfig is not None} for name, m in modules.items()}, indent=2))
         return
     module = modules[args.module] if args.module else None
-    if not module and args.module_source and args.module_source.resolve() != modules['build'].source.resolve():
+    if not module and args.module_source and args.module_source.resolve() not in (
+            root, modules['build'].source.resolve()):
         matches = [m for m in modules.values() if m.source.resolve() == args.module_source.resolve()]
         if len(matches) != 1:
             raise ValueError('module entry point must match one manifest project')

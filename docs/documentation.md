@@ -24,8 +24,8 @@ Build a site locally from the workspace:
 
 ```sh
 python3 -m venv /tmp/hyper-docs
-/tmp/hyper-docs/bin/pip install -r scripts/docs/requirements.txt
-/tmp/hyper-docs/bin/python scripts/docs/build.py \
+/tmp/hyper-docs/bin/pip install -r build/scripts/docs/requirements.txt
+/tmp/hyper-docs/bin/python build/scripts/docs/build.py \
   --root kernel --repository kernel --output /tmp/kernel-docs
 ```
 

@@ -6,17 +6,23 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 
 from . import files
-from .model import relative
+from .model import discover, relative
 
 
 def backend(root, output):
     source = root / 'kernel/tools/kconfig'
-    version = subprocess.check_output(['rustc', '-vV'], cwd=root, text=True)
+    environment = dict(os.environ)
+    policy = discover(root)['build'].source / 'rust-toolchain.toml'
+    if policy.is_file():
+        environment.setdefault('RUSTUP_TOOLCHAIN', tomllib.loads(policy.read_text())['toolchain']['channel'])
+    version = subprocess.check_output(['rustc', '-vV'], cwd=root, env=environment, text=True)
     host = next(line[6:] for line in version.splitlines() if line.startswith('host: '))
     target = output / 'build/host/kconfig'
     executable = target / host / 'debug/hyper-kconfig'
@@ -29,7 +35,7 @@ def backend(root, output):
     if not executable.is_file() or not stamp.exists() or stamp.read_text() != identity:
         subprocess.run(['cargo', 'build', '--quiet', '--locked', '--offline', '--manifest-path',
                         str(source / 'Cargo.toml'), '--target', host, '--target-dir', str(target)],
-                       cwd=root, check=True)
+                       cwd=root, env=environment, check=True)
         files.write(stamp, identity)
     return executable
 
