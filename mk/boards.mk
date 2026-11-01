@@ -188,11 +188,11 @@ test-board-storage: app image
 		BOARD_CONFIG="$(BOARD_CONFIG)" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe"' && \
-	$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-board-storage.py \
+	$(NATIVE_QEMU_ENV) LLVM_NM="$(LLVM_NM)" python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$(BOARD_CONFIG)" --log "$$fixture/accept" \
 		--require-block-queue \
-		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)")
+		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)" --stack-elf "$(KERNEL_OUTPUT)/hyper" --stack-config "$(KERNEL_CONFIG_PATH)")
 
 # Formal-root and recovery acceptance own a disposable disk and reuse only
 # their bootstrap archive for the controller-free boot.
