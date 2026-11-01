@@ -148,6 +148,8 @@ def main():
     actions.add_parser('root')
     locate = actions.add_parser('path')
     locate.add_argument('component')
+    docs = actions.add_parser('check-docs', help='check source links without preparing build outputs')
+    docs.add_argument('source', type=Path)
     actions.add_parser('files')
     test = actions.add_parser('test')
     test.add_argument('component')
@@ -164,6 +166,9 @@ def main():
         print(workspace)
     elif args.action == 'path':
         print(discover(workspace)[args.component].source)
+    elif args.action == 'check-docs':
+        checker = discover(workspace)['build'].source / 'scripts/docs/check-source.py'
+        subprocess.run([sys.executable, str(checker), str(args.source.resolve())], check=True)
     elif args.action == 'test':
         module_tests(workspace, args.component, args.out)
     elif args.action == 'files':

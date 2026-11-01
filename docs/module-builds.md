@@ -23,6 +23,10 @@ A source archive made with `python3 project.py archive OUTPUT.tar.xz` includes
 module sources, the manifest and provenance. It can prepare its own output view
 without Git or a second manifest checkout. Archives exclude generated build data.
 
+`python3 project.py check-docs PATH` validates a repository's local Markdown
+links using the discovered build tools. This source-only check does not prepare
+a workspace, create output directories or require a Rust toolchain.
+
 ## Output ownership
 
 `OUT` defaults to the workspace's `out` directory. Pass an absolute path when

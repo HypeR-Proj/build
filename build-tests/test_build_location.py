@@ -96,6 +96,22 @@ class BuildLocationTests(unittest.TestCase):
         self.command(restored / 'modules/alpha', 'make')
         self.assertEqual((restored / 'out/build/alpha/result').read_text(), 'built')
 
+    def test_source_documentation_uses_build_owner_without_preparation(self):
+        checker = self.tools / 'scripts/docs/check-source.py'
+        checker.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / 'scripts/docs/check-source.py', checker)
+        readme = self.module / 'README.md'
+        readme.write_text('[Metadata](component.json)\n')
+        result = self.command(self.root, sys.executable, 'project.py', 'check-docs', str(self.module))
+        self.assertIn('Markdown source links are valid', result)
+        readme.write_text('[Missing](missing.md)\n')
+        result = subprocess.run([sys.executable, 'project.py', 'check-docs', str(self.module)],
+            cwd=self.root, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing local link', result.stderr)
+        self.assertFalse((self.root / 'out').exists())
+        self.assertFalse((self.tools / 'out').exists())
+
     def test_exported_entry_cannot_replace_provenance_or_source_directories(self):
         manifest = self.root / '.repo/manifests/default.xml'
         original = manifest.read_text()
