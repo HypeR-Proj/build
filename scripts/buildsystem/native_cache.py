@@ -96,7 +96,6 @@ class Cache:
         import os
         cargo = Path(environment.get('CARGO_HOME', Path.home() / '.cargo'))
         path = self.directory / 'fetch.json'
-        keys = [self.key(command, environment) for command in commands]
         def state():
             registry = []
             for directory in (cargo / 'registry/cache', cargo / 'registry/index', cargo / 'git'):
@@ -108,7 +107,7 @@ class Cache:
                         except FileNotFoundError:
                             return None  # Another Cargo process is updating it.
                         registry.append((str(entry), info.st_size, info.st_mtime_ns, info.st_ctime_ns))
-            return {'keys': keys, 'registry': digest(json.dumps(sorted(registry)).encode())}
+            return {'keys': [self.key(command, environment) for command in commands], 'registry': digest(json.dumps(sorted(registry)).encode())}
         before = state()
         if before is not None and path.is_file():
             try:

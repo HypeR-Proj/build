@@ -17,7 +17,7 @@ import subprocess
 import tomllib
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from . import files
+from . import files, lock_scope
 from .toml import dumps
 
 
@@ -75,24 +75,20 @@ def validate_lock(original, generated, anchor):
             raise ValueError(f'link context changed a repository-locked dependency: {entry["name"]}')
 
 
-def prepare(manifest, workspace, graph, destination, driver, environment, contract=None, contract_lock=None):
-    private = link_units(contract or graph)
-    if not private:
-        return manifest
+def project(manifest, workspace):
     data = tomllib.loads(manifest.read_text())
     root = tomllib.loads(workspace.read_text())
-    lock_body = (workspace.parent / 'Cargo.lock').read_bytes()
-    original_lock = tomllib.loads(lock_body.decode())
-    if contract_lock is not None:
-        from .shared_plan import merge_locks
-        original_lock = merge_locks([original_lock, contract_lock])
-        lock_body = dumps(original_lock).encode()
     data['package'].pop('workspace', None)
     data['workspace'] = {'resolver': root.get('workspace', {}).get('resolver', '3')}
     data['profile'] = deepcopy(root.get('profile', {}))
     for key in ('patch', 'replace'):
         if key in root:
             data[key] = deepcopy(root[key])
+            scopes = data[key].values() if key == 'patch' else [data[key]]
+            for scope in scopes:
+                for declaration in scope.values():
+                    if isinstance(declaration, dict) and 'path' in declaration:
+                        declaration['path'] = str((workspace.parent / declaration['path']).resolve())
     for scope in [data, *data.get('target', {}).values()]:
         for section in ('dependencies', 'dev-dependencies', 'build-dependencies'):
             for declaration in scope.get(section, {}).values():
@@ -108,6 +104,50 @@ def prepare(manifest, workspace, graph, destination, driver, environment, contra
     build = data['package'].get('build', 'build.rs')
     if isinstance(build, str) and (manifest.parent / build).is_file():
         data['package']['build'] = str(manifest.parent / build)
+    return data
+
+
+def source_context(manifest, workspace, destination, controls):
+    """Copy a source manifest and lock into an independently resolved output view."""
+    body = dumps(project(manifest, workspace)).encode()
+    lock_body = (workspace.parent / 'Cargo.lock').read_bytes()
+    signature = hashlib.sha256(body + lock_body + controls.encode()).hexdigest()
+    state = destination / 'source-context.json'
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in manifest.parent.iterdir():
+        if source.name not in ('Cargo.toml', 'Cargo.lock', 'target', '.git', '.cargo'):
+            files.link(destination / source.name, source)
+    files.write(destination / 'Cargo.toml', body)
+    locked = destination / 'Cargo.lock'
+    if not state.is_file() or json.loads(state.read_text()) != {'signature': signature} or not locked.is_file():
+        files.write(locked, lock_body)
+        files.write(state, json.dumps({'signature': signature}).encode())
+        (destination / 'source-resolved.json').unlink(missing_ok=True)
+    return destination / 'Cargo.toml'
+
+
+def preview(manifest, workspace, destination, driver, environment, controls):
+    """Resolve an output-only view; callers validate the owned dependency closure."""
+    context = source_context(manifest, workspace, destination, controls)
+    state = destination / 'source-resolved.json'
+    if not state.is_file():
+        subprocess.run([str(driver), 'fetch', '--offline', '--manifest-path', str(context)],
+                       cwd=destination, env=environment, check=True)
+        files.write(state, '{}\n')
+    return context
+
+
+def prepare(manifest, workspace, graph, destination, driver, environment, contract=None, contract_lock=None):
+    private = link_units(contract or graph)
+    if not private:
+        return manifest
+    data = project(manifest, workspace)
+    lock_body = (workspace.parent / 'Cargo.lock').read_bytes()
+    original_lock = tomllib.loads(lock_body.decode())
+    if contract_lock is not None:
+        from .shared_plan import merge_locks
+        original_lock = merge_locks([original_lock, contract_lock])
+        lock_body = dumps(lock_scope.prefer(original_lock, contract_lock)).encode()
     anchor_name = 'hyper-link-context-' + data['package']['name']
     anchor = {'package': {'name': anchor_name, 'version': '0.0.0', 'edition': '2024', 'publish': False},
               'lib': {'crate-type': ['dylib', 'rlib']}, 'dependencies': {}}

@@ -160,10 +160,21 @@ package versions remain Cargo metadata; Native binaries currently use `0.1.0`,
 independently of the Native ABI revision. `build.type = "native-rust"` selects the
 SDK-backed builder. A library may keep its wrapper in a local workspace member.
 
-Source lockfiles remain authoritative. Generated compiler contexts and their
-locks live only under OUT; there is no build-repository global application lock.
-The builder rejects a composition that would replace a consumer's resolved
-package versions. Both editor checks and builds use the installed Native SDK.
+Use compatible version ranges for registry dependencies, such as `clap = "4"`,
+and omit redundant versions for path dependencies. Exact requirements belong
+only to interfaces that actually require an exact version. A repository's
+`Cargo.lock` records its selected dependency versions.
+
+Lock ownership stops at shared-library boundaries. A provider's link-probe lock
+selects its implementation dependencies; stale transitive copies in an
+application lock do not require application commits when that provider changes.
+Dependencies reached directly from the application remain application-owned,
+even when a shared library also uses them. Composition fails if it would replace
+one of those locked versions or require incompatible provider features.
+
+Generated compiler contexts and their locks live only under OUT; no source lock
+is rewritten, and there is no build-repository global application lock. Both
+editor checks and builds use the installed Native SDK.
 
 ### Shared-library feature contract
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import tomllib
 
-from . import files
+from . import files, lock_scope
 from .link_context import validate_lock
 from .toml import dumps
 
@@ -37,11 +37,10 @@ def merge_locks(locks):
     return result
 
 
-def prepare(registry, destination, driver, environment):
+def prepare(registry, destination, driver, environment, locks, available):
     package = 'hyper-system-libraries'
     data = {'package': {'name': package, 'version': '0.0.0', 'edition': '2024', 'publish': False},
             'workspace': {'resolver': '3'}, 'dependencies': {}}
-    locks = []
     for name, (module, entry, manifest) in sorted(registry.items()):
         probe = module.source / entry['link_probe']
         profile = tomllib.loads(probe.read_text()).get('profile', {})
@@ -51,9 +50,10 @@ def prepare(registry, destination, driver, environment):
         data['dependencies'][name] = {'path': str((module.source / entry['manifest']).parent),
                                       'version': '=' + manifest['package']['version'],
                                       'features': entry['features'], 'default-features': entry['default_features']}
-        locks.append(tomllib.loads((probe.parent / 'Cargo.lock').read_text()))
-    original = merge_locks(locks)
-    body, lock_body = dumps(data).encode(), dumps(original).encode()
+    original = merge_locks(available)
+    owned = merge_locks(locks)
+    seed = lock_scope.prefer(original, owned)
+    body, lock_body = dumps(data).encode(), dumps(seed).encode()
     signature = hashlib.sha256(body + lock_body).hexdigest()
     state = destination / 'providers.json'
     files.write(destination / 'Cargo.toml', body)

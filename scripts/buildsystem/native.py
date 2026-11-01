@@ -11,7 +11,8 @@ import subprocess
 import tomllib
 
 from .shared import identities, providers, verify
-from .link_context import prepare as link_context
+from .link_context import prepare as link_context, preview
+from . import lock_scope
 from .shared_plan import prepare as shared_plan
 from .native_cache import Cache
 from .toolchain import native_environment
@@ -60,9 +61,22 @@ class Builder:
             return json.loads(result.stdout)
         return self.cache.graph(command, environment, create)
 
+    def scoped(self, manifest, workspace, label, command=None, owner=None):
+        context = preview(manifest, workspace, self.caches['system'] / 'sources' / label,
+                          self.sdk / 'bin/hyper-cargo', self.environment('system'), self.cache.controls)
+        command = list(command or self.command(manifest))
+        command[command.index('--manifest-path') + 1] = str(context)
+        while '--package' in command:
+            index = command.index('--package')
+            del command[index:index + 2]
+        graph = self.graph(command, 'system', 'std')
+        original = tomllib.loads((workspace.parent / 'Cargo.lock').read_text())
+        resolved = tomllib.loads((context.parent / 'Cargo.lock').read_text())
+        selected = lock_scope.validate(original, resolved, lock_scope.owned(graph, self.registry, owner))
+        return command, graph, selected
+
     def normalized(self, command, manifest, workspace, label, graph=None):
         graph = graph or self.graph(command, 'system', 'std')
-        original = graph
         context = link_context(manifest, workspace, graph, self.caches['system'] / 'contexts' / label,
                                self.sdk / 'bin/hyper-cargo', self.environment('system'),
                                self.provider_graph, self.provider_lock)
@@ -73,18 +87,14 @@ class Builder:
                 index = command.index('--package')
                 del command[index:index + 2]
             graph = self.graph(command, 'system', 'std')
-            roots = {original['units'][index]['pkg_id'] for index in original['roots']}
-            def selected(value):
-                return {(unit['pkg_id'], unit['target']['name'], unit['mode'], unit['platform'])
-                        for unit in value['units'] if unit['pkg_id'] not in roots}
-            if missing := selected(original) - selected(graph):
-                raise ValueError(f'{label}: system libraries would replace repository-locked dependencies: '
-                                 + ', '.join(sorted({item[0] for item in missing})))
             helper_source = str(context.parent / 'link-context/src/lib.rs')
             for unit in graph['units']:
                 if unit['target']['src_path'] == helper_source:
                     self.helpers.add(unit['pkg_id'])
                     self.helper_libraries.add('lib' + unit['target']['name'] + '.so')
+            lock_scope.validate(tomllib.loads((workspace.parent / 'Cargo.lock').read_text()),
+                                tomllib.loads((context.parent / 'Cargo.lock').read_text()),
+                                lock_scope.owned(graph, self.registry, ignored=self.helpers))
         return command, identities(graph, self.helpers)
 
     def run(self, command, domain, runtime, label, action):
@@ -138,10 +148,20 @@ class Builder:
             return
         if library not in self.library_names:
             raise ValueError(f'unknown Native shared provider: {library}')
+        locks, available = [], []
+        for name, (module, entry, _) in sorted(self.registry.items()):
+            probe = module.source / entry['link_probe']
+            command, _, locked = self.scoped(probe, probe, 'provider-' + name, owner=name)
+            locks.append(locked)
+            context = Path(command[command.index('--manifest-path') + 1])
+            available.append(tomllib.loads((context.parent / 'Cargo.lock').read_text()))
         manifest = shared_plan(self.registry, self.caches['system'] / 'providers',
-                               self.sdk / 'bin/hyper-cargo', self.environment('system'))
+                               self.sdk / 'bin/hyper-cargo', self.environment('system'), locks, available)
         self.provider_graph = self.graph(self.command(manifest), 'system', 'std')
         self.provider_lock = tomllib.loads((manifest.parent / 'Cargo.lock').read_text())
+        for (name, _), locked in zip(sorted(self.registry.items()), locks):
+            lock_scope.validate(locked, self.provider_lock,
+                                lock_scope.owned(self.provider_graph, self.registry, owner=name))
         command, graph = self.normalized(self.command(manifest), manifest, manifest,
                                          'system-libraries', self.provider_graph)
         if set(graph) != set(self.library_names):
@@ -190,7 +210,8 @@ class Builder:
                 arguments += ['--features', ','.join(requested)]
             command = self.command(module.source / 'Cargo.toml', arguments)
             if domain == 'system' and runtime == 'std':
-                initial = self.graph(command, domain, runtime)
+                command, initial, _ = self.scoped(module.source / selected[0]['manifest'],
+                                                  module.source / 'Cargo.toml', names[0], command)
                 libraries = identities(initial)
                 if libraries:
                     self.provider(next(iter(libraries)), action)

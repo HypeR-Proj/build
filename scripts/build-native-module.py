@@ -14,6 +14,7 @@ import tomllib
 
 from buildsystem.model import discover
 from buildsystem.native import Builder
+from buildsystem.link_context import source_context
 from native_components import cargo_targets, extra_binary
 import system_config
 
@@ -43,10 +44,23 @@ def main():
             entries = module.metadata.get('cargo', [])
             if not entries:
                 continue
-            manifests = [module.source / 'Cargo.toml',
-                         *[module.source / entry['link_probe'] for entry in entries if entry.get('shared')]]
-            for manifest in manifests:
-                commands.append([str(sdk / 'bin/hyper-cargo'), 'fetch', '--locked', '--manifest-path', str(manifest)])
+            for entry in entries:
+                workspace = module.source / 'Cargo.toml'
+                manifest = module.source / entry['manifest']
+                name = tomllib.loads(manifest.read_text())['package']['name']
+                locked = ['--locked']
+                if entry['domain'] == 'system':
+                    if entry.get('shared'):
+                        manifest = workspace = module.source / entry['link_probe']
+                        name = 'provider-' + name
+                    manifest = source_context(manifest, workspace, caches['system'] / 'sources' / name,
+                                              builder.cache.controls)
+                    locked = []
+                else:
+                    manifest = workspace
+                command = [str(sdk / 'bin/hyper-cargo'), 'fetch', *locked, '--manifest-path', str(manifest)]
+                if command not in commands:
+                    commands.append(command)
         environment = builder.environment('system')
         builder.cache.fetch(commands, environment,
                             lambda command: subprocess.run(command, cwd=root, env=environment, check=True))
