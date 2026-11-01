@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from buildsystem.config import backend
 from buildsystem.model import dependency_order, discover, find_workspace
-from buildsystem.prepare import execution, prepare
+from buildsystem.prepare import cached, execution, generate, prepare
 
 
 class PreparationTests(unittest.TestCase):
@@ -155,6 +155,125 @@ with execution(Path(sys.argv[1]), Path(sys.argv[2])):
             result = subprocess.run([sys.executable, '-c', code, str(self.root), str(self.output)],
                                     env=environment, capture_output=True, text=True, timeout=10, check=True)
             self.assertEqual(result.stdout.strip(), 'shared')
+
+    def test_launch_ignores_compiler_inputs_without_weakening_build_freshness(self):
+        source = self.root / 'modules/alpha/source.rs'
+        source.write_text('before')
+        view, _, _, _ = prepare(self.root, self.output)
+        source.write_text('after')
+        with patch('buildsystem.prepare.collect', side_effect=AssertionError('launch scanned compiler inputs')):
+            with execution(self.root, self.output, launch=True) as (ready, _, changed):
+                self.assertEqual(ready, view)
+                self.assertFalse(changed)
+        # A later build must still record the changed compiler input.
+        self.assertIsNone(cached(self.root, self.output, 'aarch64'))
+        with execution(self.root, self.output) as (_, _, changed):
+            self.assertTrue(changed)
+
+    def test_launch_refreshes_timestamp_preserving_control_changes_and_repairs_view(self):
+        view, _, _, _ = prepare(self.root, self.output)
+        source = self.root / 'policy.py'
+        previous = source.stat()
+        source.write_text('modified policy\n')
+        os.utime(source, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+        with execution(self.root, self.output, launch=True) as (_, _, changed):
+            self.assertTrue(changed)
+        self.assertEqual((view / 'policy.py').read_bytes(), source.read_bytes())
+        for corrupt in ('body', 'mode', 'link'):
+            with self.subTest(corrupt=corrupt):
+                path = view / 'policy.py'
+                if corrupt == 'body':
+                    path.write_text('corrupt generated script')
+                elif corrupt == 'mode':
+                    path.chmod(0o700)
+                else:
+                    path.unlink()
+                    path.symlink_to(source)
+                with execution(self.root, self.output, launch=True) as (_, _, changed):
+                    self.assertTrue(changed)
+                self.assertFalse(path.is_symlink())
+                self.assertEqual(path.read_bytes(), source.read_bytes())
+                self.assertEqual(path.stat().st_mode & 0o777, source.stat().st_mode & 0o777)
+
+    def test_launch_detects_new_helpers_in_previously_source_only_directories(self):
+        directory = self.root / 'modules/alpha/nested'
+        directory.mkdir()
+        (directory / 'source.rs').write_text('source')
+        view, _, _, _ = prepare(self.root, self.output)
+        helper = directory / 'helper.py'
+        helper.write_text('new helper')
+        with execution(self.root, self.output, launch=True) as (_, _, changed):
+            self.assertTrue(changed)
+        mirrored = view / 'modules/alpha/nested/helper.py'
+        self.assertEqual(mirrored.read_bytes(), helper.read_bytes())
+        helper.unlink()
+        with execution(self.root, self.output, launch=True) as (_, _, changed):
+            self.assertTrue(changed)
+        self.assertFalse(mirrored.exists())
+
+    def test_launch_revalidates_saved_configs_metadata_architecture_and_owner(self):
+        configuration = self.output / 'config/aarch64/local.config'
+        configuration.parent.mkdir(parents=True)
+        configuration.write_text('before')
+        prepare(self.root, self.output)
+        self.assertIsNotNone(cached(self.root, self.output, 'aarch64', launch=True))
+        configuration.write_text('after')
+        self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
+        configuration.write_text('before')
+        self.assertIsNone(cached(self.root, self.output, 'riscv64', launch=True))
+        self.describe('alpha', 'modules/alpha', description='changed metadata')
+        self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
+        prepare(self.root, self.output)
+        (self.output / 'workspace-owner.json').write_text('{"workspace":"another","version":1}')
+        with self.assertRaisesRegex(ValueError, 'another workspace'):
+            with execution(self.root, self.output, launch=True):
+                self.fail('launch accepted foreign output')
+
+    def test_launch_accepts_source_symlinks_but_refreshes_their_contents(self):
+        source = self.root / 'policy.py'
+        alias = self.root / 'alias.py'
+        alias.symlink_to(source)
+        view, _, _, _ = prepare(self.root, self.output)
+        self.assertIsNotNone(cached(self.root, self.output, 'aarch64', launch=True))
+        source.write_text('updated target')
+        with execution(self.root, self.output, launch=True):
+            self.assertEqual((view / 'alias.py').read_bytes(), source.read_bytes())
+
+    def test_launch_detects_helpers_added_to_empty_directories(self):
+        directory = self.root / 'modules/alpha/empty/nested'
+        directory.mkdir(parents=True)
+        view, _, _, _ = prepare(self.root, self.output)
+        (directory / 'helper.py').write_text('new helper')
+        with execution(self.root, self.output, launch=True):
+            self.assertEqual((view / 'modules/alpha/empty/nested/helper.py').read_text(), 'new helper')
+
+    def test_launch_does_not_cache_an_addition_racing_with_generation(self):
+        def add_helper(*args):
+            (self.root / 'modules/alpha/helper.py').write_text('new helper')
+            return generate(*args)
+
+        with patch('buildsystem.prepare.generate', side_effect=add_helper):
+            view, _, _, _ = prepare(self.root, self.output)
+        self.assertFalse((view / 'modules/alpha/helper.py').exists())
+        self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
+        with execution(self.root, self.output, launch=True):
+            self.assertEqual((view / 'modules/alpha/helper.py').read_text(), 'new helper')
+
+    def test_launch_revalidates_link_changes_in_included_manifests(self):
+        (self.root / 'modules/alpha/data.txt').write_text('data')
+        manifest = self.root / '.repo/manifests/default.xml'
+        included = manifest.with_name('projects.xml')
+        included.write_text(manifest.read_text().replace(
+            '<project name="alpha" path="modules/alpha"/>',
+            '<project name="alpha" path="modules/alpha">'
+            '<linkfile src="data.txt" dest="first.txt"/></project>'))
+        manifest.write_text('<manifest><include name="projects.xml"/></manifest>')
+        view, _, _, _ = prepare(self.root, self.output)
+        included.write_text(included.read_text().replace('first.txt', 'other.txt'))
+        self.assertIsNone(cached(self.root, self.output, 'aarch64', launch=True))
+        with execution(self.root, self.output, launch=True):
+            self.assertFalse((view / 'first.txt').exists())
+            self.assertEqual((view / 'other.txt').read_text(), 'data')
 
     def test_module_configuration_names_are_independent_and_reach_only_their_build(self):
         workspace = find_workspace(ROOT)

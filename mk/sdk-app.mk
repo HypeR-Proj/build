@@ -9,7 +9,8 @@ APP_HOST_EXCLUDES = $(shell python3 -B scripts/app-deployment.py host-excludes -
 # Bootstrap programs are built independently: a workspace-wide Cargo build can
 # unify shared-library features back into these otherwise static consumers.
 ifeq ($(origin APP_BOOT_COMPONENTS),undefined)
-APP_BOOT_COMPONENTS := $(shell python3 -B scripts/app-deployment.py boot-components --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS))
+# Resolve once, only when a recipe actually builds or packs bootstrap programs.
+APP_BOOT_COMPONENTS = $(eval APP_BOOT_COMPONENTS := $(shell python3 -B scripts/app-deployment.py boot-components --manifest "$(APP_DEPLOYMENT)" $(SYSTEM_CONFIG_ARGS)))$(APP_BOOT_COMPONENTS)
 endif
 APP_BOOT_OUTPUT ?= $(APP_OUTPUT)/boot-static
 APP_BOOT_CARGO_OUTPUT ?= $(if $(HYPER_BUILD_OUTPUT),$(HYPER_BUILD_OUTPUT)/build/native/$(NATIVE_ARCH)/boot$(APP_VARIANT),$(APP_CARGO_OUTPUT)/boot-static)

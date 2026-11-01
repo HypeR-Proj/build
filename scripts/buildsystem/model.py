@@ -84,6 +84,15 @@ class Module:
             raise ValueError(f'{self.name}: missing configuration schema {path}')
         return path
 
+    def walk(self, output):
+        for base, directories, filenames in os.walk(self.source):
+            base = Path(base)
+            directories[:] = [name for name in directories
+                              if name not in ('.git', '.repo', 'out', 'target', '__pycache__')
+                              and base / name not in self.nested
+                              and not (base / name).resolve().is_relative_to(output)]
+            yield base, filenames
+
     def files(self, output):
         result = None
         if (self.source / '.git').exists():
@@ -93,14 +102,8 @@ class Module:
         if result is None or result.returncode:
             # Exported source archives have no Git metadata. The exporter
             # supplies only source files; exclude generated directories here.
-            names = []
-            for base, directories, filenames in os.walk(self.source):
-                base = Path(base)
-                directories[:] = [name for name in directories
-                                  if name not in ('.git', '.repo', 'out', 'target', '__pycache__')
-                                  and base / name not in self.nested
-                                  and not (base / name).resolve().is_relative_to(output)]
-                names.extend(str((base / name).relative_to(self.source)) for name in filenames)
+            names = [str((base / name).relative_to(self.source))
+                     for base, filenames in self.walk(output) for name in filenames]
         else:
             names = result.stdout.split('\0')
         for name in sorted(set(names)):
