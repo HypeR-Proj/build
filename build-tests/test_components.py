@@ -73,6 +73,18 @@ class Components(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'must fix features'):
             load(self.repositories)
 
+    def test_native_source_archives_validate_paths_and_cache_environment(self):
+        valid = {'manifest': 'sources.json', 'cache': 'example', 'cache_env': 'HYPER_EXAMPLE_CACHE'}
+        self.write('tool', 'component.json', name='tool', build={'type': 'native-rust', 'source_archives': valid})
+        modules, _ = load(self.repositories)
+        self.assertEqual(modules['tool']['build']['source_archives'], valid)
+        for change in ({'manifest': '../sources.json'}, {'cache': '/outside'}, {'cache_env': 'HOME'}):
+            with self.subTest(change=change):
+                self.write('tool', 'component.json', name='tool',
+                           build={'type': 'native-rust', 'source_archives': {**valid, **change}})
+                with self.assertRaises(ValueError):
+                    load(self.repositories)
+
 
 if __name__ == '__main__':
     unittest.main()

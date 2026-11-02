@@ -17,6 +17,7 @@ from .shared_plan import prepare as shared_plan
 from .native_cache import Cache
 from .toolchain import native_environment
 from native_libraries import read_image
+from source_archive import sources
 
 
 class Builder:
@@ -107,6 +108,8 @@ class Builder:
         log.parent.mkdir(parents=True, exist_ok=True)
         build_command = command
         environment = self.environment(domain, runtime)
+        graph = self.graph(build_command, domain, runtime)
+        archives = self.source_inputs(graph, environment)
         command = [*command, '--message-format=json-render-diagnostics']
         if action == 'check':
             command[1] = 'clippy'
@@ -115,7 +118,11 @@ class Builder:
             self.check_products()
             self.records.append((domain, runtime, log))
             return log
-        before = self.cache.before(self.graph(build_command, domain, runtime)) if action != 'check' else None
+        # Preparation may fetch pinned inputs; the compiler/build scripts remain
+        # offline. Only dependencies in this exact Cargo graph need archives.
+        for manifest, cache in archives:
+            sources(manifest, cache, fetch=True)
+        before = self.cache.before(graph) if action != 'check' else None
         with log.open('w') as stream:
             result = subprocess.run(command, cwd=self.root, env=environment, stdout=stream)
         if result.returncode:
@@ -142,6 +149,28 @@ class Builder:
             self.cache.publish(label, command, environment, log, before)
         self.records.append((domain, runtime, log))
         return log
+
+    def source_inputs(self, graph, environment):
+        paths = [Path(unit['target']['src_path']) for unit in graph['units']]
+        result, overrides = [], {}
+        for module in self.modules.values():
+            declaration = module.build.get('source_archives')
+            if not declaration or not any(path.is_relative_to(module.source)
+                                          or path.resolve().is_relative_to(module.source.resolve())
+                                          for path in paths):
+                continue
+            # Prepared execution views link source files back to their owning
+            # checkout. Preserve the logical module path when selecting inputs.
+            manifest = module.source / declaration['manifest']
+            variable = declaration['cache_env']
+            cache = Path(environment.get(variable) or self.output / 'cache' / declaration['cache'])
+            cache = (self.root / cache).resolve()
+            if variable in overrides and overrides[variable] != str(cache):
+                raise ValueError(f'conflicting source archive cache variable: {variable}')
+            overrides[variable] = str(cache)
+            result.append((manifest, cache))
+        environment.update(overrides)
+        return result
 
     def check_products(self):
         for name, (path, digest) in self.products.items():

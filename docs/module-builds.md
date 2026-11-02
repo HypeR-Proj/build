@@ -68,6 +68,27 @@ independent scratch build is needed.
 
 ## Module description
 
+Native packages with pinned non-Cargo inputs declare `build.source_archives`:
+
+```json
+{
+  "type": "native-rust",
+  "source_archives": {
+    "manifest": "sources.json",
+    "cache": "example-sources",
+    "cache_env": "HYPER_EXAMPLE_SOURCE_CACHE"
+  }
+}
+```
+
+The manifest is repository-relative and uses the shared source archive format.
+The Native driver prepares and validates these inputs only when that repository
+appears in the selected Cargo unit graph, including transitive dependencies.
+The cache defaults to `OUT/cache/<cache>`; `cache_env` names a `HYPER_` variable
+that can override it and is passed to build scripts as an absolute path.
+Valid compiled-cache hits do not need to fetch archives again. Cargo and its
+build scripts remain offline; network access belongs to driver preparation.
+
 `name` identifies the manifest project; `version` is the description schema version,
 not the Rust package version. `tests` and SPDX fields belong to the repository.
 Build recipes contain argument arrays, not shell fragments. For example:
