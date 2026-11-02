@@ -68,9 +68,6 @@
     },
     {
       "project": "lib-rust-fatfs"
-    },
-    {
-      "project": "lib-fs-f2fs"
     }
   ]
 }
