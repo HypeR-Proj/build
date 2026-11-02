@@ -73,6 +73,30 @@ class Components(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'must fix features'):
             load(self.repositories)
 
+    def test_native_source_archives_validate_paths_and_cache_environment(self):
+        valid = {'manifest': 'sources.json', 'cache': 'example', 'cache_env': 'HYPER_EXAMPLE_CACHE'}
+        self.write('tool', 'component.json', name='tool', build={'type': 'native-rust', 'source_archives': valid})
+        modules, _ = load(self.repositories)
+        self.assertEqual(modules['tool']['build']['source_archives'], valid)
+        for change in ({'manifest': '../sources.json'}, {'cache': '/outside'}, {'cache_env': 'HOME'}):
+            with self.subTest(change=change):
+                self.write('tool', 'component.json', name='tool',
+                           build={'type': 'native-rust', 'source_archives': {**valid, **change}})
+                with self.assertRaises(ValueError):
+                    load(self.repositories)
+
+    def test_source_archive_recipe_can_be_composed_from_local_fragments(self):
+        archives = {'manifest': 'sources.json', 'cache': 'example', 'cache_env': 'HYPER_EXAMPLE_CACHE'}
+        for root_build, fragment_build in [({'type': 'native-rust'}, {'source_archives': archives}),
+                                           ({'source_archives': archives}, {'type': 'native-rust'})]:
+            self.write('tool', 'component.json', name='tool', include=['sources.component.json'], build=root_build)
+            self.write('tool', 'sources.component.json', build=fragment_build)
+            modules, _ = load(self.repositories)
+            self.assertEqual(modules['tool']['build']['source_archives'], archives)
+        self.write('tool', 'component.json', name='tool', build={'source_archives': archives})
+        with self.assertRaisesRegex(ValueError, 'require a native-rust build'):
+            load(self.repositories)
+
 
 if __name__ == '__main__':
     unittest.main()

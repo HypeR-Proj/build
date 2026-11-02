@@ -12,7 +12,7 @@ import tempfile
 import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from source_archive import sources
+from source_archive import archive_digest, sources
 
 
 class Archives(unittest.TestCase):
@@ -59,6 +59,40 @@ class Archives(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'escapes'):
             sources(self.manifest, self.cache)
         self.assertFalse((self.root / 'escaped').exists())
+
+    def test_content_pin_ignores_metadata_but_checks_names_and_bytes(self):
+        archive = self.archive()
+        record = json.loads(self.manifest.read_text())['archives'][0]
+        del record['sha256']
+        record['content_sha256'] = archive_digest(archive, content=True, strip_components=1)
+        pinned = archive.with_name(record['content_sha256'] + '.tar.gz')
+        self.manifest.write_text(json.dumps({'archives': [record]}))
+        for name, payload, accepted in [('prefix/file', b'payload', True),
+                                         ('prefix/file', b'changed', False),
+                                         ('prefix/renamed', b'payload', False)]:
+            with self.subTest(name=name, payload=payload):
+                with tarfile.open(pinned, 'w:gz') as bundle:
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(payload)
+                    entry.mtime = 12345
+                    entry.uid = 42
+                    bundle.addfile(entry, io.BytesIO(payload))
+                if accepted:
+                    self.assertNotEqual(archive.read_bytes(), pinned.read_bytes())
+                    self.assertEqual((sources(self.manifest, self.cache)['test'] / 'file').read_bytes(), payload)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+                        sources(self.manifest, self.cache)
+
+    def test_duplicate_paths_cannot_hide_different_extraction_order(self):
+        archive = self.root / 'duplicates.tar.gz'
+        with tarfile.open(archive, 'w:gz') as bundle:
+            for payload in (b'first', b'last'):
+                entry = tarfile.TarInfo('file')
+                entry.size = len(payload)
+                bundle.addfile(entry, io.BytesIO(payload))
+        with self.assertRaisesRegex(ValueError, 'duplicate archive file path'):
+            archive_digest(archive, content=True)
 
 
 if __name__ == '__main__':

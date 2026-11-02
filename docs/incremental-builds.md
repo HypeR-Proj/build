@@ -36,6 +36,10 @@ SDK and initramfs cache validation reads file contents, rather than relying only
 on mtimes. Timestamp-preserving changes and missing or corrupted cached outputs
 therefore invalidate these caches. Inputs are checked again before publication;
 if they change during construction, the build fails and should be retried.
+The Native invocation cache also tracks directory dependencies emitted by Cargo
+build scripts. Nested file contents and names participate, including symlinked
+trees. Missing dependencies or directory cycles disable invocation reuse; they
+do not turn a successful compilation into a cache-publication failure.
 Cargo retains its own upstream freshness rules for Rust compilation.
 
 C runtime translation units retain their objects and compiler depfiles across

@@ -6,13 +6,14 @@
 from copy import deepcopy
 import json
 from pathlib import Path, PurePosixPath
+import re
 
 
 FIELDS = {'version', 'name', 'kind', 'include', 'config', 'build', 'cargo',
           'artifacts', 'tests', 'test_requires_rust', 'tests_need_workspace',
           'workspace', 'documentation', 'integration',
           'SPDX-FileCopyrightText', 'SPDX-License-Identifier'}
-BUILD_FIELDS = {'type', 'requires', 'actions', 'steps', 'environment', 'makefile'}
+BUILD_FIELDS = {'type', 'requires', 'actions', 'steps', 'environment', 'makefile', 'source_archives'}
 CARGO_FIELDS = {'manifest', 'domain', 'features', 'default_features', 'shared', 'link_probe'}
 
 
@@ -49,6 +50,15 @@ def validate(data, context, *, fragment=False):
         raise ValueError(f'{context}: build type cannot also declare a custom backend')
     if 'requires' in build:
         string_list(build['requires'], f'{context}: build.requires')
+    if 'source_archives' in build:
+        archives = build['source_archives']
+        if (build.get('type') not in (None, 'native-rust') or not isinstance(archives, dict)
+                or archives.keys() != {'manifest', 'cache', 'cache_env'}):
+            raise ValueError(f'{context}: source_archives requires a Native manifest, cache and cache_env')
+        relative_path(archives['manifest'])
+        relative_path(archives['cache'])
+        if not isinstance(archives['cache_env'], str) or not re.fullmatch(r'HYPER_[A-Z0-9_]+', archives['cache_env']):
+            raise ValueError(f'{context}: source archive cache_env must name a HYPER_ environment variable')
     if not isinstance(data.get('cargo', []), list):
         raise ValueError(f'{context}: cargo must be an array')
     for entry in data.get('cargo', []):
@@ -144,6 +154,9 @@ def load(repositories, entry='build'):
         visit('manifest')
     for name, data in resolved.items():
         validate(data, name)
+        recipe = data.get('build', {})
+        if 'source_archives' in recipe and recipe.get('type') != 'native-rust':
+            raise ValueError(f'{name}: source archives require a native-rust build')
         manifests = [entry['manifest'] for entry in data.get('cargo', [])]
         if len(manifests) != len(set(manifests)):
             raise ValueError(f'{name}: duplicate Cargo manifest declaration')
