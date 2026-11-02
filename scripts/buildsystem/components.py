@@ -52,7 +52,7 @@ def validate(data, context, *, fragment=False):
         string_list(build['requires'], f'{context}: build.requires')
     if 'source_archives' in build:
         archives = build['source_archives']
-        if (build.get('type') != 'native-rust' or not isinstance(archives, dict)
+        if (build.get('type') not in (None, 'native-rust') or not isinstance(archives, dict)
                 or archives.keys() != {'manifest', 'cache', 'cache_env'}):
             raise ValueError(f'{context}: source_archives requires a Native manifest, cache and cache_env')
         relative_path(archives['manifest'])
@@ -154,6 +154,9 @@ def load(repositories, entry='build'):
         visit('manifest')
     for name, data in resolved.items():
         validate(data, name)
+        recipe = data.get('build', {})
+        if 'source_archives' in recipe and recipe.get('type') != 'native-rust':
+            raise ValueError(f'{name}: source archives require a native-rust build')
         manifests = [entry['manifest'] for entry in data.get('cargo', [])]
         if len(manifests) != len(set(manifests)):
             raise ValueError(f'{name}: duplicate Cargo manifest declaration')

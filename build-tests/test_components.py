@@ -85,6 +85,18 @@ class Components(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load(self.repositories)
 
+    def test_source_archive_recipe_can_be_composed_from_local_fragments(self):
+        archives = {'manifest': 'sources.json', 'cache': 'example', 'cache_env': 'HYPER_EXAMPLE_CACHE'}
+        for root_build, fragment_build in [({'type': 'native-rust'}, {'source_archives': archives}),
+                                           ({'source_archives': archives}, {'type': 'native-rust'})]:
+            self.write('tool', 'component.json', name='tool', include=['sources.component.json'], build=root_build)
+            self.write('tool', 'sources.component.json', build=fragment_build)
+            modules, _ = load(self.repositories)
+            self.assertEqual(modules['tool']['build']['source_archives'], archives)
+        self.write('tool', 'component.json', name='tool', build={'source_archives': archives})
+        with self.assertRaisesRegex(ValueError, 'require a native-rust build'):
+            load(self.repositories)
+
 
 if __name__ == '__main__':
     unittest.main()
