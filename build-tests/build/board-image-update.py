@@ -6,6 +6,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -24,10 +25,13 @@ spec.loader.exec_module(packer)
 
 class SystemRefreshTests(unittest.TestCase):
     def setUp(self):
+        self.prepare_board('qemu.json')
+
+    def prepare_board(self, name):
         temporary = tempfile.TemporaryDirectory(prefix='hyper system update ')
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
-        source = json.loads((ROOT / 'boards/qemu.json').read_text())
+        source = json.loads((ROOT / 'boards' / name).read_text())
         for part, size in zip(source['disk']['partitions'], (64, 8, 8)):
             part['size-mib'] = size
         self.board = Board.parse(source)
@@ -71,9 +75,17 @@ class SystemRefreshTests(unittest.TestCase):
         tool = self.directory / 'mkfs.erofs'
         tool.write_text('#!/bin/sh\nprintf "new filesystem" > "$6"\n')
         tool.chmod(0o755)
-        subprocess.run(['make', '-o', 'image', '-o', 'board-initramfs', 'board-build',
-                        f'BOARD_OUTPUT={self.directory}', f'EROFS_MKFS={tool}'],
-                       cwd=ROOT, check=True, capture_output=True, text=True)
+        for target in ('board-build', 'rebuild', 'board-rebuild'):
+            with self.subTest(target=target):
+                # Exercise actual refresh on each entry, not only its no-op path.
+                self.state.write_bytes(self.original_state)
+                subprocess.run(['make', '-o', 'image', '-o', 'board-initramfs',
+                                '-o', 'board-guest-images', target,
+                                f'BOARD_OUTPUT={self.directory}', f'EROFS_MKFS={tool}'],
+                               cwd=ROOT, check=True, capture_output=True, text=True)
+                current = self.output.read_bytes()
+                self.assertEqual(current[:self.start], before[:self.start])
+                self.assertEqual(current[self.end:], before[self.end:])
         after = self.output.read_bytes()
         self.assertEqual(after[:self.start], before[:self.start])
         self.assertEqual(after[self.end:], before[self.end:])
@@ -84,6 +96,10 @@ class SystemRefreshTests(unittest.TestCase):
         with patch.object(packer, 'prepare_erofs', side_effect=AssertionError('no rebuild')):
             self.assertFalse(packer.refresh_system_payload(self.board, self.output, self.root))
         self.assertEqual(packer.disk_stamp(self.output.stat()), saved)
+
+    def test_rpi5_rebuild_preserves_data_and_firmware_partition(self):
+        self.prepare_board('rpi5-native.json')
+        self.test_make_refresh_preserves_gpt_data_guest_and_clears_old_system_tail()
 
     def test_missing_sidecar_can_be_repaired_without_resetting_data(self):
         self.state.unlink()
@@ -96,6 +112,52 @@ class SystemRefreshTests(unittest.TestCase):
         self.assertEqual(after[self.start:self.start + 4096], b'\0' * 4096)
         self.assertEqual(after[self.start + 4096:self.start + 4107], b'new program')
         packer.check_system_payload(self.output, self.root, self.board)
+
+    def test_explicit_reset_replaces_persistent_bytes_only_after_packing(self):
+        (self.directory / 'deployment.json').write_text(json.dumps(self.board.source))
+        (self.directory / 'alpine.itb').write_bytes(b'guest image fixture')
+        guest = next(part for part in self.board.partitions if part.image == 'alpine-rootfs')
+        with (self.directory / 'alpine.ext4').open('wb') as stream:
+            stream.write(b'guest disk fixture')
+            stream.truncate(guest.sectors * SECTOR)
+        # Only external formatters are substituted; Make, GPT construction,
+        # payload assembly and atomic disk publication use production code.
+        tools = self.directory / 'tools'
+        tools.mkdir()
+        for name, body in [('mkfs.fat', 'exit 0'), ('mcopy', 'exit 0'),
+                           ('mkfs.erofs', 'printf "new filesystem" > "$6"')]:
+            tool = tools / name
+            tool.write_text('#!/bin/sh\n' + body + '\n')
+            tool.chmod(0o755)
+        command = ['make', '-o', 'image', '-o', 'board-initramfs',
+                   '-o', 'board-guest-images', 'board-reset-storage',
+                   f'BOARD_OUTPUT={self.directory}', f'EROFS_MKFS={tools / "mkfs.erofs"}']
+        environment = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH']}
+        formatter = tools / 'mkfs.erofs'
+        formatter.write_text('#!/bin/sh\nexit 1\n')
+        failed = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.unchanged()
+        formatter.write_text('#!/bin/sh\nprintf "new filesystem" > "$6"\n')
+        reset = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True)
+        self.assertEqual(reset.returncode, 0, reset.stdout + reset.stderr)
+        with self.output.open('rb') as stream:
+            packer.validate_disk(stream, self.board)
+            for part in self.board.partitions:
+                stream.seek(part.start * SECTOR)
+                self.assertNotIn(b'persistent user bytes', stream.read(SECTOR))
+        self.assertNotEqual(packer.digest(self.output), self.original_hash)
+        packer.check_system_payload(self.output, self.root, self.board)
+
+    def test_nonboard_rebuild_preserves_an_existing_io_disk(self):
+        for arch, profile in [('aarch64', 'io'), ('aarch64', 'native'),
+                              ('riscv64', 'native'), ('x86_64', 'native')]:
+            with self.subTest(arch=arch, profile=profile):
+                subprocess.run(['make', '-o', 'image', '-o', 'native-initramfs',
+                                '-o', 'io-initramfs', 'rebuild', f'ARCH={arch}',
+                                f'RUN_PROFILE={profile}', f'IO_VM_DISK={self.output}'],
+                               cwd=ROOT, check=True, capture_output=True, text=True)
+                self.unchanged()
 
     def test_packing_and_publication_failures_keep_original_disk(self):
         with patch.object(packer, 'prepare_erofs', side_effect=ValueError('mkfs failed')):

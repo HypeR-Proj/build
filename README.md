@@ -17,6 +17,12 @@ make menuconfig OUT=$PWD/out
 make test MODULE=build OUT=$PWD/out
 ```
 
+`make` and `make rebuild` preserve existing persistent storage. Board builds
+refresh the generated `/system` volume without replacing data or guest partitions.
+To deliberately recreate the entire board disk, stop its VM and use
+`make board-reset-storage` with the same `OUT`, board and configuration arguments.
+This explicit reset discards all data in that disk; use a separate `OUT` to keep it.
+
 Every normal Make invocation runs preparation automatically. Sources remain in
 their repositories; prepared build controls, editor settings, configurations,
 caches and images live under `OUT`. Open `out/HypeR-aarch64.code-workspace` in

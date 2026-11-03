@@ -78,7 +78,7 @@ board-deployment:
 	python3 -B scripts/prepare-native-layout.py --board "$(BOARD_CONFIG)" \
 		--output "$(BOARD_DEPLOYMENT)"
 
-.PHONY: board-plan board-initramfs board-image board-build board-rebuild board-run board-guest-images
+.PHONY: board-plan board-initramfs board-image board-build board-rebuild board-reset-storage board-run board-guest-images
 board-plan: board-deployment
 	python3 -B scripts/pack-board-image.py --board "$(BOARD_DEPLOYMENT)" --plan
 
@@ -115,9 +115,12 @@ board-build: image board-initramfs
 	fi
 	$(MAKE) board-update-system
 
-# Explicit full repacking resets persistent volumes only after successful packing.
-board-rebuild: image board-initramfs board-guest-images
-	@echo "Rebuilding $(BOARD_IMAGE): disk data will be reset after successful packing."
+# Rebuilding has the same data lifetime as an ordinary build.
+board-rebuild: board-build
+
+# Only this explicit operation resets persistent volumes after successful packing.
+board-reset-storage: image board-initramfs board-guest-images
+	@echo "Resetting $(BOARD_IMAGE): all disk data will be replaced after successful packing."
 	$(MAKE) -o image -o board-initramfs -o board-guest-images board-image BOARD_IMAGE_REPLACE=--replace
 
 board-guest-images: board-deployment

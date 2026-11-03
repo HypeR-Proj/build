@@ -213,17 +213,17 @@ class EntrypointTests(unittest.TestCase):
             self.assertNotRegex(database, r'(?m)^BOARD_SYSTEM_LAYOUT\s*[:?]?=')
             self.assertRegex(database, r'(?m)^APP_BUILD_PROFILE\s*[:?]?=\s*system$')
             self.assertRegex(database, r'(?m)^board-run: board-check-system$')
-            self.assertRegex(database, r'(?m)^board-rebuild: image board-initramfs board-guest-images$')
+            self.assertRegex(database, r'(?m)^board-rebuild: board-build$')
+            self.assertRegex(database, r'(?m)^board-reset-storage: image board-initramfs board-guest-images$')
             # Ask Make for its evaluated recipes, not a guessed source filename.
-            rebuild = re.search(r'(?ms)^board-rebuild:.*?(?=^[^\s#]|\Z)', database).group(0)
-            self.assertIn('--replace', rebuild)
+            reset = re.search(r'(?ms)^board-reset-storage:.*?(?=^[^\s#]|\Z)', database).group(0)
+            self.assertIn('--replace', reset)
             run = re.search(r'(?ms)^board-run:.*?(?=^[^\s#]|\Z)', database).group(0)
             self.assertNotIn('--replace', run)
             self.assertNotIn('board-image', run)
             expected_run = 'board-run' if arch == 'aarch64' else ''
             self.assertRegex(database, rf'(?m)^run: *{expected_run} *$')
-            expected_rebuild = 'board-rebuild' if arch == 'aarch64' else 'all'
-            self.assertRegex(database, rf'(?m)^rebuild: {expected_rebuild}$')
+            self.assertRegex(database, r'(?m)^rebuild: all$')
             self.assertIn('$(BOARD_IMAGE)', run)
 
     def test_run_has_no_build_commands(self):

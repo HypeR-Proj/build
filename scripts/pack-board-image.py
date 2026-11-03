@@ -171,7 +171,7 @@ def refresh_system_payload(board, output, root, mkfs_erofs='mkfs.erofs'):
         part = next((part for part in board.partitions if part.content == 'system'), None)
         if part is None or part.image or part.filesystem != 'erofs':
             raise ValueError('automatic system refresh requires a generated EROFS volume; '
-                             'use a new output path or an explicit board-rebuild')
+                             'use a new output path or explicitly reset with make board-reset-storage')
         try:
             fcntl.lockf(source, fcntl.LOCK_EX | fcntl.LOCK_NB, 0, 0)
         except OSError as error:
