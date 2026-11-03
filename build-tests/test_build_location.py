@@ -99,7 +99,8 @@ class BuildLocationTests(unittest.TestCase):
     def test_source_documentation_uses_docs_owner_without_preparation(self):
         checker = self.root / 'docs/tools/check-source.py'
         checker.parent.mkdir(parents=True)
-        shutil.copy2(discover(find_workspace(ROOT))['docs'].source / 'tools/check-source.py', checker)
+        shutil.copytree(discover(find_workspace(ROOT))['docs'].source / 'tools', checker.parent,
+                        dirs_exist_ok=True)
         (self.root / 'docs/component.json').write_text(json.dumps({'name': 'docs', 'version': 1}))
         manifest = self.root / '.repo/manifests/default.xml'
         manifest.write_text(manifest.read_text().replace('</manifest>', '<project name="docs" path="docs"/></manifest>'))
