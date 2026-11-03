@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 roolrz
 # SPDX-License-Identifier: Apache-2.0
-"""Resolve a qualified I/O VM release, then import and verify its immutable digest."""
+"""Select a verified local I/O VM build or import a qualified remote release."""
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform as host_platform
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -32,6 +34,49 @@ ORAS_SHA256 = {
     "linux_amd64": "6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64",
     "linux_arm64": "7649738b48fde10542bcc8b0e9b460ba83936c75fb5be01ee6d4443764a14352",
 }
+
+
+def local_build(directory, platform):
+    """Only complete, compatible products from the explicit appliance builder qualify."""
+    source = Path(__file__).with_name('io-vm-images.py')
+    spec = importlib.util.spec_from_file_location('hyper_io_images', source)
+    images = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(images)
+    for output in (directory, directory / platform):
+        index = output / f'{platform}-boot.json'
+        try:
+            if not index.exists():
+                continue
+            record = json.loads(images.bounded_read(index, MIB))
+            package = Path(record['directory'])
+            if not package.is_absolute() or not package.resolve().is_relative_to(output.resolve() / 'boot'):
+                raise ValueError('local boot generation is outside its build output')
+            if not (package / 'boot-artifacts.json').is_file():
+                raise ValueError('local boot generation is incomplete')
+            metadata = json.loads(images.bounded_read(package / 'boot-artifacts.json', MIB))
+            if metadata.get('platform') != platform:
+                raise ValueError('local boot configuration does not identify the requested platform')
+            images.package_payloads(package, platform, require_client_resources=True)
+            print(f'Using local I/O VM build: {package}', file=sys.stderr)
+            return package.resolve()
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, zlib.error) as error:
+            print(f'Ignoring unusable local I/O VM build {index}: {error}', file=sys.stderr)
+    return None
+
+
+def select_package(reference, platform, output, local, oras='', materials=False):
+    # Explicit inputs bind verification to one generation. Material exports are
+    # OCI operations; a local runtime directory is not a source-material package.
+    if not reference and not materials:
+        if package := local_build(local, platform):
+            return package
+    if not reference:
+        oras = oras or ensure_oras()
+        reference = qualified_reference(platform, oras)
+    package = fetch(reference, platform, output, oras)
+    if materials:
+        fetch_materials(reference, platform, package, oras)
+    return package
 
 
 def ensure_oras():
@@ -213,26 +258,28 @@ def main():
                         'scripts/fetch-io-vm.py', *sys.argv[1:]], check=True)
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference", help="explicit immutable package; default: latest qualified main release")
+    parser.add_argument("--reference", help="explicit immutable package; overrides local build selection")
     parser.add_argument("--platform", required=True, choices=("qemu", "rpi5"))
     parser.add_argument("--output", type=Path,
                         default=Path(__file__).resolve().parents[1] / "target/io-vm/packages")
     parser.add_argument("--oras", default="", help="ORAS executable; default: PATH or verified local download")
+    build_output = Path(os.environ.get('HYPER_BUILD_OUTPUT', root / 'out'))
+    parser.add_argument('--local-build', type=Path,
+                        default=Path(os.environ.get('IO_VM_LOCAL_BUILD', build_output / 'build/io-vm')),
+                        help='explicit appliance build output to check before remote resolution')
     parser.add_argument("--materials", action="store_true", help="include corresponding source assets")
     args = parser.parse_args()
+    args.local_build = args.local_build.absolute()
     try:
-        oras = args.oras
-        reference = args.reference
-        if not reference:
-            oras = oras or ensure_oras()
-            reference = qualified_reference(args.platform, oras)
-        directory = fetch(reference, args.platform, args.output, oras)
-        if args.materials:
-            fetch_materials(reference, args.platform, directory, oras)
+        directory = select_package(args.reference, args.platform, args.output,
+                                   args.local_build, args.oras, args.materials)
         print(directory)
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             subprocess.CalledProcessError, tarfile.TarError, zlib.error) as error:
-        parser.exit(1, f"fetch-io-vm: {error}\n")
+        command = shlex.join(['make', 'iovm', f'IO_VM_PLATFORM={args.platform}',
+                              f'OUT={build_output}', f'IO_VM_LOCAL_BUILD={args.local_build}'])
+        parser.exit(1, f'fetch-io-vm: {error}\nNo usable appliance was selected. '
+                    f'Build explicitly on a Linux host:\n  {command}\n')
 
 
 if __name__ == "__main__":

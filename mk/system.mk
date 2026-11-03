@@ -113,6 +113,8 @@ STACK_MAXIMUM_USED ?= 24576
 
 IO_VM_REFERENCE ?=
 IO_VM_PLATFORM ?= qemu
+IO_VM_LOCAL_BUILD ?= $(HYPER_BUILD_OUTPUT)/build/io-vm
+export IO_VM_LOCAL_BUILD
 IO_VM_TEST ?= basic
 ifeq ($(origin INITRAMFS),undefined)
 RUN_PROFILE ?= $(if $(filter aarch64,$(ARCH)),board,native)
