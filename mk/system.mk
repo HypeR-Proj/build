@@ -200,15 +200,15 @@ KERNEL_TARGETS := guest-assets \
 
 ifeq ($(RUN_PROFILE),board)
 all: board-build
-rebuild: board-rebuild
 else
 all: image $(NATIVE_BUILD_PREREQUISITES)
-rebuild: all
 ifeq ($(RUN_PROFILE),io)
 all:
 	python3 -B -c 'import runpy, sys; from pathlib import Path; runpy.run_path("scripts/run-io-vm.py")["prepare_disk"](Path(sys.argv[1]), 64 * 1024 * 1024)' "$(IO_VM_DISK)"
 endif
 endif
+
+rebuild: all
 
 config: menuconfig
 
