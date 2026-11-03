@@ -3,7 +3,12 @@
 
 # Board deployment, external appliances and storage acceptance.
 # Linux images are imported from the independent appliance repository.
-.PHONY: io-vm-fetch
+.PHONY: io-vm-fetch iovm
+# Linux compilation is opt-in; ordinary image recipes only select artifacts.
+iovm:
+	@appliance_output=$$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$(IO_VM_LOCAL_BUILD)") || exit $$?; \
+	$(MAKE) -C io-vm -f mk/build.mk base OUTPUT="$$appliance_output" PLATFORM="$(IO_VM_PLATFORM)"
+
 io-vm-fetch:
 	python3 -B scripts/fetch-io-vm.py --reference "$(IO_VM_REFERENCE)" --platform "$(IO_VM_PLATFORM)"
 

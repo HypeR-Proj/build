@@ -23,6 +23,34 @@ To deliberately recreate the entire board disk, stop its VM and use
 `make board-reset-storage` with the same `OUT`, board and configuration arguments.
 This explicit reset discards all data in that disk; use a separate `OUT` to keep it.
 
+Ordinary image builds select a compatible, explicitly built I/O VM under
+`OUT/build/io-vm` first, then resolve the latest qualified remote artifact.
+They never compile Linux implicitly. Local selection checks the platform,
+AArch64 image, complete initramfs, content hashes and v5 client-resource contract.
+Invalid local output is reported and skipped. If remote selection also fails,
+the error prints the explicit build command:
+
+```sh
+# Requires the Linux-host prerequisites documented by the io-vm repository.
+make iovm OUT=$PWD/out IO_VM_PLATFORM=qemu JOBS=4
+make iovm OUT=$PWD/out IO_VM_PLATFORM=rpi5 JOBS=4
+```
+
+Non-AArch64 Linux hosts also set `CROSS_COMPILE=aarch64-linux-gnu-`.
+See [appliance build prerequisites](https://github.com/HypeR-Proj/io-vm#build).
+`IO_VM_LOCAL_BUILD` selects an alternate build-output directory for both the
+explicit builder and normal selection. The resolver also recognizes the nested
+platform outputs produced by the appliance's `all-platforms` target. A local
+build remains selected until rebuilt, its platform index is removed, or an
+explicit package/digest is requested; source edits do not implicitly compile it.
+
+`IO_VM_PACKAGE` and immutable `IO_VM_REFERENCE` overrides retain precedence,
+including the exact inputs selected by system CI. Without a usable local build,
+the remote channel is resolved on each invocation and verified payloads are
+reused by digest. There is no silent fallback to an older remote generation.
+The fetch script's `--materials` operation selects OCI runtime and corresponding
+sources together, independently of local runtime-build selection.
+
 Every normal Make invocation runs preparation automatically. Sources remain in
 their repositories; prepared build controls, editor settings, configurations,
 caches and images live under `OUT`. Open `out/HypeR-aarch64.code-workspace` in

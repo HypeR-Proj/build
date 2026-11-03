@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pin validation and extraction safety for experimental source dependencies."""
 import hashlib
+import concurrent.futures
+import errno
 import io
 import json
 from pathlib import Path
@@ -10,6 +12,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from source_archive import archive_digest, sources
@@ -53,6 +56,88 @@ class Archives(unittest.TestCase):
         self.archive().unlink()
         with self.assertRaises(FileNotFoundError):
             sources(self.manifest, self.cache)
+
+    def test_modified_missing_and_extra_extracted_content_is_rejected(self):
+        self.archive()
+        directory = sources(self.manifest, self.cache)['test']
+        file = directory / 'file'
+        file.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'extracted source'):
+            sources(self.manifest, self.cache)
+        file.unlink()
+        with self.assertRaisesRegex(ValueError, 'extracted source'):
+            sources(self.manifest, self.cache)
+        file.write_bytes(b'payload')
+        extra = directory / 'extra'
+        extra.write_bytes(b'untracked')
+        with self.assertRaisesRegex(ValueError, 'extracted source'):
+            sources(self.manifest, self.cache)
+        extra.unlink()
+        self.assertEqual(sources(self.manifest, self.cache)['test'], directory)
+
+    def test_extraction_policy_has_a_distinct_cache_identity(self):
+        self.archive()
+        stripped = sources(self.manifest, self.cache)['test']
+        manifest = json.loads(self.manifest.read_text())
+        manifest['archives'][0]['strip_components'] = 0
+        self.manifest.write_text(json.dumps(manifest))
+        complete = sources(self.manifest, self.cache)['test']
+        self.assertNotEqual(stripped, complete)
+        self.assertEqual((complete / 'prefix/file').read_bytes(), b'payload')
+        self.assertEqual((stripped / 'file').read_bytes(), b'payload')
+
+    def test_extracted_links_and_extra_directories_are_rejected(self):
+        self.archive()
+        directory = sources(self.manifest, self.cache)['test']
+        file = directory / 'file'
+        file.unlink()
+        outside = self.root / 'outside'
+        outside.write_bytes(b'payload')
+        file.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, 'extracted source'):
+            sources(self.manifest, self.cache)
+        file.unlink()
+        file.write_bytes(b'payload')
+        (directory / 'extra').mkdir()
+        with self.assertRaisesRegex(ValueError, 'extracted source'):
+            sources(self.manifest, self.cache)
+        (directory / 'extra').rmdir()
+        moved = directory.with_name('moved')
+        directory.rename(moved)
+        directory.symlink_to(moved, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'extracted source root'):
+            sources(self.manifest, self.cache)
+
+    def test_invalid_strip_policy_is_rejected_before_materialization(self):
+        self.archive()
+        data = json.loads(self.manifest.read_text())
+        for value in (-1, True, '1', 1.5):
+            with self.subTest(value=value):
+                data['archives'][0]['strip_components'] = value
+                self.manifest.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, 'strip_components'):
+                    sources(self.manifest, self.cache)
+        self.assertFalse((self.cache / 'unpacked').exists())
+
+    def test_concurrent_publishers_return_the_same_verified_generation(self):
+        self.archive()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
+            roots = list(workers.map(lambda _: sources(self.manifest, self.cache)['test'], range(4)))
+        self.assertEqual(len(set(roots)), 1)
+        self.assertEqual((roots[0] / 'file').read_bytes(), b'payload')
+        self.assertEqual(list((self.cache / 'unpacked').iterdir()), [roots[0]])
+
+    def test_competing_publication_is_verified_before_acceptance(self):
+        self.archive()
+
+        def publish_corrupt_winner(source, destination):
+            destination.mkdir()
+            (destination / 'file').write_bytes(b'wrong')
+            raise OSError(errno.EEXIST, 'another publisher won')
+
+        with patch.object(Path, 'rename', publish_corrupt_winner):
+            with self.assertRaisesRegex(ValueError, 'extracted source'):
+                sources(self.manifest, self.cache)
 
     def test_traversal_rejected_before_stripping(self):
         self.archive('../escaped')
