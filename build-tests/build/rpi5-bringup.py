@@ -145,7 +145,7 @@ class BringupTests(unittest.TestCase):
         self.assertEqual(board.source['io-vm']['io-device'], {
             'profile': 'bcm2712-sdhci', 'path': '/soc@107c000000/mmc@fff000'})
         self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 1024)
-        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system', 'alpine'])
+        self.assertEqual([part.name for part in board.partitions], ['hyper-boot', 'hyper-data', 'hyper-system', 'alpine'])
         qemu = bringup.Board.load(ROOT / 'boards/qemu.json')
         # QEMU exercises PCI by default; RPi5 retains the qualified MMIO guest.
         self.assertEqual(qemu.source['virtual-machines'][0]['configuration'].pop('virtio-transport'), 'pci')
@@ -170,9 +170,9 @@ class BringupTests(unittest.TestCase):
 
     def test_native_profile_has_no_guest_disk_or_io_payload(self):
         board = bringup.Board.load(ROOT / 'boards/rpi5-native.json')
-        self.assertEqual([part.name for part in board.partitions], ['hyper-data', 'hyper-system'])
+        self.assertEqual([part.name for part in board.partitions], ['hyper-boot', 'hyper-data', 'hyper-system'])
         self.assertEqual(board.source['virtual-machines'], [])
-        self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 64)
+        self.assertEqual(next(part['size-mib'] for part in board.source['disk']['partitions'] if part.get('content') == 'data'), 128)
         self.assertNotIn('io-vm', board.source['files'].values())
         services = json.loads((ROOT / 'bootstrap/stage1/init/config/services-console-only.json').read_text())
         self.assertNotIn('io-runtime', [item['name'] for item in services['services']])
@@ -195,7 +195,9 @@ class BringupTests(unittest.TestCase):
             payload = directory / 'payload'
             payload.mkdir()
             board = bringup.Board.load(ROOT / 'boards/rpi5-native.json')
-            bringup.packer.prepare_payload(board, artifacts, payload)
+            data = directory / 'data'
+            data.mkdir()
+            bringup.packer.prepare_payload(board, artifacts, data, boot_root=payload)
             self.assertEqual(artifacts['hyper'].stat().st_size, 64)
             self.assertEqual((payload / 'hyper.img').stat().st_size, 4096)
             for name in ('bcm2712-rpi-5-b.dtb', 'bcm2712d0-rpi-5-b.dtb',
@@ -213,7 +215,7 @@ class BringupTests(unittest.TestCase):
             source = board.source
             for field in ('network-device', 'networks'):
                 source['io-vm'][field] = network[field]
-            bringup.packer.prepare_payload(bringup.Board.parse(source), artifacts, payload)
+            bringup.packer.prepare_payload(bringup.Board.parse(source), artifacts, data, boot_root=payload)
             self.assertIn('pciex4_reset=0\n', (payload / 'config.txt').read_text())
 
     def test_modified_dependency_is_rejected(self):

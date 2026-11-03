@@ -17,7 +17,8 @@ ALIGN_SECTORS = MIB // SECTOR
 GPT_ENTRIES = 128
 GPT_ENTRY_BYTES = 128
 GPT_TABLE_SECTORS = GPT_ENTRIES * GPT_ENTRY_BYTES // SECTOR
-# Ordinary FAT data volume; neither direct boot profile uses UEFI.
+# Native writable volumes retain this GPT type across FAT/F2FS changes.
+# Filesystem detection uses the superblock, never the partition type.
 BASIC_DATA = uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7')
 # Opaque VM disks must not be advertised as host Linux filesystems or LVM PVs.
 VM_DISK = uuid.UUID('a6edb737-452f-4a43-bd9f-bc04aa5323cf')
@@ -254,7 +255,7 @@ class Board:
         # Canonicalize before deriving GPT, client manifests or bootstrap files:
         # reloading a generated snapshot must describe exactly the same volumes.
         data = prepare(data, recovery=recovery)
-        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines'), ('native', 'io-vm'))
+        keys(data, ('format', 'board', 'architecture', 'boot', 'disk', 'files', 'virtual-machines'), ('native', 'io-vm', 'boot-files'))
         if data['format'] != 'hyper.board.v1' or data['architecture'] != 'aarch64':
             raise ValueError('unsupported board format or architecture')
         name(data['board'])
@@ -280,7 +281,7 @@ class Board:
                           else uuid.uuid5(disk_id, label))
             size = definition['size-mib'] * MIB // SECTOR
             partitions.append(Partition(label, start, size, identifier,
-                                        BASIC_DATA if definition.get('filesystem') == 'fat' else VM_DISK,
+                                        BASIC_DATA if definition.get('filesystem') in ('fat', 'f2fs') else VM_DISK,
                                         definition.get('image'), definition.get('filesystem'),
                                         definition.get('content')))
             start += size
@@ -290,27 +291,38 @@ class Board:
         if not has_data and (data['files'] or data['virtual-machines']
                              or data['boot'] == 'rpi5-firmware'):
             raise ValueError('file payloads, guest images and Pi firmware require a data partition')
+        boot_files = data.get('boot-files', {})
+        has_boot = any(part.content == 'boot' for part in partitions)
+        if not isinstance(boot_files, dict) or (boot_files and not has_boot):
+            raise ValueError('boot-files requires a generated firmware partition')
+        if has_boot and (data['boot'] != 'rpi5-firmware' or partitions[0].content != 'boot'):
+            raise ValueError('firmware partition must be first on a Pi board')
+        firmware_files = boot_files if has_boot else data['files']
+        if data['boot'] == 'rpi5-firmware' and not has_boot:
+            if next(part for part in partitions if part.content == 'data').filesystem != 'fat':
+                raise ValueError('Pi firmware requires a FAT boot partition')
         required_files = {'hyper.img'} if data['boot'] == 'rpi5-firmware' else set()
         if data['boot'] == 'rpi5-firmware':
             required_files |= {'bootstrap.cpio', 'bcm2712-rpi-5-b.dtb',
                                'bcm2712d0-rpi-5-b.dtb',
                                'overlays/bcm2712d0.dtbo', 'overlays/overlay_map.dtb'}
-        if not required_files <= data['files'].keys():
+        if not required_files <= firmware_files.keys():
             raise ValueError('missing boot profile payloads')
-        destinations = set()
-        for destination, artifact in data['files'].items():
-            destination = relative_path(destination).casefold()
-            if destination in destinations or destination in ('board.json', 'vms.json', 'partitions.json', 'config.txt', 'cmdline.txt'):
-                raise ValueError('duplicate or reserved deployment path')
-            destinations.add(destination)
-            name(artifact)
-        # Files and directories share a case-insensitive FAT namespace.
-        for destination in destinations:
-            parent = PurePosixPath(destination).parent
-            while str(parent) != '.':
-                if str(parent) in destinations:
-                    raise ValueError('payload file shadows a directory')
-                parent = parent.parent
+        for file_map in (data['files'], boot_files):
+            destinations = set()
+            for destination, artifact in file_map.items():
+                destination = relative_path(destination).casefold()
+                if destination in destinations or destination in ('board.json', 'vms.json', 'partitions.json', 'config.txt', 'cmdline.txt'):
+                    raise ValueError('duplicate or reserved deployment path')
+                destinations.add(destination)
+                name(artifact)
+            # Files and directories share a case-insensitive FAT namespace.
+            for destination in destinations:
+                parent = PurePosixPath(destination).parent
+                while str(parent) != '.':
+                    if str(parent) in destinations:
+                        raise ValueError('payload file shadows a directory')
+                    parent = parent.parent
         vms = data['virtual-machines']
         if not isinstance(vms, list) or len(vms) > 8:
             raise ValueError('too many VMs or invalid VM list')
@@ -355,6 +367,11 @@ class Board:
         end = partitions[-1].end + 1 + GPT_TABLE_SECTORS + 1
         total = (end + ALIGN_SECTORS - 1) // ALIGN_SECTORS * ALIGN_SECTORS
         return cls(data, tuple(partitions), disk_id, total)
+
+    def artifact_names(self):
+        return (set(self.source['files'].values())
+                | set(self.source.get('boot-files', {}).values())
+                | {part.image for part in self.partitions if part.image})
 
     def partition_manifest(self):
         return {'format': 'hyper.disk.v1', 'disk-uuid': str(self.disk_id),

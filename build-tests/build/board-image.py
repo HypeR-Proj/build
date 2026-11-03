@@ -272,8 +272,9 @@ class BoardTests(unittest.TestCase):
         for profile in ('qemu', 'rpi5'):
             board = Board.load(ROOT / f'boards/{profile}.json')
             self.assertEqual(board.source['architecture'], 'aarch64')
-            self.assertEqual(board.partitions[0].sectors * SECTOR, 1024**3)
-            self.assertEqual(board.partitions[0].content, 'data')
+            data = next(p for p in board.partitions if p.content == 'data')
+            self.assertEqual(data.sectors * SECTOR, 1024**3)
+            self.assertEqual(data.filesystem, 'f2fs')
             self.assertEqual(board.vms()['virtual-machines'][0]['image'], '/data/vm/alpine.itb')
             self.assertEqual(board.partitions[1].start, board.partitions[0].end + 1)
             self.assertNotEqual(board.partitions[0].identifier, board.partitions[1].identifier)
@@ -284,7 +285,7 @@ class BoardTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 artifacts = {}
-                for key in board.source['files'].values():
+                for key in set(board.source['files'].values()) | set(board.source.get('boot-files', {}).values()):
                     artifacts[key] = root / key
                     artifacts[key].write_bytes(key.encode())
                     if key == 'hyper' and profile == 'rpi5':
@@ -299,10 +300,12 @@ class BoardTests(unittest.TestCase):
                             disk.truncate(part.sectors * SECTOR)
                 payload = root / 'payload'
                 payload.mkdir()
-                packer.prepare_payload(board, artifacts, payload)
+                boot = root / 'boot'
+                boot.mkdir()
+                packer.prepare_payload(board, artifacts, payload, boot_root=boot)
                 self.assertFalse((payload / 'vm/io.itb').exists())
-                self.assertEqual((payload / 'hyper.img').is_file(), profile == 'rpi5')
-                self.assertEqual((payload / 'bootstrap.cpio').is_file(), profile == 'rpi5')
+                self.assertEqual((boot / 'hyper.img').is_file(), profile == 'rpi5')
+                self.assertEqual((boot / 'bootstrap.cpio').is_file(), profile == 'rpi5')
                 self.assertTrue((payload / 'vm/alpine.itb').is_file())
 
     def test_system_payload_is_separate_and_vm_paths_remain_data(self):
@@ -479,7 +482,7 @@ class BoardTests(unittest.TestCase):
 
     def test_rpi5_firmware_requires_bootstrap_archive(self):
         source = json.loads((ROOT / 'boards/rpi5.json').read_text())
-        del source['files']['bootstrap.cpio']
+        del source['boot-files']['bootstrap.cpio']
         with self.assertRaisesRegex(ValueError, 'missing boot profile payloads'):
             Board.parse(source)
 
@@ -793,6 +796,33 @@ class BoardTests(unittest.TestCase):
             with self.subTest(partitions=source['disk']['partitions']), self.assertRaises(ValueError):
                 Board.parse(source)
 
+    def test_f2fs_minimum_and_legacy_fat_geometry(self):
+        board = Board.parse(self.source)
+        legacy = copy.deepcopy(self.source)
+        legacy['disk']['partitions'][0]['filesystem'] = 'fat'
+        # Ordinary refresh may update /system but must never convert old data.
+        self.assertEqual(packer.gpt(board), packer.gpt(Board.parse(legacy)))
+        small = copy.deepcopy(self.source)
+        small['disk']['partitions'][0]['size-mib'] = 64
+        with self.assertRaisesRegex(ValueError, 'F2FS partitions require at least 128 MiB'):
+            Board.parse(small)
+
+    def test_firmware_partition_is_separate_and_not_exported(self):
+        source = json.loads((ROOT / 'boards/rpi5.json').read_text())
+        board = Board.parse(source)
+        self.assertEqual((board.partitions[0].content, board.partitions[0].filesystem),
+                         ('boot', 'fat'))
+        self.assertNotIn('PARTLABEL=hyper-boot',
+                         [v['source'] for v in board.native_volumes()])
+        for field in ('config.txt', '../escape'):
+            bad = copy.deepcopy(source)
+            bad['boot-files'][field] = 'hyper'
+            with self.assertRaises(ValueError):
+                Board.parse(bad)
+        source['disk']['partitions'].reverse()
+        with self.assertRaisesRegex(ValueError, 'firmware partition must be first'):
+            Board.parse(source)
+
     def test_duplicate_json_keys_rejected(self):
         with self.assertRaises(ValueError):
             json.loads('{"disk": 1, "disk": 2}', object_pairs_hook=unique_object)
@@ -825,6 +855,7 @@ class BoardTests(unittest.TestCase):
         except ValueError as error:
             self.skipTest(str(error))
         self.source['disk']['partitions'][0]['size-mib'] = 64
+        self.source['disk']['partitions'][0]['filesystem'] = 'fat'
         self.source['disk']['partitions'][2]['size-mib'] = 8
         self.source['disk']['partitions'][2]['image'] = 'guest-disk'
         # This fixture qualifies FAT and opaque guest disk publication only.

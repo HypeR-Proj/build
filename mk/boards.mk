@@ -190,15 +190,16 @@ test-board-storage: app image
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-fat-system/block-queue-test APP_EXTRA_BINS=hyper-storage-probe
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
+	python3 -B tests/qemu/prepare-fat-board.py "$(BOARD_CONFIG)" "$$fixture/config.json" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
 		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-fat-system/block-queue-test \
-		BOARD_CONFIG="$(BOARD_CONFIG)" BOARD_OUTPUT="$$fixture" \
+		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe"' && \
 	$(NATIVE_QEMU_ENV) LLVM_NM="$(LLVM_NM)" python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
-		--disk "$$fixture/disk.img" --board "$(BOARD_CONFIG)" --log "$$fixture/accept" \
+		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept" \
 		--require-block-queue \
 		$(if $(filter 1,$(STACK_AUDIT)),--minimum-stack-remaining "$(STACK_MINIMUM_REMAINING)" --maximum-stack-used "$(STACK_MAXIMUM_USED)" --stack-elf "$(KERNEL_OUTPUT)/hyper" --stack-config "$(KERNEL_CONFIG_PATH)")
 

@@ -63,3 +63,21 @@ it does not require a new hard-coded module list here or in HypeR's documentatio
 See [getting started](https://hyper-proj.github.io/HypeR/docs/learn/getting-started.html), [module metadata and outputs](docs/module-builds.md),
 [incremental builds](docs/incremental-builds.md), and [Native composition](mk/README.md).
 System acceptance is started manually in the [CI repository](https://github.com/HypeR-Proj/ci).
+
+## Persistent image format
+
+New QEMU and Pi 5 deployment images use F2FS for `/data` and EROFS for the formal
+system. Pi 5 firmware remains on a separate first FAT partition. Board policies
+can declare `boot-files` for that partition and `files` for initial data content.
+The F2FS formatter builds the checked-in service core using a host C++20 compiler,
+caches it beneath `OUT`, and seeds regular files/directories without mounting it.
+F2FS volumes require at least 128 MiB; the service must remain selected in the
+system configuration. Custom FAT data volumes remain supported.
+
+Ordinary `make`, `rebuild` and `board-build` preserve data. Existing QEMU FAT disks
+with unchanged geometry continue to mount through format detection; they are
+not converted. The new Pi 5 layout changes GPT geometry, so an old disk is
+rejected before refresh. Back up data and create a new image in a separate output
+directory. `board-reset-storage` explicitly replaces **all** disk contents.
+F2FS read-only recovery mounts are currently rejected; bootstrap recovery can
+read the EROFS system volume but has no F2FS worker.

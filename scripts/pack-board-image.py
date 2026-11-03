@@ -16,6 +16,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 
 from board_config import Board, GPT_ENTRIES, GPT_ENTRY_BYTES, GPT_TABLE_SECTORS, SECTOR
@@ -216,9 +217,8 @@ def refresh_system_payload(board, output, root, mkfs_erofs='mkfs.erofs'):
     return True
 
 
-def prepare_payload(board, artifacts, directory, system_root=None):
-    required = set(board.source['files'].values()) | {
-        part.image for part in board.partitions if part.image}
+def prepare_payload(board, artifacts, directory, system_root=None, boot_root=None):
+    required = board.artifact_names()
     if artifacts.keys() != required:
         raise ValueError(f'artifact keys differ: missing={required - artifacts.keys()}, '
                          f'unknown={artifacts.keys() - required}')
@@ -230,15 +230,19 @@ def prepare_payload(board, artifacts, directory, system_root=None):
             # In particular, never silently enlarge a guest GPT disk and strand its
             # backup header in the middle. Resize with the guest's own image tooling.
             raise ValueError(f'{part.image}: disk image must exactly match the configured volume size')
-    for target, key in board.source['files'].items():
-        destination = directory / target
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(artifacts[key], destination)
+    for field, root in [('files', directory), ('boot-files', boot_root)]:
+        if board.source.get(field) and root is None:
+            raise ValueError('separate firmware files require a boot staging directory')
+        for target, key in board.source.get(field, {}).items():
+            destination = root / target
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(artifacts[key], destination)
     vms = board.vms()
     for filename, content in [('board.json', board.source), ('partitions.json', board.partition_manifest()),
                               ('vms.json', vms)]:
         (directory / filename).write_text(json.dumps(content, indent=2) + '\n')
     if board.source['boot'] == 'rpi5-firmware':
+        directory = boot_root if board.source.get('boot-files') else directory
         pad_arm64_boot_image(directory / 'hyper.img')
         for filename in ('config.txt', 'cmdline.txt'):
             if filename in board.source['files']:
@@ -336,7 +340,26 @@ def prepare_erofs(root, image, mkfs_erofs):
                     str(image), str(root)], check=True)
 
 
-def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs, data_root=None):
+def prepare_f2fs(root, image, size):
+    """Use the checked-in service core on Linux and macOS, without downloads."""
+    workspace = Path(__file__).resolve().parents[1]
+    component = workspace / 'svc/fs-f2fs'
+    output = Path(os.environ.get('HYPER_BUILD_OUTPUT', workspace / 'out')) / 'build/fs-f2fs/host'
+    output.mkdir(parents=True, exist_ok=True)
+    # A build's object/library publication must not race another image packer.
+    with (output / '.pack.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        subprocess.run([sys.executable, str(component / 'build.py'), '--host',
+                        '--output', str(output)], check=True)
+        command = [sys.executable, str(component / 'host.py'), '--library',
+                   str(output / 'libhyper-f2fs.so'), '--output', str(image),
+                   '--size-mib', str(size // (1024 * 1024))]
+        if root is not None:
+            command.extend(['--root', str(root)])
+        subprocess.run(command, check=True)
+
+
+def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs, data_root=None, boot_root=None):
     """Format only requested Native volumes; guest images remain opaque."""
     images = {}
     system_part = next((part for part in board.partitions
@@ -349,11 +372,13 @@ def prepare_native_volumes(board, staging, system_root, mkfs, mcopy, mkfs_erofs,
         if not part.native or part.image:
             continue
         image = staging / (part.identifier.hex + '.fs')
-        root = {'data': data_root, 'system': system_root}.get(part.content)
+        root = {'data': data_root, 'system': system_root, 'boot': boot_root}.get(part.content)
         if part.content == 'data' and root is None:
             continue
         if part.filesystem == 'erofs':
             prepare_erofs(root, image, mkfs_erofs)
+        elif part.filesystem == 'f2fs':
+            prepare_f2fs(root, image, part.sectors * SECTOR)
         elif part.filesystem == 'fat':
             with image.open('xb') as stream:
                 stream.truncate(part.sectors * SECTOR)
@@ -386,9 +411,11 @@ def build(board, artifacts, output, mkfs='mkfs.fat', mcopy='mcopy', *, replace=F
         payload.mkdir()
         checksums = {key: digest(path) for key, path in artifacts.items()}
         system_checksums = system_state(system_root, board) if system_root is not None else None
-        prepare_payload(board, artifacts, payload, system_root)
+        boot = staging / 'boot'
+        boot.mkdir()
+        prepare_payload(board, artifacts, payload, system_root, boot)
         native_images = prepare_native_volumes(board, staging, system_root,
-                                               mkfs, mcopy, mkfs_erofs, payload)
+                                               mkfs, mcopy, mkfs_erofs, payload, boot)
         image = staging / 'disk.img'
         with image.open('xb') as stream:
             stream.truncate(board.disk_sectors * SECTOR)
@@ -432,8 +459,7 @@ def artifact_inputs(board, defaults, explicit):
             result[key] = Path(path)
         return result
 
-    required = set(board.source['files'].values()) | {
-        part.image for part in board.partitions if part.image}
+    required = board.artifact_names()
     selected = {key: path for key, path in pairs(defaults).items() if key in required}
     overrides = pairs(explicit)
     if overrides.keys() - required:
