@@ -56,7 +56,8 @@ class NativeSources(unittest.TestCase):
     def build(self):
         compiler = ('import os; from pathlib import Path; '
                     'p=Path(os.environ["HYPER_DEPENDENCY_SOURCE_CACHE"]); '
-                    f'assert (p/"unpacked"/"{self.digest}"/"source.cc").read_bytes()==b"payload"; '
+                    'files=list(p.glob("unpacked/*/source.cc")); '
+                    'assert len(files)==1 and files[0].read_bytes()==b"payload"; '
                     'print("{}")')
         return self.builder.run([sys.executable, '-c', compiler], 'system', 'std', 'consumer', 'build')
 
@@ -80,6 +81,18 @@ class NativeSources(unittest.TestCase):
         with patch('source_archive.subprocess.run', side_effect=AssertionError('unexpected fetch/compiler')):
             self.build()
         self.assertFalse((self.output / 'cache').exists())
+
+    def test_modified_extracted_dependency_stops_before_compiler(self):
+        self.real_run = subprocess.run
+        with patch('source_archive.subprocess.run', side_effect=self.downloader):
+            self.build()
+        file = next((self.output / 'cache/dependency/unpacked').glob('*/source.cc'))
+        file.write_bytes(b'changed')
+        self.builder.cache.publish.reset_mock()
+        with patch('source_archive.subprocess.run', side_effect=AssertionError('unexpected compiler')):
+            with self.assertRaisesRegex(ValueError, 'extracted source'):
+                self.build()
+        self.builder.cache.publish.assert_not_called()
 
     def test_cache_override_and_symlinked_sources_follow_dependency_owner(self):
         linked = self.root / 'view'

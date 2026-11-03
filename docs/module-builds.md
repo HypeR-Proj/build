@@ -88,6 +88,16 @@ The cache defaults to `OUT/cache/<cache>`; `cache_env` names a `HYPER_` variable
 that can override it and is passed to build scripts as an absolute path.
 Valid compiled-cache hits do not need to fetch archives again. Cargo and its
 build scripts remain offline; network access belongs to driver preparation.
+Extraction cache identities include the digest kind, digest, strip count and
+regular-file extraction policy version. Every materialized-source lookup checks
+the archive and the live extracted file names, bytes, directory inventory and
+entry types. A modified or incomplete tree fails instead of becoming a new
+trusted baseline; remove the reported generated cache directory and retry to
+re-extract it. Symlinks and special files are not extracted or accepted in the
+cached tree. Archive ownership, timestamps and permission metadata are ignored.
+Consumers use the source-name-to-directory mapping returned by
+`source_archive.sources()`; unpacked directory names are opaque cache identities,
+not archive digests.
 
 `name` identifies the manifest project; `version` is the description schema version,
 not the Rust package version. `tests` and SPDX fields belong to the repository.
