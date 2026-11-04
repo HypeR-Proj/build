@@ -237,7 +237,7 @@ test-boot-system: app image
 			--artifact "alpine-rootfs=$$fixture/alpine.ext4" && \
 		$(NATIVE_QEMU_ENV) python3 -B tests/qemu/verify-boot-system.py \
 			--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
-			--disk "$$fixture/$$case/disk.img" --board "$$fixture/deployment.json" \
+			--disk "$$fixture/$$case/disk.img" --board "$$fixture/$$case/deployment.json" \
 			--provider-case "$$case" --log "$$fixture/$$case/accept.log" || exit $$?; \
 	done && \
 	python3 -B tests/qemu/verify-fs-worker-supervision.py prepare \
