@@ -56,15 +56,19 @@ def disk_partitions(disk):
         if type(size) is not int or not 8 <= size <= 16 * 1024 * 1024:
             raise ValueError('partition size must be 8 MiB..16 TiB')
         filesystem = entry.get('filesystem')
-        if filesystem is not None and filesystem not in ('fat', 'erofs'):
+        if filesystem is not None and filesystem not in ('fat', 'erofs', 'f2fs'):
             raise ValueError('unsupported partition image format')
         content = entry.get('content')
         if content is not None:
-            if content not in ('data', 'system') or content in contents or filesystem is None or 'image' in entry:
+            if content not in ('data', 'system', 'boot') or content in contents or filesystem is None or 'image' in entry:
                 raise ValueError('invalid or duplicate generated partition content')
             contents.add(content)
-        if content == 'data' and (filesystem != 'fat' or size < 64):
-            raise ValueError('data payload requires a FAT partition of at least 64 MiB')
+        if content == 'data' and (filesystem not in ('fat', 'f2fs') or size < 64):
+            raise ValueError('data payload requires writable FAT or F2FS storage of at least 64 MiB')
+        if filesystem == 'f2fs' and size < 128:
+            raise ValueError('F2FS partitions require at least 128 MiB')
+        if content == 'boot' and (filesystem != 'fat' or size < 64):
+            raise ValueError('firmware payload requires a FAT partition of at least 64 MiB')
         if filesystem == 'erofs' and content != 'system' and 'image' not in entry:
             raise ValueError('EROFS partitions require system content or an image')
         if 'image' in entry and (not isinstance(entry['image'], str)
@@ -114,7 +118,7 @@ def prepare(source, *, recovery=False):
             partitions = [part for part in partitions if part.get('content') != 'system']
             result['disk']['partitions'] = partitions
         volumes = [{'source': 'PARTLABEL=' + part['label'], 'read-only': part['filesystem'] == 'erofs'}
-                   for part in partitions if 'filesystem' in part]
+                   for part in partitions if 'filesystem' in part and part.get('content') != 'boot']
         mounts = {'boot-fstab': [], 'fstab': []}
         for content, target in ([] if recovery else [('system', '/system'), ('data', '/data')]):
             part = next((part for part in partitions if part.get('content') == content), None)

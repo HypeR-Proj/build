@@ -32,8 +32,8 @@ class SystemRefreshTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         source = json.loads((ROOT / 'boards' / name).read_text())
-        for part, size in zip(source['disk']['partitions'], (64, 8, 8)):
-            part['size-mib'] = size
+        for part in source['disk']['partitions']:
+            part['size-mib'] = {'data': 128, 'boot': 64}.get(part.get('content'), 8)
         self.board = Board.parse(source)
         self.system = next(part for part in self.board.partitions if part.content == 'system')
         self.start = self.system.start * SECTOR

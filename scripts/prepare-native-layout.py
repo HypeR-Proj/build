@@ -25,8 +25,7 @@ def main():
     try:
         board = Board.load(args.board, recovery=args.recovery)
         if args.artifacts:
-            names = set(board.source['files'].values())
-            names.update(part.image for part in board.partitions if part.image)
+            names = board.artifact_names()
             print(' '.join(sorted(names)))
             return
         contents = json.dumps(board.source, indent=2) + '\n'
