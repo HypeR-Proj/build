@@ -4,9 +4,27 @@
 """Generate installed-SDK discovery configuration for Native Cargo roots."""
 
 from pathlib import Path
+import json
 import tomllib
 
 from .composition import toml_document
+from .model import relative
+from . import files
+
+
+def publish_settings(view, modules):
+    """Expose output-owned settings through the manifest's source editor link."""
+    owner = modules['build']
+    policy = owner.metadata.get('workspace', {}).get('editor')
+    if not policy:
+        return
+    settings = json.loads((view / '.vscode/settings.json').read_text())
+    settings['rust-analyzer.linkedProjects'] = [
+        str(view / path) for path in settings['rust-analyzer.linkedProjects']]
+    settings['rust-analyzer.cargo.configPath'] = str(view / '.vscode/rust-analyzer.toml')
+    target = view / '.vscode/source-settings.json'
+    files.write(target, json.dumps(settings, indent=4) + '\n')
+    files.link(owner.source / relative(policy['settings']), target)
 
 
 def native_configs(modules, inputs, output, arch):

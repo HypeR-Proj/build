@@ -1,7 +1,0 @@
-# SPDX-FileCopyrightText: 2026 roolrz
-# SPDX-License-Identifier: Apache-2.0
-
-# Shared editor environment only. SDK patches belong to Native workspaces.
-# Cargo resolves paths relative to the repository root (parent of .vscode).
-[env]
-HYPER_CONFIG = { value = "kernel/configs/qemu_aarch64_defconfig", relative = true }

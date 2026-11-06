@@ -5,3 +5,5 @@
 /target/
 .DS_Store
 **/__pycache__/
+# Local pointer to output-owned VS Code settings.
+/mk/workspace/.vscode/settings.json

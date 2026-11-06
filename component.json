@@ -131,6 +131,10 @@
       "mk": "mk",
       "tools": "tools",
       "rust-toolchain.toml": "rust-toolchain.toml"
+    },
+    "editor": {
+      "template": "mk/workspace/.vscode/settings.template.json",
+      "settings": "mk/workspace/.vscode/settings.json"
     }
   },
   "config": null,
