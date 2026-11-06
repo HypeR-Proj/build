@@ -9,15 +9,16 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 import stat
+import tomllib
 import xml.etree.ElementTree as ET
 
 from . import files
 from .model import NAME, dependency_order, discover, manifest_path, read_manifest, relative
-from .composition import cargo_manifests, product_schema
-from .editor import native_configs
+from .composition import cargo_manifests, product_schema, source_targets, toml_document
+from .editor import native_configs, publish_settings
 
 COPY_SUFFIXES = {'.py', '.sh', '.mk', '.toml', '.lock', '.json', '.yml', '.yaml', '.config'}
-STATE_VERSION = 4
+STATE_VERSION = 5
 
 
 def collect(modules, output):
@@ -134,6 +135,15 @@ def generate(root, output, modules, inputs, arch):
     policy = modules['build'].metadata.get('workspace', {})
     for name, content in cargo_manifests(modules).items():
         regular(name, content)
+    # Resolve dependency identities in OUT, while Cargo and the language server
+    # both name the original Rust source files instead of duplicate symlink paths.
+    included_sources = {Path(item['source']) for item in inputs.values()}
+    for name, item in inputs.items():
+        if Path(name).name != 'Cargo.toml':
+            continue
+        data = tomllib.loads(planned[name][1].decode())
+        if 'package' in data:
+            regular(name, toml_document(source_targets(data, Path(item['source']).parent, included_sources)))
     native_editor = native_configs(modules, inputs, output, arch)
     for name, content in native_editor.items():
         regular(name, content)
@@ -143,8 +153,10 @@ def generate(root, output, modules, inputs, arch):
         regular('Kconfig', content)
         link('.config', output / 'config' / arch / '.config')
 
-    if '.vscode/settings.json' in planned:
-        body = planned['.vscode/settings.json'][1].decode()
+    editor_policy = policy.get('editor')
+    if editor_policy or '.vscode/settings.json' in planned:
+        body = (read_source(modules['build'].source / relative(editor_policy['template']))
+                if editor_policy else planned['.vscode/settings.json'][1]).decode()
         settings = json.loads('\n'.join(line for line in body.splitlines() if not line.lstrip().startswith('//')))
         settings['rust-analyzer.linkedProjects'] = sorted({
             str(module.path / 'Cargo.toml') for module in modules.values()
@@ -311,6 +323,7 @@ def prepare(root, output, arch='aarch64'):
             state = json.loads(state_path.read_bytes())
             if (state.get('version') == STATE_VERSION and state.get('identity') == identity
                     and launch_inputs_intact(state) and intact(output / 'workspace' / arch, state)):
+                publish_settings(output / 'workspace' / arch, modules)
                 return output / 'workspace' / arch, modules, False, identity
         view, generated, controls, links, sources = generate(root, output, modules, inputs, arch)
         files.write(state_path, json.dumps({'version': STATE_VERSION, 'identity': identity,
@@ -324,6 +337,7 @@ def prepare(root, output, arch='aarch64'):
                                            # source-body links are checked by normal builds.
                                            'launch_links': {name: target for name, target in links.items()
                                                             if name not in inputs}}, indent=2) + '\n')
+        publish_settings(view, modules)
         return view, modules, True, identity
 
 

@@ -20,6 +20,7 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 
 from buildsystem.model import dependency_order, find_workspace
 from buildsystem.prepare import execution
+from buildsystem.editor import publish_settings
 
 
 def arguments():
@@ -50,6 +51,7 @@ def main():
 
 def execute(args, root, output, arch, view, modules, changed):
     if args.action == 'prepare':
+        publish_settings(view, modules)
         print(f'Prepared {len(modules)} modules: {output}' if changed else f'Workspace is up to date: {output}')
         return
     if args.action == 'list':
