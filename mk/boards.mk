@@ -187,13 +187,13 @@ test-product-config-run: board-build
 test-board-storage: app image
 	@test "$(ARCH)" = aarch64 || { echo "board storage acceptance requires aarch64" >&2; exit 2; }
 	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
-		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-fat-system/block-queue-test APP_EXTRA_BINS=hyper-storage-probe
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test APP_EXTRA_BINS=hyper-storage-probe
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	python3 -B tests/qemu/prepare-fat-board.py "$(BOARD_CONFIG)" "$$fixture/config.json" && \
 	$(MAKE) -o image -o app board-image BOARD=qemu \
 		APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
-		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-fat-system/block-queue-test \
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
 		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe"' && \
