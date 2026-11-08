@@ -255,3 +255,12 @@ Native example. External programs can declare an explicit build recipe and a
 `workspace.pythonpath` exposes framework Python packages there. Repository paths
 remain the manifest's responsibility. These mappings do not install files into
 the system image.
+
+Formal `storage-providers` entries may declare `"random": true` alongside
+`component` and `image`. This asserts that the successor accepts the initialized
+random service's server endpoint during adoption. Composition then includes
+explicit client grants for ordinary formal applications and the interactive
+session. Omitted or false declarations provide no random service; an executable
+name alone does not imply support. The default I/O VM successor declares this
+capability. Custom successors must implement the same service contract before
+opting in.

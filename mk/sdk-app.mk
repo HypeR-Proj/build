@@ -143,13 +143,17 @@ app-boot: app-fetch
 		--output "$(APP_BOOT_OUTPUT)" --sdk "$(SDK_OUTPUT)" --link-mode static \
 		--features "$(APP_FEATURES)" $(APP_BOOT_SELECTION)
 
-.PHONY: app-fixtures app-sdk-test
-app-fixtures: APP_BUILD_PROFILE = development
-app-fixtures: app
-ifneq ($(SDK_MUSL_SOURCE)$(SDK_CXX_SOURCE),)
+.PHONY: app-c-fixture app-fixtures app-sdk-test
+app-c-fixture: app
+ifneq ($(SDK_MUSL_SOURCE),)
 	HYPER_CLANG="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-cc" -std=c17 -D_GNU_SOURCE=1 -O2 \
 		stdlib/musl/hyper/test.c -o "$(NATIVE_C_TEST)"
+endif
+
+app-fixtures: APP_BUILD_PROFILE = development
+app-fixtures: app-c-fixture
+ifneq ($(SDK_CXX_SOURCE),)
 	HYPER_CXX="$(CLANG)" HYPER_LD="$(HYPER_LD)" \
 		"$(SDK_OUTPUT)/bin/hyper-clang++" -O2 -DHYPER_TEST_DYNAMIC_INITIALIZATION=1 -Wl,-z,stack-size=524288 \
 		stdlib/cxx/hyper/test.cc -o "$(NATIVE_CXX_TEST)"

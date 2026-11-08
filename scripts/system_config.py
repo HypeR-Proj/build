@@ -62,11 +62,14 @@ class ProductConfig:
                     raise ValueError('system.storage-providers must list at most 16 formal storage providers')
                 selected = []
                 for provider in providers:
-                    if not isinstance(provider, dict) or provider.keys() != {'component', 'image'}:
+                    if (not isinstance(provider, dict) or not {'component', 'image'} <= provider.keys()
+                            or provider.keys() - {'component', 'image', 'random'}
+                            or not isinstance(provider.get('random', False), bool)):
                         raise ValueError('formal storage provider requires component and image')
                     selected.append({
                         'component': boot_profiles.component_path(provider['component']),
                         'image': boot_profiles.absolute_path(provider['image'], 'formal storage image'),
+                        **({'random': provider['random']} if 'random' in provider else {}),
                     })
                 if len({provider['component'] for provider in selected}) != len(selected):
                     raise ValueError('duplicate formal storage provider component')

@@ -29,6 +29,19 @@ class BoardTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads((ROOT / 'boards/qemu.json').read_text())
 
+    def test_entropy_selector_is_explicit_and_cannot_be_enabled_on_qemu(self):
+        from board_config import io_vm
+        selector = {'profile': 'bcm2711-rng200', 'compatible': 'brcm,bcm2711-rng200'}
+        self.source['io-vm']['entropy-device'] = selector
+        io_vm(self.source['io-vm'])
+        with self.assertRaisesRegex(ValueError, 'entropy hardware'):
+            Board.parse(self.source)
+        for malformed in (None, {}, {'profile': 'bcm2711-rng200'},
+                          dict(selector, compatible='other'), dict(selector, path='/rng')):
+            self.source['io-vm']['entropy-device'] = malformed
+            with self.assertRaises((ValueError, TypeError)):
+                io_vm(self.source['io-vm'])
+
     def test_system_only_board_needs_no_fat_partition_or_guest_artifacts(self):
         board = Board.load(ROOT / 'boards/qemu-minimal.json')
         self.assertEqual([part.content for part in board.partitions], ['system'])
