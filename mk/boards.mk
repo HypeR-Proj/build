@@ -187,7 +187,7 @@ test-product-config-run: board-build
 test-board-storage: app image
 	@test "$(ARCH)" = aarch64 || { echo "board storage acceptance requires aarch64" >&2; exit 2; }
 	$(MAKE) -o app-fetch app-c-fixture APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
-		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test APP_EXTRA_BINS="hyper-storage-probe hyper-service-probe"
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test APP_EXTRA_BINS="hyper-storage-probe hyper-service-probe hyper-f2fs-smoke"
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	python3 -B tests/qemu/prepare-fat-board.py "$(BOARD_CONFIG)" "$$fixture/config.json" && \
@@ -196,7 +196,7 @@ test-board-storage: app image
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
-		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe" 0755 bin/service-probe "$(BOARD_TEST_OUTPUT)/storage-apps/service-probe" 0755 system:bin/c-standard-test "$(BOARD_TEST_OUTPUT)/storage-apps/c-standard-test"' && \
+		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe" 0755 bin/service-probe "$(BOARD_TEST_OUTPUT)/storage-apps/service-probe" 0755 bin/f2fs-smoke "$(BOARD_TEST_OUTPUT)/storage-apps/f2fs-smoke" 0755 system:bin/c-standard-test "$(BOARD_TEST_OUTPUT)/storage-apps/c-standard-test"' && \
 	$(NATIVE_QEMU_ENV) LLVM_NM="$(LLVM_NM)" python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept" \
