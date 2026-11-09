@@ -180,7 +180,7 @@ def vm_network(value, networks):
 
 def io_vm(value):
     keys(value, ('runtime', 'name', 'image', 'configuration', 'io-device'),
-         ('network-device', 'networks'))
+         ('network-device', 'networks', 'entropy-device'))
     if value['runtime'] != 'io-runtime':
         raise ValueError('resident I/O VM requires io-runtime')
     if not isinstance(value['name'], str) or not _VM_NAME.fullmatch(value['name']):
@@ -197,6 +197,11 @@ def io_vm(value):
     device_selector(value['io-device'], ('virtio-mmio-scsi', 'bcm2712-sdhci', 'pci-function'))
     if value['io-device']['profile'] == 'pci-function' and value['io-device']['pci-id'] != '1af4:1048':
         raise ValueError('PCI storage requires a modern virtio-scsi function (1af4:1048)')
+    if 'entropy-device' in value:
+        entropy = value['entropy-device']
+        keys(entropy, ('profile', 'compatible'))
+        if entropy != {'profile': 'bcm2711-rng200', 'compatible': 'brcm,bcm2711-rng200'}:
+            raise ValueError('unsupported entropy device selector')
     io_networks(value)
     return value
 
@@ -262,6 +267,8 @@ class Board:
         resident = io_vm(data['io-vm']) if 'io-vm' in data else {}
         if data['boot'] not in ('qemu-direct', 'rpi5-firmware'):
             raise ValueError('unsupported boot chain')
+        if 'entropy-device' in resident and data['boot'] != 'rpi5-firmware':
+            raise ValueError('entropy hardware requires the Pi firmware boot profile')
         if 'network-device' in resident:
             network = resident['network-device']
             expected = ({'virtio-mmio-net', 'pci-function'} if data['boot'] == 'qemu-direct'

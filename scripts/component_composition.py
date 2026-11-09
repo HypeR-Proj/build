@@ -59,7 +59,8 @@ def compose(core, formal, *, mounts=True, storage_providers=()):
         if not isinstance(component, str) or not component.startswith('/') or component.count('/') != 1:
             raise ValueError(f'invalid storage component: {component!r}')
         path = add(component[1:], provider['image'], prepared=True, resident=True, critical=True)
-        policy['providers'].append({'role': 'storage', 'component': path})
+        policy['providers'].append({'role': 'storage', 'component': path,
+                                    **({'random': True} if provider.get('random', False) else {})})
     add('journal', '/svc/journal', prepared=True, critical=True)
     if mounts and any(p['role'] == 'filesystem' for p in policy['providers']):
         policy['mounts'] = add('mounts', '/bin/mount', arguments=['-a'], prepared=True)
@@ -70,6 +71,10 @@ def compose(core, formal, *, mounts=True, storage_providers=()):
                    **({'scheduling': copy.deepcopy(entry['scheduling'])} if 'scheduling' in entry else {}))
         grants = [copy.deepcopy(g) for g in entry.get('capabilities', [])
                   if g['purpose'] not in ('stdio.input', 'stdio.output', 'stdio.error')]
+        if any(p.get('random', False) for p in storage_providers) and not any(g['purpose'] == 'random.client' for g in grants):
+            grants.append({'source': 'random.client', 'purpose': 'random.client',
+                           'operation': 'duplicate',
+                           'rights': ['write', 'wait', 'duplicate', 'transfer']})
         app = {'component': path, 'critical': entry.get('critical', False), 'capabilities': grants}
         if Path(entry['image']).name == 'session-manager':
             app['interactive'] = True

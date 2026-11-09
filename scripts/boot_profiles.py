@@ -144,7 +144,7 @@ def storage_providers(product, profiles):
     if configured is not None:
         return configured
     if any(profile['io']['kind'] == 'io-vm' and 'handoff' in profile for profile in profiles.values()):
-        return [{'component': '/io-runtime', 'image': '/svc/io-runtime'}]
+        return [{'component': '/io-runtime', 'image': '/svc/io-runtime', 'random': True}]
     return []
 
 

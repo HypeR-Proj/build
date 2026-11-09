@@ -186,8 +186,8 @@ test-product-config-run: board-build
 .PHONY: test-board-storage
 test-board-storage: app image
 	@test "$(ARCH)" = aarch64 || { echo "board storage acceptance requires aarch64" >&2; exit 2; }
-	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
-		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test APP_EXTRA_BINS=hyper-storage-probe
+	$(MAKE) -o app-fetch app-c-fixture APP_OUTPUT="$(BOARD_TEST_OUTPUT)/storage-apps" \
+		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test APP_EXTRA_BINS="hyper-storage-probe hyper-service-probe"
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/run.XXXXXX") && \
 	python3 -B tests/qemu/prepare-fat-board.py "$(BOARD_CONFIG)" "$$fixture/config.json" && \
@@ -196,7 +196,7 @@ test-board-storage: app image
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-fs-fat/block-queue-test,hyper-fs-backend-system/block-queue-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
-		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe"' && \
+		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/storage-apps/storage-probe" 0755 bin/service-probe "$(BOARD_TEST_OUTPUT)/storage-apps/service-probe" 0755 system:bin/c-standard-test "$(BOARD_TEST_OUTPUT)/storage-apps/c-standard-test"' && \
 	$(NATIVE_QEMU_ENV) LLVM_NM="$(LLVM_NM)" python3 -B tests/qemu/verify-board-storage.py \
 		--qemu "$(QEMU)" --image "$(KERNEL_IMAGE)" --initramfs "$$fixture/bootstrap.cpio" \
 		--disk "$$fixture/disk.img" --board "$$fixture/config.json" --log "$$fixture/accept" \
@@ -378,9 +378,9 @@ test-board-broker: app image fit-pack
 .PHONY: test-userspace-device
 test-userspace-device: app image
 	@test "$(ARCH)" = aarch64 || { echo "userspace physical devices require aarch64" >&2; exit 2; }
-	$(MAKE) -o app-fetch app APP_OUTPUT="$(BOARD_TEST_OUTPUT)/device-apps" \
+	$(MAKE) -o app-fetch app-c-fixture APP_OUTPUT="$(BOARD_TEST_OUTPUT)/device-apps" \
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-io-runtime/userspace-device-test,hyper-io-runtime-system/userspace-device-test \
-		APP_EXTRA_BINS=hyper-storage-probe
+		APP_EXTRA_BINS="hyper-storage-probe hyper-service-probe"
 	mkdir -p "$(BOARD_TEST_OUTPUT)"
 	@fixture=$$(mktemp -d "$(BOARD_TEST_OUTPUT)/userspace-device.XXXXXX") && \
 	python3 -B tests/qemu/prepare-userspace-device.py --qemu "$(QEMU)" \
@@ -390,7 +390,7 @@ test-userspace-device: app image
 		APP_FEATURES=hyper-io-runtime/storage-probe,hyper-io-runtime/userspace-device-test,hyper-io-runtime-system/userspace-device-test \
 		BOARD_CONFIG="$$fixture/config.json" BOARD_OUTPUT="$$fixture" \
 		BOARD_IMAGE="$$fixture/disk.img" \
-		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/device-apps/storage-probe"' && \
+		BOARD_EXTRA_ENTRIES='0755 bin/storage-probe "$(BOARD_TEST_OUTPUT)/device-apps/storage-probe" 0755 bin/service-probe "$(BOARD_TEST_OUTPUT)/device-apps/service-probe" 0755 system:bin/c-standard-test "$(BOARD_TEST_OUTPUT)/device-apps/c-standard-test"' && \
 	QEMU_DTB="$$fixture/host.dtb" QEMU_MACHINE=virt,virtualization=on,gic-version=3 \
 		QEMU_CPU=max QEMU_CPUS=4 QEMU_MEMORY=512M \
 		python3 -B tests/qemu/verify-board-storage.py --qemu "$(QEMU)" \
